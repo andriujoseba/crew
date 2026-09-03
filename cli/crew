@@ -1297,6 +1297,53 @@ validate_profiles() {  # agent role
   [ -f "$ROLES_DIR/$2.conf" ]  || usage_error "unknown role '$2' — see: crew profiles"
 }
 
+# Can THIS host's box size a clone? box 0.10.0 made --cpu/--memory/--disk ride
+# a `--from` copy; every box before it rejected them outright (box#171, #607
+# D5). Probed off the help text rather than compared against `box --version`,
+# for the reason box_supports_force_down is: the question is what this binary
+# does, and a version string is a proxy for it that a fork or a local build
+# gets wrong. The needle is box's own sentence for the capability.
+#
+# `tr` first, because that sentence WRAPS in the help output — "A --from clone
+# instead accepts the\nexplicit --cpu/--memory/--disk flags" — and a
+# line-oriented match on it silently never fires, which fails safe here (the
+# clone is merely unsized) and is still a wrong answer.
+#
+# Fails CLOSED on anything unexpected: no box, an error, a help text that does
+# not say it. The cost of a false no is a clone at the source's size and a line
+# saying so; the cost of a false yes is a `crew new` that dies on a roster line
+# that worked yesterday, which is #590 all over again.
+box_supports_clone_sizing() {
+  local help
+  help="$(box new --help 2>&1 | tr '\n' ' ' || true)"
+  grep -qE -- '--from clone[^.]*accepts[^.]*--cpu' <<<"$help"
+}
+
+# box_resources NAME — what the instance actually carries, as "N cpu / MEM /
+# DISK", for the one line a clone that could not be sized owes its operator.
+#
+# `box info --json` is a raw `incus list --format json` passthrough, and these
+# are incus's own documented keys rather than a shape crew is guessing at:
+# limits.cpu and limits.memory in the config, the root device's size beside
+# them. Expanded first — the question is what the box will RUN with, and a
+# limit set by a profile is as real as one stamped on the instance.
+#
+# A figure that does not read prints as "?" and never as a plausible default.
+# The disk figure is genuinely absent on a container, whose root rides the
+# storage pool, so "?" there is an answer and not a failure.
+box_resources() { # NAME
+  local r
+  r="$(box info "$1" --json 2>/dev/null \
+    | jq -r 'if type == "array" then (.[0] // {}) else . end
+             | (.expanded_config // .config // {}) as $c
+             | (.expanded_devices // .devices // {}) as $d
+             | [($c["limits.cpu"] // "?") + " cpu",
+                ($c["limits.memory"] // "?"),
+                ((($d.root // {}).size) // "?")] | join(" / ")' 2>/dev/null \
+    | head -1 | tr -d '\r' || true)"
+  printf '%s\n' "${r:-? cpu / ? / ?}"
+}
+
 # create_box NAME AGENT ROLE [FROM] — infrastructure only, no engine.
 create_box() {
   local name="$1" agent="$2" role="$3" from="${4:-}"
@@ -1320,22 +1367,39 @@ create_box() {
   # </dev/null on both: create_box runs inside the create-all and up roster
   # loops, which read from a FIFO any stdin-inheriting `box` call would drain
   # (#48). Neither form takes input — every argument is on the command line.
-  # A CLONE carries its source's resources, and `box new --from` REFUSES the
-  # sizing flags outright: "--cpu/--memory/--disk shape a fresh mint; a clone
-  # carries its source's resources ('box incus' can change them afterwards)".
-  # Passing them here meant every roster line with a 4th-column gold snapshot
-  # died at `crew new`/`crew create-all`. Never noticed because no roster line
-  # has ever carried one — the same never-exercised-path shape as #47 and #48.
   #
-  # The role profile's sizing therefore does NOT apply to a cloned box, which
-  # is a real semantic and not a detail to swallow: a builder minted from a
-  # reviewer-sized gold comes up with the reviewer's 2 CPU / 4GiB. Said out
-  # loud here so an operator can resize rather than discover it under load.
+  # THE CLONE PATH TAKES THE SIZING FLAGS AGAIN, and only where this host's box
+  # can honour them (#607 D5). The refusal they were removed for was real:
+  # `box new --from` used to reject --cpu/--memory/--disk outright, so every
+  # roster line with a 4th-column gold snapshot died at `crew new` (#590). box
+  # 0.10.0, tagged 2026-09-02, reverses exactly that — the flags now ride the
+  # copy, incus sizing the clone's volume as it creates it, with no resize, no
+  # restart and no step inside the guest (box#171). So the choice #607 D5 poses
+  # — resize, refuse, or warn — is answered "land it at the role's size", which
+  # is the outcome that needs no operator to act on a warning at all.
+  #
+  # PROBED, not version-compared, and the probe governs both branches: this
+  # host's box is whatever the operator installed, and passing the flags to one
+  # that predates 0.10.0 re-breaks #590 for the same rosters. Same idiom as
+  # box_supports_force_down. An older box keeps the clone it always got, and
+  # then must SAY what it produced: a builder minted from a reviewer-sized gold
+  # comes up on the reviewer's CPU and RAM, and finding that out under load is
+  # what the line below exists to prevent.
   if [ -n "$from" ]; then
-    echo "creating $name  (role=$role agent=$agent from=$from)"
-    echo "  note: a clone inherits $from's cpu/memory/disk — the $role profile's"
-    echo "        $BOX_CPU cpu / $BOX_MEMORY / $BOX_DISK does NOT apply (resize with: box incus)"
-    box new --name "$name" --from "$from" </dev/null
+    if box_supports_clone_sizing; then
+      echo "creating $name  (role=$role agent=$agent from=$from cpu=$BOX_CPU mem=$BOX_MEMORY disk=$BOX_DISK)"
+      box new --name "$name" --from "$from" \
+        --cpu "$BOX_CPU" --memory "$BOX_MEMORY" --disk "$BOX_DISK" </dev/null
+    else
+      echo "creating $name  (role=$role agent=$agent from=$from)"
+      box new --name "$name" --from "$from" </dev/null
+      # ONE line, naming the box and BOTH sizes (#607 D5) — the clone's own,
+      # read back off the daemon after it exists, and the profile's, which did
+      # not apply. Read rather than inferred, and a figure that does not read
+      # says so instead of being guessed: silence and a made-up number are the
+      # two ways this line could be worse than no line at all.
+      echo "note: $name carries $from's size ($(box_resources "$name")) — the $role profile's $BOX_CPU cpu / $BOX_MEMORY / $BOX_DISK did NOT apply, this host's box predating 0.10.0 clone sizing (resize: box incus $name -- config set {} limits.cpu $BOX_CPU)"
+    fi
   else
     echo "creating $name  (role=$role agent=$agent cpu=$BOX_CPU mem=$BOX_MEMORY disk=$BOX_DISK template=$agent-box)"
     box new --name "$name" --template "$agent-box" --cpu "$BOX_CPU" --memory "$BOX_MEMORY" --disk "$BOX_DISK" </dev/null

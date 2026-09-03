@@ -302,9 +302,38 @@ fi
 # --- the drill box -------------------------------------------------------
 # Acquisition and the --tree clean-checkout guard stay above this line: an
 # input the drill refuses must not create or mutate a box before it says why.
+
+# The drill box is minted at THE ROLE'S OWN SIZE, read out of the drilled
+# source's role conf (#607 D4). It used to mint every role at a flat
+# `--cpu 2 --memory 4GiB --disk 20GiB`, which is not what `crew new` does for
+# any role in the fleet — so role sizing was the one thing a green rehearsal
+# could never say anything about, and it took an OOM-killed reviewer to find
+# that out. A size literal here is the defect, not the number it holds.
+#
+# From $SOURCE_TREE and not from this checkout: everything else in phase 0 is
+# read out of the source actually being drilled, and a drill that sized its box
+# from the operator's working tree while installing a different engine would
+# rehearse a pairing that exists nowhere.
+#
+# Read in a SUBSHELL rather than sourced into this script's scope. A role conf
+# is not three variables — it carries TIMEOUT_*, MODEL_* and BUDGET_* too, and
+# sourcing it here would land every one of them in the drill's globals for the
+# rest of the run. What is wanted is three figures.
+ROLE_CONF="$SOURCE_TREE/shared/conf/roles/$ROLE.conf"
+[ -f "$ROLE_CONF" ] \
+  || { echo "phase 0: no role conf at $ROLE_CONF — the drill cannot size a $ROLE box" >&2; exit 1; }
+read -r BOX_CPU BOX_MEMORY BOX_DISK <<<"$(
+  bash -c '. "$1"; printf "%s %s %s\n" "${BOX_CPU:-}" "${BOX_MEMORY:-}" "${BOX_DISK:-}"' \
+    _ "$ROLE_CONF" 2>/dev/null)"
+if [ -z "$BOX_CPU" ] || [ -z "$BOX_MEMORY" ] || [ -z "$BOX_DISK" ]; then
+  echo "phase 0: $ROLE_CONF declares no BOX_CPU/BOX_MEMORY/BOX_DISK — refusing to" >&2
+  echo "         guess a size the fleet does not use" >&2
+  exit 1
+fi
 if ! box list --json 2>/dev/null | jq -e --arg n "$BOX_NAME" '.[] | select(.name == $n)' >/dev/null; then
-  echo "== minting $BOX_NAME from the $AGENT-box template"
-  box new --name "$BOX_NAME" --template "$AGENT-box" --cpu 2 --memory 4GiB --disk 20GiB || exit 1
+  echo "== minting $BOX_NAME from the $AGENT-box template at the $ROLE role's size ($BOX_CPU cpu / $BOX_MEMORY / $BOX_DISK)"
+  box new --name "$BOX_NAME" --template "$AGENT-box" \
+    --cpu "$BOX_CPU" --memory "$BOX_MEMORY" --disk "$BOX_DISK" || exit 1
 elif [ "$REUSE" -eq 0 ]; then
   # `box info --json` returns an ARRAY and its date field has moved before, so
   # this degrades to "unknown" rather than killing the refusal it is only
