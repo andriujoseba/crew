@@ -505,8 +505,8 @@ case "$OUT" in *'records no engine version'*'crew reset --cut alpha'*) r1=named 
 t reset-recordless-checkpoint-names-the-repair named "$r1"
 t reset-recordless-checkpoint-restores-nothing 0 "$(calls_of 'restore')"
 t reset-recordless-checkpoint-stops-nothing 0 "$(calls_of 'down')"
-case "$OUT" in *'crew@unknown'*) r1="$OUT" ;; *) r1=quiet ;; esac
-t reset-recordless-checkpoint-never-restores-at-unknown quiet "$r1"
+case "$OUT" in *'restored to armed'*) r1="$OUT" ;; *) r1=quiet ;; esac
+t reset-recordless-checkpoint-never-reports-a-restore quiet "$r1"
 
 # The same absence WITH a readable live version: the recordless refusal is the
 # one that fires, ahead of the mismatch arm, so the operator is told the
@@ -532,8 +532,10 @@ t reset-recordless-upgrade-invents-no-record quiet "$r1"
 : >"$STATE/calls"
 RST_STAMP_alpha=0.9.9 capture reset alpha
 t reset-after-upgrade-of-a-recordless-box-is-refused 1 "$RC"
-case "$OUT" in *'crew@unknown'*) r1="$OUT" ;; *) r1=quiet ;; esac
-t reset-recordless-box-never-restores-at-unknown quiet "$r1"
+# The transcript this must never print again is `restored to armed
+# (crew@unknown) and started` at RC 0.
+case "$OUT" in *'restored to armed'*) r1="$OUT" ;; *) r1=quiet ;; esac
+t reset-recordless-box-after-upgrade-never-reports-a-restore quiet "$r1"
 t reset-recordless-box-after-upgrade-restores-nothing 0 "$(calls_of 'restore')"
 
 # A record that exists but carries no version — unreadable and malformed land
