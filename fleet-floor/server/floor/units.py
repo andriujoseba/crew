@@ -27,7 +27,8 @@ TS = r"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)"
 # #538 put `timeout=` on this record — the group matches nothing and the
 # reader falls back to STUCK_AFTER_S, which is what an un-upgraded box gets.
 RE_START = re.compile(TS + r" SESSION START kind=(\S+) key=(\S+)"
-                      r"(?:.*? timeout=(\d+)s(?:\s|$))?")
+                      r"(?:.*? timeout=(\d+)s(?=\s|$))?"
+                      r"(?:.*? log=(\S+)(?=\s|$))?")
 RE_END = re.compile(TS + r" SESSION END kind=(\S+) key=(\S+) rc=(\d+|-) dur=(\d+s|-) outcome=(\S+)"
                     r"(?: acted=(yes|no|unknown) reply_tail=(\S*))?")
 RE_SKIP = re.compile(TS + r" SESSION SKIP kind=(\S+) key=(\S+) reason=(\S+)")
@@ -241,7 +242,7 @@ def derive_queue(loglines):
     return q
 
 
-def derive_sessions(loglines, now, clock_offset=0):
+def derive_sessions(loglines, now, clock_offset=0, sessionlogs=None):
     """Finished sessions (newest first) and the open one, if any."""
     done, opens = [], []
     for line in loglines:
@@ -254,17 +255,33 @@ def derive_sessions(loglines, now, clock_offset=0):
             peak = RE_PEAK.search(line)
             rc = int(m.group(4)) if m.group(4).isdigit() else None
             dur = int(m.group(5)[:-1]) if m.group(5).endswith("s") else None
+            # Pair by identity rather than merely taking the last START. A
+            # reconstructed terminal has no START, and an interleaved lane's
+            # START must never make that row open somebody else's transcript.
+            opened = None
+            for index in range(len(opens) - 1, -1, -1):
+                if opens[index]["kind"] == m.group(2) and opens[index]["key"] == m.group(3):
+                    opened = opens.pop(index)
+                    break
+            log = opened.get("log") if opened else None
+            unavailable = None
+            if not opened:
+                unavailable = "start-aged-out"
+            elif not log:
+                unavailable = "log-unavailable"
+            elif sessionlogs is not None and log not in sessionlogs:
+                log = None
+                unavailable = "log-reaped"
             done.append({
                 "ts": parse_ts(m.group(1)) + clock_offset, "kind": m.group(2), "key": m.group(3),
                 "rc": rc, "dur": dur, "out": m.group(6),
                 "acted": m.group(7) or "unknown", "reply": reply,
+                "log": log, "log_unavailable": unavailable,
                 # KiB, or None where the engine recorded no figure — the page
                 # renders the difference rather than showing a zero nobody
                 # measured (#473 D2).
                 "peak": int(peak.group(1)) if peak else None,
             })
-            if opens:
-                opens.pop()
             continue
         m = RE_START.search(line)
         if m:
@@ -272,7 +289,9 @@ def derive_sessions(loglines, now, clock_offset=0):
                           "kind": m.group(2), "key": m.group(3),
                           # The lane's own ceiling, or None on a line that
                           # carried no `timeout=` token (#610).
-                          "timeout": int(m.group(4)) if m.group(4) else None})
+                          "timeout": int(m.group(4)) if m.group(4) else None,
+                          # The endpoint accepts a basename, never this path.
+                          "log": m.group(5).rsplit("/", 1)[-1] if m.group(5) else None})
 
     done.sort(key=lambda s: s["ts"], reverse=True)
     for s in done:
@@ -899,7 +918,10 @@ def build_unit(unit, state, agent_conf, now, inventory_ok=True):
         u["clock_uncertainty"] = max(
             1, math.ceil((probe_finished - probe_started) / 2 + 1)
         )
-    sessions, cur = derive_sessions(loglines, now, clock_offset)
+    sessions, cur = derive_sessions(
+        loglines, now, clock_offset,
+        set(u["logs"]) if "sessionlogs" in meta else None,
+    )
     limited = derive_limited(loglines, u["floor_events"], now, clock_offset,
                              unit.get("room", "engine"))
     if limited is not None:
@@ -920,7 +942,8 @@ def build_unit(unit, state, agent_conf, now, inventory_ok=True):
     # than written there, so the ping tier publishes the identical sentence.
     u["lock"], stuck_note = stuck_verdict(held, cur)
     u["sessions"] = [{k: s[k] for k in
-                      ("ago", "kind", "key", "rc", "dur", "out", "acted", "reply", "peak")}
+                      ("ago", "kind", "key", "rc", "dur", "out", "acted", "reply", "peak",
+                       "log", "log_unavailable")}
                      for s in sessions[:11]]
     u["spark"] = spark_24h(sessions, now)
     repo_fallback = ("crew" if u["queue"]
