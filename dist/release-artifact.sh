@@ -93,6 +93,7 @@ PAYLOAD_INCLUDED_PATHS=(
   shared/bin             # the engine `crew upgrade` pushes to every box
   shared/conf            # role, agent-profile and default configuration
   shared/crontab.example # the tick schedule an operator installs on a box
+  shared/host-crontab.example # the maintenance schedule an operator installs on the HOST
   shared/docs            # the engine's own documentation, shipped beside it
   shared/install.sh      # the box-side installer `crew upgrade` runs
   shared/lib             # the engine's libraries

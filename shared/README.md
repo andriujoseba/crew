@@ -37,6 +37,8 @@ shared/
   test/common/*.sh       one suite per lib/common/ module, at the mirrored path
   install.sh             deploy to ~/duty; identity comes from the box's fleet.roster row
   crontab.example        one line per box
+  host-crontab.example   one line per HOST job: restart daily, reset weekly
+  docs/host-maintenance.md  what the two host jobs do, and the re-cut rule
 ```
 
 **The suite tree mirrors the source tree, one suite per module at the same
