@@ -62,8 +62,10 @@ for agent in grok kimi; do
 done
 
 # Codex 0.146.0 emits JSONL and writes its final answer separately. The stub
-# reproduces the observed multi-event shape, including an earlier usage-shaped
-# object that must not be selected or accumulated (#570 D2-D4).
+# reproduces the observed command/message/usage event shapes and plants an
+# earlier usage-shaped object that must not be selected or accumulated. Its
+# guarded file_change event is a defensive vendor-schema fixture, not part of
+# the read-only credentialed observation recorded for #570 D2-D4.
 CODEX_USAGE_CLI="$TMP/codex-usage-cli.sh"
 cat >"$CODEX_USAGE_CLI" <<'STUB'
 #!/usr/bin/env bash
@@ -80,7 +82,10 @@ while [ "$#" -gt 0 ]; do
 done
 [ -n "$prose" ] || exit 2
 if [ "${CODEX_USAGE_FAIL_BEFORE_PROSE:-0}" = 1 ]; then
-  printf '%s\n' '{"type":"error","message":"stream error: unexpected status 401 Unauthorized"}'
+  printf '%s\n' \
+    '{"type":"item.started","item":{"type":"command_execution","command":"/bin/bash -lc false","status":"in_progress"}}' \
+    '{"type":"item.completed","item":{"type":"command_execution","command":"/bin/bash -lc false","aggregated_output":"permission denied\n","exit_code":1,"status":"failed"}}' \
+    '{"type":"error","message":"stream error: unexpected status 401 Unauthorized"}'
   exit 1
 fi
 printf 'observation complete.\n' >"$prose"
@@ -89,7 +94,7 @@ printf '%s\n' \
   '{"type":"turn.started"}' \
   '{"type":"item.completed","item":{"type":"agent_message","text":"checking"},"usage":{"input_tokens":999,"output_tokens":999}}' \
   '{"type":"item.started","item":{"type":"command_execution","command":"/bin/bash -lc pwd","status":"in_progress"}}' \
-  '{"type":"item.completed","item":{"type":"command_execution","command":"/bin/bash -lc pwd","status":"completed"}}' \
+  '{"type":"item.completed","item":{"type":"command_execution","command":"/bin/bash -lc pwd","aggregated_output":"/work\n","exit_code":0,"status":"completed"}}' \
   '{"type":"item.completed","item":{"type":"file_change","changes":[{"path":"shared/example.txt","kind":"update"}],"status":"completed"}}' \
   '{"type":"item.completed","item":{"type":"agent_message","text":"observation complete."}}' \
   '{"type":"turn.completed","usage":{"input_tokens":30302,"cached_input_tokens":25088,"cache_write_input_tokens":0,"output_tokens":91,"reasoning_output_tokens":7}}'
@@ -138,10 +143,11 @@ t codex-costless-session-keeps-cost-absent 0 \
 t codex-structured-run-restores-prose-unchanged 'observation complete.' \
   "$(sed -n '/^--prose--$/,/^--argv--$/p' <<<"$codex_usage" \
     | grep -vE '^--(prose|argv)--$|^--$' | tail -n 1)"
-t codex-structured-run-restores-command-transcript 'exec /bin/bash -lc pwd' \
-  "$(sed -n '/^--prose--$/{n;p;}' <<<"$codex_usage")"
-t codex-structured-run-restores-patch-transcript 'apply_patch shared/example.txt' \
-  "$(sed -n '/^--prose--$/{n;n;p;}' <<<"$codex_usage")"
+t codex-structured-run-preserves-human-transcript \
+  'checking|exec /bin/bash -lc pwd|/work|command status=completed exit_code=0|apply_patch shared/example.txt|file_change update shared/example.txt' \
+  "$(sed -n '/^--prose--$/,/^--argv--$/p' <<<"$codex_usage" \
+    | grep -E '^(checking|exec |/work$|command status=|apply_patch |file_change )' \
+    | paste -sd '|')"
 t codex-structured-run-reports-acted yes \
   "$(sed -n 's/.* acted=\([^ ]*\).*/\1/p' <<<"$codex_usage_end")"
 t codex-structured-run-hides-json-envelope 0 \
@@ -150,6 +156,12 @@ t codex-profile-prose-scratch-is-removed 0 \
   "$(sed -n '/^--profile-scratch--$/{n;p;}' <<<"$codex_usage")"
 
 codex_failed_usage="$(codex_usage_run 1)"
+t codex-empty-prose-preserves-activity-marker 'yes|exec /bin/bash -lc false' \
+  "$(printf '%s|' "$(grep 'SESSION END' <<<"$codex_failed_usage" | sed -n 's/.* acted=\([^ ]*\).*/\1/p')"; \
+     sed -n '/^--prose--$/{n;p;}' <<<"$codex_failed_usage")"
+t codex-empty-prose-preserves-command-result 'permission denied|command status=failed exit_code=1' \
+  "$(sed -n '/^--prose--$/,/^--argv--$/p' <<<"$codex_failed_usage" \
+    | grep -E '^(permission denied|command status=)' | paste -sd '|')"
 t codex-empty-prose-preserves-structured-diagnostic 1 \
   "$(sed -n '/^--prose--$/,/^--argv--$/p' <<<"$codex_failed_usage" | grep -c '^{"type":"error"' || true)"
 t codex-empty-prose-reports-failed FAILED \
