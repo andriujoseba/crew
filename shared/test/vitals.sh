@@ -102,7 +102,18 @@ B="$(mk_box memory-low)"
 sed -i 's/3128"$/300"/' "$B/bin/free"
 out="$(run_probe "$B" BOX_MEMORY=4GiB)"
 has "memory-low-on-pair" "$out" \
-  "finding=memory-low:want=over-10%-available,got=7%-available(300/3850MiB)"
+  "finding=memory-low:want=over-10%-available,got=7.79%-available(300/3850MiB)"
+
+B="$(mk_box memory-at-threshold)"
+sed -i 's/3128"$/385"/' "$B/bin/free"
+out="$(run_probe "$B" BOX_MEMORY=4GiB)"
+has "memory-low-at-exact-threshold" "$out" \
+  "finding=memory-low:want=over-10%-available,got=10%-available(385/3850MiB)"
+
+B="$(mk_box memory-just-above-threshold)"
+sed -i 's/3128"$/420"/' "$B/bin/free"
+out="$(run_probe "$B" BOX_MEMORY=4GiB)"
+hasnt "memory-healthy-just-above-threshold" "$out" "memory-low"
 
 # Operator overrides replace the table default without copying it elsewhere.
 out="$(run_probe "$B" BOX_MEMORY=4GiB VITALS_MEMORY_LOW_PCT=5)"
@@ -111,6 +122,19 @@ B="$(mk_box disk-override)"
 sed -i 's/48%/60%/' "$B/bin/df"
 out="$(run_probe "$B" BOX_DISK=30GiB VITALS_DISK_LOW_PCT=55)"
 has "disk-low-operator-override" "$out" "finding=disk-low:want=under-55%,got=60%"
+
+B="$(mk_box disk-full-override)"
+sed -i 's/48%/100%/' "$B/bin/df"
+out="$(run_probe "$B" BOX_DISK=30GiB VITALS_DISK_LOW_PCT=100)"
+has "disk-full-accepts-100-override" "$out" \
+  "finding=disk-low:want=under-100%,got=100%"
+
+B="$(mk_box disk-leading-zero-override)"
+sed -i 's/48%/94%/' "$B/bin/df"
+out="$(run_probe "$B" BOX_DISK=30GiB VITALS_DISK_LOW_PCT=09)"
+has "disk-leading-zero-falls-back-to-table" "$out" \
+  "finding=disk-low:want=under-90%,got=94%"
+hasnt "disk-leading-zero-is-not-rendered" "$out" "under-09%"
 
 # --- 2. disagreeing profile --------------------------------------------------
 # MUST-FAIL: a profile mismatch going unmarked. The fixture reads 2 cores /

@@ -261,10 +261,23 @@ mark() { # mark <name> <want> <got>
 # a healthy box look alarming (or suppressing every real finding).
 vitals_limit() {
   local key="$2" value="${!1:-}"
-  case "$value" in ''|*[!0-9]*|0|1[0-9][0-9]|[2-9][0-9][0-9]*)
-    operating_limit "$key"
-    ;;
-  *) printf '%s' "$value" ;;
+  case "$value" in
+  [1-9]|[1-9][0-9]|100) printf '%s' "$value" ;;
+  *) operating_limit "$key" ;;
+  esac
+}
+
+# Render a ratio as a percentage rounded to two decimal places, trimming zeroes
+# that add no information. The threshold comparison itself stays exact below.
+ratio_percent() { # ratio_percent <part> <whole>
+  local hundredths whole fraction
+  hundredths=$((($1 * 10000 + $2 / 2) / $2))
+  whole=$((hundredths / 100))
+  fraction=$(printf '%02d' "$((hundredths % 100))")
+  case "$fraction" in
+  00) printf '%s' "$whole" ;;
+  *0) printf '%s.%s' "$whole" "${fraction%0}" ;;
+  *) printf '%s.%s' "$whole" "$fraction" ;;
   esac
 }
 
@@ -362,8 +375,8 @@ emit_vitals() {
 
   if [ -n "${mem_total:-}" ] && [ -n "${mem_avail:-}" ] &&
      [ "$mem_total" -gt 0 ]; then
-    memory_pct=$((mem_avail * 100 / mem_total))
-    if [ "$memory_pct" -le "$memory_limit" ]; then
+    if [ "$((mem_avail * 100))" -le "$((mem_total * memory_limit))" ]; then
+      memory_pct="$(ratio_percent "$mem_avail" "$mem_total")"
       mark memory-low "over-${memory_limit}%-available" \
         "${memory_pct}%-available(${mem_avail}/${mem_total}MiB)"
     fi
