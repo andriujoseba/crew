@@ -81,6 +81,19 @@ echo "== force stop (#486)"
 fs_mark()        { wc -l < "$FLOOR_CALLS"; }
 fs_calls_since() { tail -n "+$(( $1 + 1 ))" "$FLOOR_CALLS"; }
 
+# #563 D1 — a shell program is one argv argument and may span many source
+# lines, but it is still one stub invocation and therefore one call-log
+# record. The mark/slice helpers below are meaningful only if that identity
+# holds. `list` ignores the extra fixture argument after recording it, which
+# lets this test isolate the recorder without inventing an unmatched command.
+FS_RECORD_M=$(fs_mark)
+"$HERE/stub-box" list $'first line\nsecond line\nthird line' >/dev/null
+t "calls: a multi-line argv advances the mark once" 1 \
+  "$(( $(fs_mark) - FS_RECORD_M ))"
+FS_RECORD="$(fs_calls_since "$FS_RECORD_M")"
+t "calls: a multi-line argv is escaped into one record" \
+  'list first line\nsecond line\nthird line' "$FS_RECORD"
+
 # The predicate the collector escalates on is the ping tier's wedge rule, so
 # wait for the tier to have reached it rather than assuming the suites sourced
 # before this one took long enough. Without this the whole block would pass or
@@ -574,19 +587,18 @@ t "wake-silent: leaves a DISARMED box alone" "" "$(cat "$FLOOR_STATE/ff-disarmed
 # which makes whether it passes a question about background timing rather than
 # about the code. So the resume is identified by its OWN argv.
 #
-# stub-box logs one invocation per `printf '%s\n' "$*"`, so a resume's entry is
-# the argv line `exec <box> -- bash -lc ` (RESUME_SH opens with a newline, so
-# nothing follows on it) with RESUME_SH's first line beneath it. Both are
-# matched, because the argv line alone is shared with any other bash -lc script
-# that starts with a newline.
+# stub-box logs one invocation per line, escaping each newline in the argv as
+# the two literal bytes `\n`. A resume's record therefore starts with
+# `exec <box> -- bash -lc \n` followed immediately by RESUME_SH's first line.
+# Both are matched, because the argv prefix alone is shared with any other
+# bash -lc script that starts with a newline.
 # The needle is a LITERAL: it is a line of RESUME_SH as the stub logged it, so
 # nothing in it may be expanded here.
 # shellcheck disable=SC2016
 RESUME_BODY_HEAD='cron="$(crontab -l 2>/dev/null || true)"'
 ws_resumed() {  # ws_resumed BOX — was RESUME_SH fired into BOX, in $FS_SEEN?
   awk -v head="exec $1 -- bash -lc " -v body="$RESUME_BODY_HEAD" '
-    $0 == head { armed = 1; next }
-    armed      { armed = 0; if ($0 == body) found = 1 }
+    index($0, head "\\n" body) == 1 { found = 1 }
     END        { exit found ? 0 : 1 }
   ' <<<"$FS_SEEN"
 }
@@ -601,6 +613,34 @@ else ok "wake-silent: a wedged box is not sent a wake"; fi
 if ws_resumed ff-paused; then
   ok "wake-silent: ...and the needle above can see a wake that WAS sent"
 else fail "wake-silent: ...and the needle above can see a wake that WAS sent" "$FS_SEEN"; fi
+
+# D3's race is deterministic here: another complete invocation may land
+# between two resume records, but it cannot land inside either one. The
+# negative half must therefore see a wedged-box resume wherever its atomic
+# record falls; otherwise it would silently claim no wake was sent.
+FS_INTERLEAVED="exec ff-paused -- bash -lc \\n$RESUME_BODY_HEAD\\npaused body
+list --json
+exec ff-wedged -- bash -lc \\n$RESUME_BODY_HEAD\\nwedged body"
+FS_ACTUAL="$FS_SEEN"
+FS_SEEN="$FS_INTERLEAVED"
+if ws_resumed ff-wedged; then
+  ok "wake-silent: concurrent record order cannot hide a sent wake"
+else
+  fail "wake-silent: concurrent record order cannot hide a sent wake" "$FS_SEEN"
+fi
+
+# The body head remains load-bearing precision. A header-only matcher would
+# stay green under this mutation and could confuse RESUME_SH with any other
+# multi-line bash program sent to the same box.
+RESUME_BODY_ACTUAL="$RESUME_BODY_HEAD"
+RESUME_BODY_HEAD='not the opening line of RESUME_SH'
+if ws_resumed ff-wedged; then
+  fail "wake-silent: the resume body head remains load-bearing" "$FS_SEEN"
+else
+  ok "wake-silent: the resume body head remains load-bearing"
+fi
+RESUME_BODY_HEAD="$RESUME_BODY_ACTUAL"
+FS_SEEN="$FS_ACTUAL"
 # It is REPORTED, not skipped. A disarmed box drops out of the wake set with no
 # row at all (#189) because nothing is wrong with it; a wedged one is the
 # incident this console exists to surface, so it carries a row that names the
