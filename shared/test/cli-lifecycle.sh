@@ -537,7 +537,8 @@ r1="$r1 box=$(grep -c 'alpha: restarted' <<<"$gen_new" || true)"
 r1="$r1 marker=$(grep -c MARKER-previous-generation <<<"$gen_new" || true)"
 t hostjob-rotate-holder-keeps-its-run-in-one-generation \
   'start=1 end=1 box=1 marker=0' "$r1"
-case "$gen_old" in MARKER-previous-generation*) r1=cut ;; *) r1="${gen_old:0:80}" ;; esac
+# 'cut' quoted: bare, shellcheck reads the assignment as the cut(1) command.
+case "$gen_old" in MARKER-previous-generation*) r1='cut' ;; *) r1="${gen_old:0:80}" ;; esac
 t hostjob-rotate-holder-cuts-the-old-generation cut "$r1"
 
 # Then the contender's: the lock is held, the log is oversized, and this
