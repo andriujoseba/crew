@@ -160,6 +160,30 @@ t "wedge: no page-side threshold survives anywhere" "" "$FF_PAGE_THRESH"
 # clears every consecutive-miss counter — fail-open, on the signal whose job is
 # noticing that something stopped answering.
 CS_SRC="$FLOOR/server/floor/fleet.py"
+
+# A missing role profile is degradation, not refusal: the three preceding
+# layers still reach the box and TIMEOUT_ATTENTION remains the floor. Capture
+# the host log too, because silent fallback would hide a misspelt roster role.
+FF_MISSING_ROLE="$(FF_SERVER="$FLOOR/server" python3 - <<'PY'
+import os, sys
+sys.path.insert(0, os.environ["FF_SERVER"])
+import floor.fleet
+seen = []
+floor.fleet.log = seen.append
+fleet = floor.fleet.Fleet(3600)
+conf = fleet.operator_conf("claude", "definitely-missing-role")
+print("attention=%s" % ("TIMEOUT_ATTENTION=1800" in conf))
+print("role-budget=%s" % ("TIMEOUT_BUILD=" in conf or "TIMEOUT_REVIEW=" in conf or
+                          "TIMEOUT_TRIAGE=" in conf))
+print("logged=%s" % any("role profile" in line and "not resolved" in line for line in seen))
+PY
+)"
+t "message: a missing role keeps the attention timeout floor" True \
+  "$(sed -n 's/^attention=//p' <<<"$FF_MISSING_ROLE")"
+t "message: a missing role does not invent a role budget" False \
+  "$(sed -n 's/^role-budget=//p' <<<"$FF_MISSING_ROLE")"
+t "message: a missing role is logged" True \
+  "$(sed -n 's/^logged=//p' <<<"$FF_MISSING_ROLE")"
 if grep -q 'box_states(strict=True)' "$CS_SRC"; then
   ok "ping: distinguishes a failed box list from an empty fleet"
 else

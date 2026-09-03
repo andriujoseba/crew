@@ -439,6 +439,72 @@ else
   fail "message: a failed session is recorded FAILED with its rc" "$(cat "$BS_M/duty/duty.log")"
 fi
 
+# #537 — the empty operator override follows the largest session budget in
+# scope. Drive MESSAGE_SH itself so these rows cover the shell resolution,
+# not a second implementation in the test.
+bs_operator_timeout_case() { # NAME EXPECTED CONFIG
+  local name="$1" expected="$2" config="$3" home="$BS_TMP/timeout-$1" token="timeout$1$$"
+  local script="$BS_TMP/timeout-$1.sh" actual=""
+  mkdir -p "$home/duty/logs" "$home/bin"
+  cp "$BS_M/bin/fake-cli" "$BS_M/bin/timeout" "$home/bin/"
+  BS_SERVER="$BS_FLOOR/server" BS_TOKEN="$token" python3 - "$script" <<'PY'
+import os, sys
+sys.path.insert(0, os.environ["BS_SERVER"])
+from floor.actions import MESSAGE_SH
+open(sys.argv[1], "w").write(MESSAGE_SH.replace("__TOK__", os.environ["BS_TOKEN"]))
+PY
+  printf 'operator timeout test\n' > "$home/duty/.floor-prompt.$token"
+  HOME="$home" DUTY_DIR="$home/duty" PATH="$home/bin:$PATH" \
+    BS_TIMEOUT_FILE="$home/wall" bash "$script" <<<"$config" >/dev/null 2>&1
+  for _ in $(seq 1 40); do
+    grep -q 'SESSION END kind=operator' "$home/duty/duty.log" 2>/dev/null && break
+    sleep 0.1
+  done
+  actual="$(sed -n 's/.* timeout=\([0-9]*\)s .*/\1/p' "$home/duty/duty.log" | head -1)|$(cat "$home/wall" 2>/dev/null)"
+  t "message: $name operator timeout" "$expected|$expected" "$actual"
+}
+
+BS_BASE_CONF='BOT_PATH_PREPEND="$HOME/bin"
+BOT_CLI_CMD=(fake-cli)'
+bs_operator_timeout_case builder 3600 "$BS_BASE_CONF
+TIMEOUT_ATTENTION=1800
+TIMEOUT_BUILD=3600
+TIMEOUT_RESUME=3600
+TIMEOUT_REBASE=1800
+TIMEOUT_CIRED=1800
+TIMEOUT_OPERATOR="""
+bs_operator_timeout_case triage 3000 "$BS_BASE_CONF
+TIMEOUT_ATTENTION=1800
+TIMEOUT_TRIAGE=1500
+TIMEOUT_MENTION=1500
+TIMEOUT_HYGIENE=3000
+TIMEOUT_OPERATOR="""
+bs_operator_timeout_case reviewer 2700 "$BS_BASE_CONF
+TIMEOUT_ATTENTION=1800
+TIMEOUT_REVIEW=2700
+TIMEOUT_OPERATOR="""
+bs_operator_timeout_case no-role 1800 "$BS_BASE_CONF
+TIMEOUT_ATTENTION=1800
+TIMEOUT_OPERATOR="""
+bs_operator_timeout_case fleet-override 4100 "$BS_BASE_CONF
+TIMEOUT_ATTENTION=1800
+TIMEOUT_OPERATOR=4100
+TIMEOUT_BUILD=3600"
+bs_operator_timeout_case role-override 4200 "$BS_BASE_CONF
+TIMEOUT_ATTENTION=1800
+TIMEOUT_OPERATOR=4100
+TIMEOUT_BUILD=3600
+TIMEOUT_OPERATOR=4200"
+
+# All TIMEOUT_* variables in the shipped layers are session budgets today.
+# Pin the census so a future non-session variable cannot silently inflate the
+# max; its author must either rename it or deliberately update this contract.
+BS_TIMEOUT_NAMES="$(sed -n 's/^\(TIMEOUT_[A-Z0-9_]*\)=.*/\1/p' \
+  "$BS_ROOT/shared/conf/fleet.defaults.conf" "$BS_ROOT/shared/conf/roles/"*.conf | sort -u | tr '\n' ' ')"
+t "message: TIMEOUT_* census contains session budgets only" \
+  "TIMEOUT_ATTENTION TIMEOUT_BUILD TIMEOUT_CIRED TIMEOUT_HYGIENE TIMEOUT_MENTION TIMEOUT_OPERATOR TIMEOUT_REBASE TIMEOUT_RESUME TIMEOUT_REVIEW TIMEOUT_TRIAGE " \
+  "$BS_TIMEOUT_NAMES"
+
 # --------------------------------------------------------------------------
 # PAUSE_SH / RESUME_SH — run for real against a real crontab(1) stand-in.
 #

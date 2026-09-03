@@ -462,6 +462,36 @@ t "message: envelope and prompt delivered via stdin" \
 $INJECT" \
   "$(cat "$FLOOR_STATE/ff-working.prompt" 2>/dev/null)"
 
+# #537 — hop 2 receives the same four configuration layers `load_conf` would
+# source. The stub preserves the bytes it actually received; this is not an
+# assertion over a helper's proposed output.
+OP_CONF="$(find "$FLOOR_STATE" -name 'ff-working.message-conf.*' -print -quit)"
+if awk '
+  /^TIMEOUT_ATTENTION=/{d=NR}
+  /^FLEET_HUMAN=fixture$/{f=NR}
+  /^BOT_CLI_CMD=/{a=NR}
+  /^TIMEOUT_BUILD=/{r=NR}
+  END {exit !(d && f && a && r && d<f && f<a && a<r)}
+' "$OP_CONF"; then
+  ok "message: stdin carries defaults, fleet, agent, role in order"
+else
+  fail "message: stdin carries defaults, fleet, agent, role in order" \
+       "$(grep -nE '^(TIMEOUT_ATTENTION|FLEET_HUMAN|BOT_CLI_CMD|TIMEOUT_BUILD)=' "$OP_CONF")"
+fi
+t "message: builder default is its longest layered session timeout" 3600 \
+  "$(sed -n 's/.* timeout=\([0-9]*\)s .*/\1/p' "$FLOOR_STATE/ff-working.home/duty/duty.log" | tail -1)"
+if FF_SERVER="$FLOOR/server" python3 - <<'PY'
+import os, sys
+sys.path.insert(0, os.environ["FF_SERVER"])
+from floor.actions import MESSAGE_SH
+raise SystemExit(0 if "MARK_" not in MESSAGE_SH else 1)
+PY
+then
+  ok "message: box-side script consumes no MARK_ variable"
+else
+  fail "message: box-side script consumes no MARK_ variable" "MARK_ found in MESSAGE_SH"
+fi
+
 t "cmd: unknown box refused"    400 "$(status POST /api/command '{"action":"pause","box":"nope"}')"
 t "cmd: unknown action refused" 400 "$(status POST /api/command '{"action":"rm -rf","box":"ff-working"}')"
 t "cmd: empty prompt refused"   400 "$(status POST /api/command '{"action":"message","box":"ff-working","prompt":"   "}')"
