@@ -1083,13 +1083,13 @@ fi
 # already been caught by twice.
 CL_INFO_CALLS="$(cl_code | grep -E 'box info "' || true)"
 CL_RAWINFO="$(grep -c -- '--json' <<<"$CL_INFO_CALLS" || true)"
-# TWO json readers now, and the second is #607 D5's: box_resources reads the
-# resource keys off the same passthrough so that a clone which could not be
-# sized can name the size it actually carries instead of a figure crew never
-# read. The count stays pinned rather than removed — a third reader should
-# still cost somebody a deliberate decision — but the count was never the
-# property worth having, so the shape that broke is asserted directly below.
-t "crew: box info --json is read only by box_state and box_resources" 2 "${CL_RAWINFO:-0}"
+# TWO json readers now, and the second is #607 D5's: box_size_fields reads the
+# resource keys off the same passthrough so that a clone can name the size it
+# actually carries instead of a figure crew never read. The count stays pinned
+# rather than removed — a third reader should still cost somebody a deliberate
+# decision — but the count was never the property worth having, so the shape
+# that broke is asserted directly below.
+t "crew: box info --json is read only by box_state and box_size_fields" 2 "${CL_RAWINFO:-0}"
 # EVERY --json reader tolerates the array. This is the actual failure (#47):
 # the filter that read the array as an object exited 5 and, inside a command
 # substitution under `set -euo pipefail`, took the whole command with it —
@@ -2050,22 +2050,83 @@ else
   fail "crew: the clone-sizing probe reads box's own help and matches a needle" \
        "a version comparison is a proxy for the capability, and gets a fork or a local build wrong"
 fi
-# Where the clone could NOT be sized, the role profile's sizing did not apply,
-# and that must be SAID — a builder minted from a reviewer-sized gold comes up
-# undersized either way, but silently is how it gets discovered under load. One
-# line, naming the box and both sizes.
+# --disk NEVER RIDES A COPY, and this is the assertion the whole block exists
+# for now. box serves --disk on a --from only where the SOURCE has a root
+# device of its own; a VM whose root is profile-inherited, or a source box
+# cannot read, makes it refuse and die BEFORE `incus copy`, so nothing is
+# created. That is #590 one layer further in, and the probe cannot see it — the
+# root device is a property of the source, not of the binary. Triage ruled it
+# out on #607 in as many words: no branch of this fix may turn a roster line
+# that mints today into one that does not.
 #
-# Matched on the ECHO and not on the words: the text of the note sitting
-# somewhere in the block is not the property — being PRINTED is. An earlier
-# cut of this assertion read the whole block, and a mutation turning the echo
-# into a no-op left every needle in place and the note unprinted, which is
-# precisely the silent case (#607 D5's "must not silently mint").
-CL_NOTE="$(grep -E '^[[:space:]]*echo "note: ' <<<"$CL_FROM" || true)"
-if grep -q 'did NOT apply' <<<"$CL_NOTE" && grep -q 'box_resources' <<<"$CL_NOTE"; then
-  ok "crew: an unsizable clone names the box and both sizes, the carried one read back"
+# Read off the INVOCATIONS and not off the block, with the backslash
+# continuations joined first so a flag on the second line is still part of the
+# command it belongs to. The block's own prose names --disk — the report tells
+# the operator which flag was withheld, and it should — so a block-wide grep
+# would red on the message explaining the guard.
+CL_FROM_NEW="$(sed -e :a -e '/\\$/N; s/\\\n[[:space:]]*/ /; ta' <<<"$CL_FROM" \
+  | grep -E '^[[:space:]]*box new ' || true)"
+# Vacuity first: an extraction that matched nothing passes the --disk check
+# below for the worst possible reason, and the sed above is exactly the kind of
+# thing that goes silently empty when the source is reformatted.
+t "crew: both clone branches invoke box new" 2 "$(grep -c . <<<"$CL_FROM_NEW" || true)"
+if ! grep -q -- '--disk' <<<"$CL_FROM_NEW"; then
+  ok "crew: a --from clone is never handed --disk"
 else
-  fail "crew: an unsizable clone names the box and both sizes, the carried one read back" \
-       "no note printed, or a note stating a size crew never read off the daemon"
+  fail "crew: a --from clone is never handed --disk" \
+       "box refuses --disk on a copy from a profile-rooted or unreadable source, before anything is created — the clone would not mint at all"
+  grep -n -- '--disk' <<<"$CL_FROM_NEW" | sed 's/^/    /'
+fi
+# EVERY clone reports, sized or not. With --disk withheld by construction the
+# best case is a PARTIAL landing — cpu and memory at the role's size, disk at
+# the snapshot's — and #607's criterion 5 as amended says a partial landing is
+# legitimate and must be said out loud. A branch that printed nothing because
+# two of three figures rode would be the silent case in better clothes.
+#
+# Counted per BRANCH, not once for the block: an earlier cut asserted the call
+# existed somewhere inside, and that is satisfied by a block reporting on one
+# of its two paths.
+CL_FROM_REPORTS="$(grep -c 'clone_size_report ' <<<"$CL_FROM" || true)"
+t "crew: both clone branches report what landed" 2 "${CL_FROM_REPORTS:-0}"
+# ...and the report is ONE line, per figure, naming the box and both sizes.
+#
+# Matched on the ECHO and not on the words: the text sitting somewhere in the
+# function is not the property — being PRINTED is. An earlier cut of this
+# assertion read the whole block, and a mutation turning the echo into a no-op
+# left every needle in place and the note unprinted, which is precisely the
+# silent case (#607 D5's "must not silently mint").
+# shellcheck disable=SC2016  # matching the literal source text, not expanding it
+CL_REPORT="$(sed -n '/^clone_size_report() {/,/^}/p' "$CL_ROOT/cli/crew")"
+CL_NOTE="$(grep -E '^[[:space:]]*echo "note: ' <<<"$CL_REPORT" || true)"
+t "crew: the clone report is exactly one line" 1 \
+  "$(grep -c . <<<"$CL_NOTE" || true)"
+CL_REPORT_MISSING=""
+# shellcheck disable=SC2016  # matching the literal source text, not expanding it
+for cl_needle in 'size_verdict "$asked" cpu' 'size_verdict "$asked" memory' \
+                 'size_verdict "$asked" disk' 'box_size_fields' \
+                 'profile asks $want_cpu'; do
+  grep -qF -- "$cl_needle" <<<"$CL_REPORT" \
+    || CL_REPORT_MISSING="$CL_REPORT_MISSING $cl_needle"
+done
+if [ -z "$CL_REPORT_MISSING" ]; then
+  ok "crew: the clone report answers per figure, off a size read back off the daemon"
+else
+  fail "crew: the clone report answers per figure, off a size read back off the daemon" \
+       "missing:$CL_REPORT_MISSING — a report that states a size crew never read, or that answers the three figures as one"
+fi
+# The verdict vocabulary cannot claim a landing crew did not verify: a figure
+# crew never asked for, or one that reads back as something else, is NOT
+# applied, and one that does not read back at all says so rather than being
+# counted as a success.
+# shellcheck disable=SC2016  # matching the literal source text, not expanding it
+CL_VERDICT="$(sed -n '/^size_verdict() {/,/^}/p' "$CL_ROOT/cli/crew")"
+if grep -q "printf 'NOT applied" <<<"$CL_VERDICT" &&
+   grep -q "printf 'unverified" <<<"$CL_VERDICT" &&
+   grep -q "printf 'applied" <<<"$CL_VERDICT"; then
+  ok "crew: a figure crew did not ask for, or cannot verify, is never reported as applied"
+else
+  fail "crew: a figure crew did not ask for, or cannot verify, is never reported as applied" \
+       "the verdict collapses to two answers, and the one it loses is the unread figure"
 fi
 
 # The status table must fit the names it prints. `crew-drill-reviewer` is 19
