@@ -72,8 +72,6 @@ t "cmd: restart ends running" running "$(cat "$FLOOR_STATE/ff-idle.state" 2>/dev
 # the console to call it unreachable again, because floor/ping.sh reads
 # exactly that and reading it is not this suite's to break.
 # ===========================================================================
-echo "== force stop (#486)"
-
 # calls_since MARK — the stub's own call log from line MARK on. Every case
 # below asks what the HOST was told to do, not what the reply said: "restart
 # force-stops an unreachable box" is a claim about argv, and a 200 with a
@@ -84,15 +82,20 @@ fs_calls_since() { tail -n "+$(( $1 + 1 ))" "$FLOOR_CALLS"; }
 # #563 D1 — a shell program is one argv argument and may span many source
 # lines, but it is still one stub invocation and therefore one call-log
 # record. The mark/slice helpers below are meaningful only if that identity
-# holds. `list` ignores the extra fixture argument after recording it, which
-# lets this test isolate the recorder without inventing an unmatched command.
+# holds. The recognized `tail` probe isolates the recorder without mutating
+# any fixture state, while exercising the real multi-line `box exec` shape.
+echo "== atomic call log (#563)"
 FS_RECORD_M=$(fs_mark)
-"$HERE/stub-box" list $'first line\nsecond line\nthird line' >/dev/null
+"$HERE/stub-box" exec ff-working -- bash -lc \
+  $'\ntail -n 1 ~/duty/duty.log\nprintf done\n' >/dev/null
 t "calls: a multi-line argv advances the mark once" 1 \
   "$(( $(fs_mark) - FS_RECORD_M ))"
 FS_RECORD="$(fs_calls_since "$FS_RECORD_M")"
 t "calls: a multi-line argv is escaped into one record" \
-  'list first line\nsecond line\nthird line' "$FS_RECORD"
+  'exec ff-working -- bash -lc \ntail -n 1 ~/duty/duty.log\nprintf done\n' \
+  "$FS_RECORD"
+
+echo "== force stop (#486)"
 
 # The predicate the collector escalates on is the ping tier's wedge rule, so
 # wait for the tier to have reached it rather than assuming the suites sourced
