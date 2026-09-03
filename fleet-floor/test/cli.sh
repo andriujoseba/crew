@@ -2054,11 +2054,18 @@ fi
 # and that must be SAID — a builder minted from a reviewer-sized gold comes up
 # undersized either way, but silently is how it gets discovered under load. One
 # line, naming the box and both sizes.
-if grep -q 'did NOT apply' <<<"$CL_FROM" && grep -q 'box_resources' <<<"$CL_FROM"; then
+#
+# Matched on the ECHO and not on the words: the text of the note sitting
+# somewhere in the block is not the property — being PRINTED is. An earlier
+# cut of this assertion read the whole block, and a mutation turning the echo
+# into a no-op left every needle in place and the note unprinted, which is
+# precisely the silent case (#607 D5's "must not silently mint").
+CL_NOTE="$(grep -E '^[[:space:]]*echo "note: ' <<<"$CL_FROM" || true)"
+if grep -q 'did NOT apply' <<<"$CL_NOTE" && grep -q 'box_resources' <<<"$CL_NOTE"; then
   ok "crew: an unsizable clone names the box and both sizes, the carried one read back"
 else
   fail "crew: an unsizable clone names the box and both sizes, the carried one read back" \
-       "no note, or a note stating a size crew never read off the daemon"
+       "no note printed, or a note stating a size crew never read off the daemon"
 fi
 
 # The status table must fit the names it prints. `crew-drill-reviewer` is 19
