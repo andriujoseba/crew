@@ -1221,6 +1221,32 @@ function idle24(d){
   return Math.max(0,win-busy);
 }
 
+/* God-view headroom is deliberately smaller than boxVitalsRows: the tile has
+   room for the two figures an operator scans across the fleet, while the
+   console keeps the full measured record. Current/max uses the existing pair
+   and derives no policy — thresholds and findings stay box-side. */
+function camHeadroomRows(v){
+  var f=v&&v.fields?v.fields:{};
+  function gib(m){
+    var n=Number(m)/1024;
+    if(!Number.isFinite(n)||n<0)return null;
+    return (n<10?n.toFixed(1):String(Math.round(n))).replace(/\.0$/,"");
+  }
+  function pair(cur,total){
+    var c=gib(cur),t=gib(total);
+    return c===null||t===null?"—":c+"/"+t+"G";
+  }
+  var mem="—",disk="—";
+  if(f.mem_total_mb!==undefined&&f.mem_avail_mb!==undefined){
+    var mt=Number(f.mem_total_mb),ma=Number(f.mem_avail_mb);
+    if(Number.isFinite(mt)&&Number.isFinite(ma)&&mt>=ma)
+      mem=pair(mt-ma,mt);
+  }
+  if(f.disk_total_mb!==undefined&&f.disk_used_mb!==undefined)
+    disk=pair(f.disk_used_mb,f.disk_total_mb);
+  return [["MEM",mem],["DISK",disk]];
+}
+
 /* One tile of the call. Chrome is drawn inside the feed like a heads-up
    overlay burned into the stream, because that is what an AR readout is:
    the video is the whole card, and the facts sit on top of it. */
@@ -1351,7 +1377,7 @@ function drawCamCell(t,x,y,w,h,unit){
                twelve minutes looked, on this panel, exactly like the box
                beside it. It sits under LAST because it describes that same
                session and nothing wider. */
-            ["PEAK",last?fmtKiB(last.peak):"—"]];
+            ["PEAK",last?fmtKiB(last.peak):"—"]].concat(camHeadroomRows(d.vitals));
   var tpw=118,tph=rows.length*14+22,tpx=x+w-pad-4-tpw,tpy=y+pad+2;
   X.fillStyle="rgba(4,8,14,0.55)";rr(X,tpx,tpy,tpw,tph,4);X.fill();
   X.strokeStyle=hexA(vc,0.30);X.lineWidth=1;rr(X,tpx,tpy,tpw,tph,4);X.stroke();
@@ -7065,6 +7091,10 @@ window.FLOORDEV={W:DW,H:DH,AGENTS:["claude","codex","grok","kimi"],
   alert:function(box){var u=ROSTER.filter(function(x){return UNITID(x)===box;})[0];return u?alertOf(u):"";},
   alertData:function(d){return alertData(d);},
   fleetStateData:function(u,d){return fleetStateData(u,d);},
+  /* The exact two rows drawCamCell appends. Browser coverage observes the
+     canvas paint too; this hook gives missing and measured pairs stable values
+     without reimplementing the conversion in the test. */
+  camHeadroom:function(v){return camHeadroomRows(v);},
   /* The floor header's left-hand labels, exactly as painted. */
   header:function(){return floorHeaderLabels();},
   /* The SHIPPED confirm sentence for Restart AND the mode it authorises, over

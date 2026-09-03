@@ -92,6 +92,7 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
      can still describe what the disconnected painter would have drawn. */
   await page.addInitScript(() => {
     window.__floorHeaderPaint = [];
+    window.__camHeadroomPaint = [];
     const fillText = CanvasRenderingContext2D.prototype.fillText;
     CanvasRenderingContext2D.prototype.fillText = function (text, x, y) {
       if (this.canvas && this.canvas.id === 'scene' && y <= 130) {
@@ -104,6 +105,11 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
           descent: metrics.actualBoundingBoxDescent || 0,
         });
         if (window.__floorHeaderPaint.length > 200) window.__floorHeaderPaint.shift();
+      }
+      if (this.canvas && this.canvas.id === 'scene' &&
+          (/^(MEM|DISK)$/.test(String(text)) || /^\d+(?:\.\d+)?\/\d+(?:\.\d+)?G$/.test(String(text)))) {
+        window.__camHeadroomPaint.push(String(text));
+        if (window.__camHeadroomPaint.length > 400) window.__camHeadroomPaint.shift();
       }
       return fillText.apply(this, arguments);
     };
@@ -215,6 +221,30 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
     ok('floor: the serving version is not dropped or hardcoded',
        snapshot.version === process.env.FLOOR_TEST_VERSION,
        `expected ${process.env.FLOOR_TEST_VERSION}, got ${snapshot.version}`);
+    const headroom = await page.evaluate(() => ({
+      measured: window.FLOORDEV.camHeadroom({fields:{
+        mem_total_mb:'8090', mem_avail_mb:'1844',
+        disk_total_mb:'61440', disk_used_mb:'48128',
+      }}),
+      absent: window.FLOORDEV.camHeadroom(null),
+      noMemory: window.FLOORDEV.camHeadroom({fields:{
+        disk_total_mb:'61440', disk_used_mb:'48128',
+      }}),
+      noDisk: window.FLOORDEV.camHeadroom({fields:{
+        mem_total_mb:'8090', mem_avail_mb:'1844',
+      }}),
+      painted: window.__camHeadroomPaint.slice(),
+    }));
+    eq('god view: memory is current/max', '6.1/7.9G', headroom.measured[0][1]);
+    eq('god view: disk is current/max', '47/60G', headroom.measured[1][1]);
+    eq('god view: an old engine gives MEM an em dash', '—', headroom.absent[0][1]);
+    eq('god view: an old engine gives DISK an em dash', '—', headroom.absent[1][1]);
+    eq('god view: an unreadable free gives MEM an em dash', '—', headroom.noMemory[0][1]);
+    eq('god view: an unreadable df gives DISK an em dash', '—', headroom.noDisk[1][1]);
+    ok('god view: the shipped canvas paints both headroom rows',
+       headroom.painted.includes('MEM') && headroom.painted.includes('DISK') &&
+         headroom.painted.some((x) => /^\d+(?:\.\d+)?\/\d+(?:\.\d+)?G$/.test(x)),
+       headroom.painted.join(', '));
     for (let repeat = 1; repeat <= BYLINE_REPEATS; repeat++) {
       for (const width of [1400, 1600]) {
         await page.setViewportSize({ width, height: 1000 });

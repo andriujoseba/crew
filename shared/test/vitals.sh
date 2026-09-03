@@ -84,6 +84,57 @@ has  "agree-emits-platform"     "$out" "platform=linux"
 hasnt "agree-marks-no-cpu-finding"    "$out" "cpu-profile-mismatch"
 hasnt "agree-marks-no-memory-finding" "$out" "memory-profile-mismatch"
 hasnt "agree-marks-no-disk-finding"   "$out" "disk-profile-mismatch"
+hasnt "agree-marks-no-memory-low"     "$out" "memory-low"
+hasnt "agree-marks-no-disk-low"       "$out" "disk-low"
+
+# --- current headroom -------------------------------------------------------
+B="$(mk_box disk-low)"
+sed -i 's/48%/94%/' "$B/bin/df"
+out="$(run_probe "$B" BOX_DISK=30GiB)"
+has "disk-low-at-94" "$out" "finding=disk-low:want=under-90%,got=94%"
+
+B="$(mk_box disk-healthy)"
+sed -i 's/48%/60%/' "$B/bin/df"
+out="$(run_probe "$B" BOX_DISK=30GiB)"
+hasnt "disk-healthy-at-60" "$out" "disk-low"
+
+B="$(mk_box memory-low)"
+sed -i 's/3128"$/300"/' "$B/bin/free"
+out="$(run_probe "$B" BOX_MEMORY=4GiB)"
+has "memory-low-on-pair" "$out" \
+  "finding=memory-low:want=over-10%-available,got=7.79%-available(300/3850MiB)"
+
+B="$(mk_box memory-at-threshold)"
+sed -i 's/3128"$/385"/' "$B/bin/free"
+out="$(run_probe "$B" BOX_MEMORY=4GiB)"
+has "memory-low-at-exact-threshold" "$out" \
+  "finding=memory-low:want=over-10%-available,got=10%-available(385/3850MiB)"
+
+B="$(mk_box memory-just-above-threshold)"
+sed -i 's/3128"$/420"/' "$B/bin/free"
+out="$(run_probe "$B" BOX_MEMORY=4GiB)"
+hasnt "memory-healthy-just-above-threshold" "$out" "memory-low"
+
+# Operator overrides replace the table default without copying it elsewhere.
+out="$(run_probe "$B" BOX_MEMORY=4GiB VITALS_MEMORY_LOW_PCT=5)"
+hasnt "memory-low-operator-override" "$out" "memory-low"
+B="$(mk_box disk-override)"
+sed -i 's/48%/60%/' "$B/bin/df"
+out="$(run_probe "$B" BOX_DISK=30GiB VITALS_DISK_LOW_PCT=55)"
+has "disk-low-operator-override" "$out" "finding=disk-low:want=under-55%,got=60%"
+
+B="$(mk_box disk-full-override)"
+sed -i 's/48%/100%/' "$B/bin/df"
+out="$(run_probe "$B" BOX_DISK=30GiB VITALS_DISK_LOW_PCT=100)"
+has "disk-full-accepts-100-override" "$out" \
+  "finding=disk-low:want=under-100%,got=100%"
+
+B="$(mk_box disk-leading-zero-override)"
+sed -i 's/48%/94%/' "$B/bin/df"
+out="$(run_probe "$B" BOX_DISK=30GiB VITALS_DISK_LOW_PCT=09)"
+has "disk-leading-zero-falls-back-to-table" "$out" \
+  "finding=disk-low:want=under-90%,got=94%"
+hasnt "disk-leading-zero-is-not-rendered" "$out" "under-09%"
 
 # --- 2. disagreeing profile --------------------------------------------------
 # MUST-FAIL: a profile mismatch going unmarked. The fixture reads 2 cores /
@@ -332,6 +383,7 @@ hasnt "degrade-omits-mem-avail"      "$out" "mem_avail_mb="
 hasnt "degrade-writes-no-unknown"    "$out" "unknown"
 # A missing memory reading must not manufacture a memory FINDING either.
 hasnt "degrade-marks-no-memory-finding" "$out" "memory-profile-mismatch"
+hasnt "degrade-marks-no-memory-low" "$out" "memory-low"
 
 # A second missing field, on a different reader, so the degradation is not
 # one special case in the memory path.
@@ -346,6 +398,7 @@ has   "degrade-df-record-still-emits" "$out" "VITALS ts="
 has   "degrade-df-keeps-mem"          "$out" "mem_total_mb=3850"
 hasnt "degrade-df-omits-disk"         "$out" "disk_total_mb="
 hasnt "degrade-df-marks-no-finding"   "$out" "disk-profile-mismatch"
+hasnt "degrade-df-marks-no-disk-low"  "$out" "disk-low"
 
 # --- 5. the disk series is backfilled from boot-check.log (D5) ---------------
 # MUST-FAIL: the disk series starting at the first tick. The boot gate has
@@ -387,6 +440,39 @@ has "series-does-not-replace-live-disk" "$out" "disk_pct=48"
 # header" would take the word `github.com` as a series point.
 same "series-has-exactly-three-points" "3" \
   "$(printf '%s\n' "$out" | tr ' ' '\n' | sed -n 's/^disk_series=//p' | tr ',' '\n' | grep -c '@')"
+
+# A full twelve-reading monotonic rise is itself a disk-low finding, even
+# below the point threshold. The trend is why the boot series exists.
+B="$(mk_box series-rising)"
+BC="$B/boot-check.log"
+for i in 1 2 3 4 5 6 7 8 9 10 11 12; do
+  boot_block "$BC" "2026-08-$(printf '%02d' "$i")T09:00:01+00:00" \
+    "/dev/sda2        58G  2.5G   56G   $((36 + i))% /"
+done
+out="$(run_probe "$B" BOX_DISK=30GiB BOOT_CHECK_LOG="$BC")"
+has "series-rising-is-a-disk-finding" "$out" \
+  "finding=disk-low:want=under-90%,got=48%-after-12-rising-boots"
+
+# Eleven rising points are not the declared twelve-boot window, and one fall
+# inside a full window breaks monotonicity. Either shape must stay clean.
+B="$(mk_box series-short)"
+BC="$B/boot-check.log"
+for i in 1 2 3 4 5 6 7 8 9 10 11; do
+  boot_block "$BC" "2026-08-$(printf '%02d' "$i")T09:00:01+00:00" \
+    "/dev/sda2        58G  2.5G   56G   $((20 + i))% /"
+done
+out="$(run_probe "$B" BOX_DISK=30GiB BOOT_CHECK_LOG="$BC")"
+hasnt "series-short-is-not-a-disk-finding" "$out" "disk-low"
+
+B="$(mk_box series-fell)"
+BC="$B/boot-check.log"
+for i in 1 2 3 4 5 6 7 8 9 10 11 12; do
+  pct=$((30 + i)); [ "$i" -eq 8 ] && pct=32
+  boot_block "$BC" "2026-08-$(printf '%02d' "$i")T09:00:01+00:00" \
+    "/dev/sda2        58G  2.5G   56G   ${pct}% /"
+done
+out="$(run_probe "$B" BOX_DISK=30GiB BOOT_CHECK_LOG="$BC")"
+hasnt "series-with-a-fall-is-not-a-disk-finding" "$out" "disk-low"
 
 # A boot the gate could not complete writes a header and no df line. It
 # contributes no point rather than a point with the previous block's number.
@@ -463,7 +549,10 @@ has  "record-timestamp-is-utc-iso8601" "$out" "Z "
 mk_tick_dir() { # mk_tick_dir <name> — a fixture DUTY_DIR wired like a real box
   local d="$WORK/$1"
   mkdir -p "$d/bin" "$d/conf/roles"
+  mkdir -p "$d/lib/common"
   cp "$SHARED/bin/vitals.sh" "$d/bin/vitals.sh"
+  cp "$SHARED/lib/common/operating-limits.sh" "$d/lib/common/operating-limits.sh"
+  cp "$SHARED/conf/fleet.defaults.conf" "$d/conf/fleet.defaults.conf"
   # The job the tick dispatches: writes the evidence line duty.sh writes, and
   # nothing else. tick.sh's contract is about that line's presence, so a stub
   # is the right subject — a real duty.sh would drag the whole engine in.
@@ -546,5 +635,25 @@ log="$(cat "$LOGF" 2>/dev/null || true)"
 same "tick-without-conf-still-emits" "1" "$(vitals_lines "$LOGF")"
 hasnt "tick-without-conf-has-no-profile-finding" "$log" "profile-mismatch"
 has  "tick-without-conf-still-ticks" "$log" "duty run start"
+
+# The tick loads fleet defaults and the operator overlay before the probe. A
+# standalone probe accepts env overrides above; these guards prove an installed
+# tick actually supplies persistent fleet.conf values.
+has "tick-loads-vitals-defaults" "$(sed -n '/fleet.defaults.conf/p' "$SHARED/bin/tick.sh")" \
+  'fleet.defaults.conf'
+has "tick-loads-vitals-operator-overlay" "$(sed -n '/fleet.conf/p' "$SHARED/bin/tick.sh")" \
+  'fleet.conf'
+
+# MUST-FAIL: a host-side threshold. The consoles quote generic finding tokens;
+# neither reader may learn either finding name and re-derive it.
+ROOT="$(dirname "$SHARED")"
+for host_reader in "$ROOT/cli/crew" "$ROOT/fleet-floor/src/app.js" \
+                   "$ROOT/fleet-floor/server/floor/units.py"; do
+  if grep -Eq 'disk-low|memory-low|VITALS_(DISK|MEMORY)_LOW_PCT' "$host_reader"; then
+    same "headroom-policy-stays-box-side: ${host_reader#"$ROOT/"}" clean contaminated
+  else
+    same "headroom-policy-stays-box-side: ${host_reader#"$ROOT/"}" clean clean
+  fi
+done
 
 suite_finish

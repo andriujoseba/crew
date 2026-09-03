@@ -1,8 +1,9 @@
 # common/operating-limits.sh — the engine's declared operating limits and the
 # warning/error boundary shared by every caller.
 #
-# A module of shared/lib/common.sh, which is the entry point: nothing sources
-# this file directly.
+# A module of shared/lib/common.sh, which is the engine entry point. The
+# standalone vitals probe also sources this table directly: it runs before the
+# duty engine and still needs the same single source for box headroom limits.
 #
 # shellcheck shell=bash
 # shellcheck disable=SC2034  # named reads are consumed by sibling modules
@@ -17,6 +18,8 @@ declare -Ag OPERATING_LIMITS=(
   [github_rest_page]=100
   [session_kill_grace_seconds]=60
   [session_terminal_failures]=3
+  [vitals_disk_used_pct]=90
+  [vitals_memory_available_pct]=10
 )
 
 # Config and engine files are installed by separate atomic renames, so a tick

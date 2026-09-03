@@ -56,6 +56,12 @@ fi
   # comparison. Sourced best-effort and per-role: a box with no instance.conf
   # yet still emits a record, just without the profile findings.
   CONF_DIR="${CONF_DIR:-$DUTY_DIR/conf}"
+  # Headroom overrides are fleet policy. Defaults stay in the operating-limit
+  # table; these files can supply only an operator's explicit override.
+  # shellcheck disable=SC1091
+  [ -r "$CONF_DIR/fleet.defaults.conf" ] && . "$CONF_DIR/fleet.defaults.conf"
+  # shellcheck disable=SC1091
+  [ -r "$CONF_DIR/fleet.conf" ] && . "$CONF_DIR/fleet.conf"
   # shellcheck disable=SC1091
   [ -r "$CONF_DIR/instance.conf" ] && . "$CONF_DIR/instance.conf"
   for _role in ${BOT_ROLES:-}; do
