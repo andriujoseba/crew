@@ -1270,19 +1270,30 @@ case "$OUT" in *'nosuchbox: not present'*) r1=named ;; *) r1="$OUT" ;; esac
 t reset-absent-box-is-named named "$r1"
 
 # --- D2: an armed checkpoint is never a clone source ------------------------
-
+#
+# A MINT IS COUNTED BY ITS --name, not by the `new` verb. The clone path asks
+# `box new --help` first — the clone-sizing capability probe (#607 D5) — and the
+# stub logs every `new` it is handed, so a bare `^new` count reads the question
+# as a second box. Counting the mints by the flag only a mint carries keeps this
+# block measuring what it is about (which sources are refused) rather than how
+# many times crew happened to say the word.
 reset_case
 capture new --name gamma --role builder --agent claude --from alpha/armed
 t reset-armed-is-refused-as-a-clone-source 1 "$RC"
 case "$OUT" in *"refusing to clone 'alpha/armed'"*"alpha's live credentials"*) r1=named ;; *) r1="$OUT" ;; esac
 t reset-clone-refusal-is-named named "$r1"
-t reset-clone-refusal-mints-nothing 0 "$(calls_of 'new')"
+t reset-clone-refusal-mints-nothing 0 "$(calls_of 'new --name')"
+# ...and it is refused before crew touches box at all. The credential guard sits
+# at the top of create_box, above the role conf and above the probe, so the
+# refusal costs no round trip — and pinning that here is what keeps it there
+# when the next flag needs asking about.
+t reset-clone-refusal-never-even-probes 0 "$(calls_of 'new --help')"
 
 # A gold snapshot is still a clone source: the guard is the label, not --from.
 reset_case
 capture new --name gamma --role builder --agent claude --from alpha/gold-crew-0.1.3
 t reset-gold-remains-a-clone-source 0 "$RC"
-t reset-gold-clone-mints 1 "$(calls_of 'new')"
+t reset-gold-clone-mints 1 "$(calls_of 'new --name')"
 
 # The roster's own fourth column goes through the same guard: create-all and
 # up read it, and a roster line is exactly where this would go unnoticed.
@@ -1290,7 +1301,7 @@ reset_case
 printf 'gamma claude builder alpha/armed\n' >>"$CONF/fleet.roster"
 capture new gamma
 t reset-roster-armed-source-is-refused 1 "$RC"
-t reset-roster-armed-source-mints-nothing 0 "$(calls_of 'new')"
+t reset-roster-armed-source-mints-nothing 0 "$(calls_of 'new --name')"
 sed -i '/^gamma /d' "$CONF/fleet.roster"
 
 # --- the on-demand reaper entry point (D7 step 1) ---------------------------
