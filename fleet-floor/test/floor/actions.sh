@@ -480,6 +480,21 @@ else
 fi
 t "message: builder default is its longest layered session timeout" 3600 \
   "$(sed -n 's/.* timeout=\([0-9]*\)s .*/\1/p' "$FLOOR_STATE/ff-working.home/duty/duty.log" | tail -1)"
+FF_MESSAGE_TIMEOUT_SOURCE="$(FF_SERVER="$FLOOR/server" python3 - <<'PY'
+import os, sys
+sys.path.insert(0, os.environ["FF_SERVER"])
+from floor.actions import MESSAGE_SH
+print("literal=%s" % ("1800" in MESSAGE_SH))
+print("record=%s" % ('timeout=%ss' in MESSAGE_SH and '"$operator_timeout" "$slog"' in MESSAGE_SH))
+print("wall=%s" % ('timeout -k 60 "$operator_timeout"' in MESSAGE_SH))
+PY
+)"
+t "message: MESSAGE_SH carries no literal 1800 timeout" False \
+  "$(sed -n 's/^literal=//p' <<<"$FF_MESSAGE_TIMEOUT_SOURCE")"
+t "message: the start record uses operator_timeout" True \
+  "$(sed -n 's/^record=//p' <<<"$FF_MESSAGE_TIMEOUT_SOURCE")"
+t "message: the enforced wall uses operator_timeout" True \
+  "$(sed -n 's/^wall=//p' <<<"$FF_MESSAGE_TIMEOUT_SOURCE")"
 if FF_SERVER="$FLOOR/server" python3 - <<'PY'
 import os, sys
 sys.path.insert(0, os.environ["FF_SERVER"])
