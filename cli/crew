@@ -689,10 +689,12 @@ from inside it.
 --all means the ROSTER, never every box on the host. A held or unreadable duty
 lock is skipped and makes the command exit 3, on #588's contract and its
 ${RESTART_FORCE_AFTER_HOURS}-hour --force-after default: a reset destroys in-flight work exactly
-as a restart does. --force-after forces the RESTORE path only. It does not
-apply to --cut, which is skipped on a held lock however old: the on-demand
-reaper takes that same lock, and a checkpoint of a box that could not be
-reclaimed becomes the floor every later reset returns to.
+as a restart does.
+
+--force-after forces the RESTORE path only, and does not apply to --cut: the
+cut is skipped on a held lock however old, because the on-demand reaper takes
+that same lock and a checkpoint of a box that could not be reclaimed becomes
+the floor every later reset returns to.
 EOF
       ;;
     floor) cat <<'EOF'

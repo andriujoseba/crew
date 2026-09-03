@@ -239,7 +239,25 @@ capture() {
   if OUT="$(run_crew "$@" 2>&1)"; then RC=0; else RC=$?; fi
 }
 
-arm() { printf '%s\n' "armed" >"$STATE/snaps-$1"; }
+# arm NAME [VERSION] — the state a real `--cut` leaves: the guest-side label
+# AND its host-side record. The two are separate stores and drift apart in
+# real life, so the label-only helper below is a DIFFERENT state and not a
+# shorthand for this one — a restore of it is refused, and the fixture for
+# that says so by name. The green path is still proved by driving the real
+# `--cut` (reset-restores-and-starts and friends do exactly that); this pair
+# exists so the fixtures that are about something else can set a starting
+# state without four commands.
+arm() {
+  arm_label_only "$1"
+  mkdir -p "$CONF/checkpoints"
+  {
+    printf '# crew reset checkpoint record for %s (#589 D5). Written by the fixture.\n' "$1"
+    printf 'CHECKPOINT_VERSION=%s\n' "${2:-0.1.3}"
+    printf 'CHECKPOINT_CUT_AT=2026-09-02T00:00:00Z\n'
+    printf 'CHECKPOINT_STALE=\n'
+  } >"$CONF/checkpoints/$1.conf"
+}
+arm_label_only() { printf '%s\n' "armed" >"$STATE/snaps-$1"; }
 calls_of() { grep -c "^$1" "$STATE/calls" 2>/dev/null || true; }
 
 # --- D2: the help states the credential fact and the trust boundary ---------
@@ -464,6 +482,68 @@ capture upgrade alpha
 t reset-upgrade-without-a-checkpoint-writes-nothing absent \
   "$([ -f "$CONF/checkpoints/alpha.conf" ] && echo present || echo absent)"
 
+# --- D5: AN UNKNOWN VERSION IS NOT A MATCHING ONE ---------------------------
+#
+# The label is guest-side and the record is host-side, so an `armed` snapshot
+# with no readable record is a reachable state, not a hypothetical: `--cut`'s
+# own checkpoint_record failing after `box snapshot` landed leaves exactly
+# this behind (and says so), as do a re-pointed CREW_CONFIG_DIR and a host
+# config restored from a backup predating the cut. Restoring it cannot be
+# proved not to downgrade the engine, which is the whole of D5's hazard.
+
+reset_case
+arm_label_only alpha
+capture reset alpha
+t reset-armed-without-a-record-is-refused 1 "$RC"
+case "$OUT" in *'records no engine version'*'crew reset --cut alpha'*) r1=named ;; *) r1="$OUT" ;; esac
+t reset-recordless-checkpoint-names-the-repair named "$r1"
+t reset-recordless-checkpoint-restores-nothing 0 "$(calls_of 'restore')"
+t reset-recordless-checkpoint-stops-nothing 0 "$(calls_of 'down')"
+
+# The same box after an upgrade. This is the transcript that must never read
+# `restored to armed (crew@unknown)` again: cmd_upgrade writes no mark on a
+# box with no record — correctly, there is nothing to invalidate — so the
+# record is not where the refusal can come from, and the reset must refuse on
+# the absence itself.
+reset_case
+arm_label_only alpha
+capture upgrade alpha
+t reset-recordless-upgrade-succeeds 0 "$RC"
+: >"$STATE/calls"
+RST_STAMP_alpha=0.9.9 capture reset alpha
+t reset-after-upgrade-of-a-recordless-box-is-refused 1 "$RC"
+case "$OUT" in *'crew@unknown'*) r1="$OUT" ;; *) r1=quiet ;; esac
+t reset-recordless-box-never-restores-at-unknown quiet "$r1"
+t reset-recordless-box-after-upgrade-restores-nothing 0 "$(calls_of 'restore')"
+
+# A record that exists but carries no version — unreadable and malformed land
+# in the same place, because checkpoint_field answers empty for all three and
+# none of them is evidence that the versions agree.
+reset_case
+arm_label_only alpha
+mkdir -p "$CONF/checkpoints"
+printf 'CHECKPOINT_STALE=\n' >"$CONF/checkpoints/alpha.conf"
+capture reset alpha
+t reset-malformed-record-is-refused 1 "$RC"
+t reset-malformed-record-restores-nothing 0 "$(calls_of 'restore')"
+
+# --- D5: a stale mark that could not be written is NOT reported as written --
+#
+# checkpoint_mark_stale returned 0 on every failure path, so `|| true` could
+# never see one and the upgrade printed its STALE note either way. The same
+# malformed record above is the deterministic failure: grep -v selects no
+# lines from it, so the rewrite has nothing to build from.
+reset_case
+arm_label_only alpha
+mkdir -p "$CONF/checkpoints"
+printf 'CHECKPOINT_STALE=\n' >"$CONF/checkpoints/alpha.conf"
+capture upgrade alpha
+t reset-unwritable-stale-mark-does-not-fail-the-upgrade 0 "$RC"
+case "$OUT" in *'could NOT be marked stale'*'crew reset --cut alpha'*) r1=warned ;; *) r1="$OUT" ;; esac
+t reset-unwritable-stale-mark-is-warned warned "$r1"
+case "$OUT" in *'checkpoint is now STALE'*) r1="$OUT" ;; *) r1=quiet ;; esac
+t reset-unwritable-stale-mark-claims-nothing quiet "$r1"
+
 # --- D6: the drain contract, inherited from #588 ----------------------------
 
 for path in "--cut alpha" "alpha"; do
@@ -493,6 +573,40 @@ capture reset alpha --force-after 1
 t reset-force-after-proceeds 0 "$RC"
 case "$OUT" in *'force-after reached; proceeding'*) r1=announced ;; *) r1="$OUT" ;; esac
 t reset-force-after-is-announced announced "$r1"
+t reset-force-after-restores 1 "$(calls_of 'restore alpha armed')"
+
+# --force-after FORCES THE RESTORE AND NOT THE CUT, and the cut path says so
+# rather than discovering it. D6 gives the flag the same meaning on both
+# paths; D7 step 1 makes the cut run a reaper that takes this same duty lock
+# with `flock -n`. Both cannot hold. Forcing the cut anyway would either sweep
+# under a live session (#457 D1's hazard) or freeze an unreclaimed box as the
+# floor every later reset returns to — so a held lock skips the cut at 3
+# however old it is, which is what `crew help reset` states the contract to
+# be. What must never happen again is the emergent answer: announcing
+# "proceeding" and then failing at 1 in the reaper, without measuring.
+reset_case
+arm alpha
+printf 'busy:7260\n' >"$STATE/probe-alpha"
+RST_PCT_BEFORE=95 RST_PCT_AFTER=60 capture reset --cut alpha --force-after 1
+t reset-cut-force-after-is-a-busy-skip 3 "$RC"
+case "$OUT" in *'alpha: SKIPPED busy — duty lock held for 2h 01m'*'--force-after does not apply to --cut'*) r1=named ;; *) r1="$OUT" ;; esac
+t reset-cut-force-after-refusal-is-named named "$r1"
+case "$OUT" in *'force-after reached; proceeding'*) r1="$OUT" ;; *) r1=quiet ;; esac
+t reset-cut-force-after-announces-nothing-it-cannot-do quiet "$r1"
+t reset-cut-force-after-never-reaps 0 "$(calls_of 'reap')"
+t reset-cut-force-after-never-measures 0 "$(calls_of 'root-df')"
+t reset-cut-force-after-cuts-nothing 0 "$(calls_of 'snapshot')"
+case "$OUT" in *'reset --cut: 0 cut, 1 skipped-busy, 0 failed'*'skipped: alpha'*) r1=skipped ;; *) r1="$OUT" ;; esac
+t reset-cut-force-after-is-counted-as-skipped skipped "$r1"
+
+# The help is the other half of "stated rather than emergent".
+reset_case
+capture help reset
+# One line, not two: the help wraps, and a needle spanning its line break
+# would read as absent while the sentence is plainly there (#363's lesson,
+# from the other side).
+case "$OUT" in *'forces the RESTORE path only, and does not apply to --cut'*) r1=stated ;; *) r1="$OUT" ;; esac
+t reset-help-states-force-after-does-not-apply-to-cut stated "$r1"
 
 reset_case
 capture reset alpha --force-after 00
@@ -527,21 +641,47 @@ t reset-no-target-is-a-usage-error 2 "$RC"
 
 # --- --all is the ROSTER, never every box on the host -----------------------
 
+# `arm` and not a bare label here: this fixture's subject is WHICH boxes the
+# roster covers, so it must set a state whose restore is legitimate. Arming
+# three labels with no records — which is what it did — asserted that a
+# checkpoint of unknown version restores, blessing the D5 fail-open below in
+# a fixture that is not even about D5.
 reset_case
 arm alpha; arm beta; arm offroster
 capture reset --all
 t reset-all-restores-the-roster 2 "$(calls_of 'restore')"
 t reset-all-leaves-offroster 0 "$(grep -c 'offroster' "$STATE/calls" || true)"
 
-# --- a stopped box is refused, never silently skipped -----------------------
+# --- a stopped box: refused for the CUT, restored where it stands -----------
+#
+# Only the cut looks inside the box — the login probe, the engine stamp, the
+# reaper and `df` all run in it. The restore reads a host-side record and
+# stops the box as its first act anyway, so refusing it there was gratuitous
+# and disagreed with the sibling verb (`crew restart` answers this same state
+# by starting the box).
+
+reset_case
+arm alpha
+printf 'stopped\n' >"$STATE/state-alpha"
+capture reset --cut alpha
+t reset-cut-stopped-box-is-refused 1 "$RC"
+case "$OUT" in *'alpha: REFUSED — stopped'*'reads its login, its engine and its disk from inside it'*'box start alpha'*) r1=named ;; *) r1="$OUT" ;; esac
+t reset-cut-stopped-box-is-named named "$r1"
+t reset-cut-stopped-box-cuts-nothing 0 "$(calls_of 'snapshot')"
+case "$OUT" in *'reset --cut: 0 cut, 0 skipped-busy, 1 failed'*) r1=failed ;; *) r1="$OUT" ;; esac
+t reset-cut-stopped-box-is-a-failure-not-a-skip failed "$r1"
 
 reset_case
 arm alpha
 printf 'stopped\n' >"$STATE/state-alpha"
 capture reset alpha
-t reset-stopped-box-is-refused 1 "$RC"
-case "$OUT" in *'alpha: REFUSED — stopped'*'box start alpha'*) r1=named ;; *) r1="$OUT" ;; esac
-t reset-stopped-box-is-named named "$r1"
+t reset-stopped-box-is-restored 0 "$RC"
+case "$OUT" in *'alpha: already stopped; restoring'*) r1=announced ;; *) r1="$OUT" ;; esac
+t reset-stopped-box-is-announced announced "$r1"
+# Not stopped a second time, and started at the end — cycle_box's own answer.
+t reset-stopped-box-is-not-stopped-again 0 "$(calls_of 'down')"
+t reset-stopped-box-restores-and-starts $'restore alpha armed --force\nstart alpha' \
+  "$(grep -E '^(restore|start) alpha' "$STATE/calls")"
 
 reset_case
 capture reset nosuchbox
