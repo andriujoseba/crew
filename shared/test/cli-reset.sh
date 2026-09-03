@@ -819,6 +819,88 @@ for good in 0.1.3 0.1.3-dev 12.0.4-rc.1; do
   t "reset-version-record-$good-restores" 0 "$RC"
 done
 
+# --- checkpoint_field's contract, driven where nothing suppresses it --------
+#
+# THE CASES ABOVE CANNOT KILL THIS ONE, AND THAT IS WHY IT EXISTS. `crew`
+# runs under `set -euo pipefail`, and checkpoint_field used to end on a bare
+# pipeline: an unreadable record made it exit 2 through pipefail, a duplicate
+# key would make it exit 141 through head's SIGPIPE. Whether that aborts the
+# command or is inert depends entirely on the CALLER — bash suppresses errexit
+# for the whole dynamic extent of a function invoked in a condition or an
+# `&&`/`||` list, and all three call sites are exactly that:
+#
+#   hire_box       checkpoint_stale_gate "$name" "$want" || return 1
+#   cmd_upgrade    if ! checkpoint_stale_gate "$b" "$want"; then
+#   cmd_reset      if restore_box "$name"; then
+#
+# So the mode-000 fixtures above pass with the fix reverted. They pin
+# behaviour that must not regress; they cannot pin the fix. What they cannot
+# reach is a call site written as a plain statement — the natural shape, and
+# the one that would abort a fleet verb between two boxes — so the helper is
+# taken out of production and run where errexit is live.
+#
+# Extracted, not copied. This suite family's idiom (boot-gate.sh's gate block,
+# common.sh's cleanup_all), and it fails closed the same way: if cli/crew ever
+# stops carrying the function under this name the extraction goes empty and
+# the case below reds, rather than quietly testing a fixture's own copy of
+# code that has moved on.
+CPF_SRC="$TMP/checkpoint-field.sh"
+awk '/^checkpoint_field\(\) \{/,/^\}$/' "$CLI" >"$CPF_SRC"
+t reset-checkpoint-field-extracted-from-the-real-file 1 \
+  "$(grep -c '^checkpoint_field() {' "$CPF_SRC")"
+CPF_DRIVER="$TMP/checkpoint-field-driver.sh"
+cat >"$CPF_DRIVER" <<'CPFEOF'
+#!/usr/bin/env bash
+# The production shell options, and NO suppressing context: the helper is
+# called from a plain assignment, which is what every future call site is one
+# refactor away from being.
+set -euo pipefail
+CONFIG_DIR="$1"
+checkpoint_dir() { printf '%s\n' "$CONFIG_DIR/checkpoints"; }
+checkpoint_file() { printf '%s\n' "$(checkpoint_dir)/$1.conf"; }
+source "$2"
+v="$(checkpoint_field CHECKPOINT_VERSION alpha)"
+printf 'REACHED [%s]\n' "$v"
+CPFEOF
+reset_case
+arm alpha
+chmod 000 "$CONF/checkpoints/alpha.conf"
+CPF_OUT="$(bash "$CPF_DRIVER" "$CONF" "$CPF_SRC" 2>/dev/null)" && CPF_RC=0 || CPF_RC=$?
+chmod 600 "$CONF/checkpoints/alpha.conf"
+# The statement AFTER the assignment runs. Reverting the fix stops here at
+# rc 2 with no output at all, which is the failure the review reproduced.
+t reset-checkpoint-field-unreadable-does-not-abort-its-caller 0 "$CPF_RC"
+t reset-checkpoint-field-unreadable-answers-empty 'REACHED []' "$CPF_OUT"
+
+# A readable record still answers, so the absorption did not turn the helper
+# into one that says nothing.
+reset_case
+arm alpha
+CPF_OUT="$(bash "$CPF_DRIVER" "$CONF" "$CPF_SRC" 2>/dev/null)" && CPF_RC=0 || CPF_RC=$?
+t reset-checkpoint-field-readable-still-answers 'REACHED [0.1.3]' "$CPF_OUT"
+t reset-checkpoint-field-readable-does-not-abort 0 "$CPF_RC"
+
+# A missing record: the `[ -f ]` arm, which always returned 0 and still must.
+reset_case
+CPF_OUT="$(bash "$CPF_DRIVER" "$CONF" "$CPF_SRC" 2>/dev/null)" && CPF_RC=0 || CPF_RC=$?
+t reset-checkpoint-field-missing-answers-empty 'REACHED []' "$CPF_OUT"
+t reset-checkpoint-field-missing-does-not-abort 0 "$CPF_RC"
+
+# A record carrying the key TWICE — and this case earned its place: it FAILED
+# against the first version of the fix, which kept `head -1` and absorbed the
+# pipeline's status. `head` closes the pipe after the first line, sed takes
+# SIGPIPE, pipefail promotes 141, and absorbing that answered EMPTY for a
+# readable record with a perfectly good version in it — turning an abort into
+# a false refusal, which is not an improvement. The pipe is gone instead. 2000
+# trailing lines so the race is not a coin toss.
+reset_case
+arm alpha
+{ printf 'CHECKPOINT_VERSION=0.1.3\n'; for _ in $(seq 1 2000); do printf 'CHECKPOINT_VERSION=9.9.9\n'; done; } \
+  >"$CONF/checkpoints/alpha.conf"
+CPF_OUT="$(bash "$CPF_DRIVER" "$CONF" "$CPF_SRC" 2>/dev/null)" && CPF_RC=0 || CPF_RC=$?
+t reset-checkpoint-field-duplicate-key-does-not-abort 0 "$CPF_RC"
+t reset-checkpoint-field-duplicate-key-takes-the-first 'REACHED [0.1.3]' "$CPF_OUT"
+
 # --- D5: THE STALE MARK IS A PRECONDITION TO MOVING THE ENGINE --------------
 #
 # Round 2 found the mark was written AFTER the install, by ONE of the three

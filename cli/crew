@@ -2678,15 +2678,15 @@ checkpoint_file() { printf '%s\n' "$(checkpoint_dir)/$1.conf"; }
 # box_agent reader makes about instance.conf).
 #
 # A READ THAT FAILS ANSWERS EMPTY, AND SAYS SO IN ITS CONTRACT — rc is always
-# 0. This used to end on the bare pipeline, so an unreadable record (mode 000,
-# a re-pointed CREW_CONFIG_DIR on a foreign uid) exited 2 through pipefail, and
-# a duplicate key exited 141 through head's SIGPIPE on a perfectly readable
-# one. Neither is a value, and under `set -euo pipefail` neither is inert: what
-# an assignment of it does depends entirely on whether the CALLER happens to
-# sit in a condition or an `&&`/`||` list, where errexit is suppressed. Every
-# caller does today, which is why nothing misbehaves — and that is not a
-# property anyone can maintain, because `local x; x="$(checkpoint_field …)"` in
-# a plain statement would abort a fleet verb mid-loop. So the failure is
+# 0. This used to end on a bare `sed … | head -1 | tr …`, which under `set -euo
+# pipefail` returns a FAILURE for an unreadable record (sed exits 2 on EACCES;
+# mode 000, or a re-pointed CREW_CONFIG_DIR owned by another uid). Whether that
+# aborts the command or is inert depends entirely on the CALLER — bash
+# suppresses errexit for the whole dynamic extent of a function invoked in a
+# condition or an `&&`/`||` list, and all three call sites happen to be exactly
+# that. So nothing misbehaves today, and that is not a property anybody can
+# maintain: `local x; x="$(checkpoint_field …)"` as a plain statement is one
+# refactor away and would abort a fleet verb between two boxes. The failure is
 # absorbed here, once, where the question is asked.
 #
 # Empty is the fail-safe answer and not a shrug: restore_box refuses on it, in
@@ -2695,11 +2695,19 @@ checkpoint_file() { printf '%s\n' "$(checkpoint_dir)/$1.conf"; }
 # versions agree". Captured and then printed rather than streamed, so a read
 # that fails PART WAY through cannot emit a truncated version string that
 # compares as a real one.
+#
+# AND `head` IS GONE RATHER THAN ABSORBED, which the fixtures caught and the
+# first draft of this fix did not. `head -1` closes the pipe on the first
+# match, so on a record carrying the key twice — a readable file, nothing
+# wrong with it — sed takes SIGPIPE, pipefail promotes 141, and collapsing
+# THAT to empty would refuse a box whose checkpoint is perfectly good. sed
+# stops itself with `q` instead: one process, no pipe to break, and "the first
+# value wins" stays true because it is the only one read.
 checkpoint_field() { # KEY BOX — rc 0 always; empty when it cannot be answered
   local f v
   f="$(checkpoint_file "$2")"
   [ -f "$f" ] || return 0
-  v="$(sed -n "s/^$1=//p" "$f" 2>/dev/null | head -1 | tr -d '"'\''\r')" || v=
+  v="$(sed -n "/^$1=/{s/^$1=//p;q;}" "$f" 2>/dev/null | tr -d '"'\''\r')" || v=
   printf '%s\n' "$v"
 }
 checkpoint_record() { # BOX VERSION — the cut's own write; clears any stale mark
