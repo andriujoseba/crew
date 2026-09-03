@@ -330,6 +330,68 @@ case "$OUT" in *'alpha: REFUSED — not hired'*) r1=named ;; *) r1="$OUT" ;; esa
 t reset-cut-unhired-is-named named "$r1"
 t reset-cut-unhired-cuts-nothing 0 "$(calls_of 'snapshot')"
 
+# LOGGED IN IS BOTH HALVES. `crew help`'s own lifecycle prose puts the vendor
+# CLI's login beside `gh auth login` as one human step, and the cut proved only
+# the GitHub half — so a box with live GitHub credentials and a logged-out
+# Claude/Codex CLI was checkpointed as `armed`. That is the half-built box D1
+# refuses: every session it starts dies at the model, and the checkpoint would
+# freeze that state as the one the fleet returns to every week.
+reset_case
+RST_VENDOR_OUT=alpha capture reset --cut alpha
+t reset-cut-refuses-a-vendor-logged-out-box 1 "$RC"
+case "$OUT" in *'alpha: REFUSED — its claude CLI is not logged in'*) r1=named ;; *) r1="$OUT" ;; esac
+t reset-cut-vendor-logout-is-named named "$r1"
+t reset-cut-vendor-logout-cuts-nothing 0 "$(calls_of 'snapshot')"
+# The GitHub half passed. Without that, this fixture would pass on the old
+# code too — it has to be the vendor probe that does the refusing.
+t reset-cut-vendor-logout-passed-the-github-half 1 "$(calls_of 'login-probe alpha')"
+t reset-cut-probes-the-vendor-login 1 "$(calls_of 'vendor-probe alpha')"
+# Never reached the reaper: D1 is a precondition, not a post-check.
+t reset-cut-vendor-logout-never-reaps 0 "$(calls_of 'reap')"
+
+# The agent comes from the instance.conf the install wrote, not the roster, so
+# it covers an off-roster box and answers with what the box IS. A box that
+# cannot say is refused rather than probed against a guess.
+reset_case
+RST_AGENT_alpha="" capture reset --cut alpha
+t reset-cut-refuses-a-box-with-no-recorded-agent 1 "$RC"
+case "$OUT" in *'does not say which agent it was installed as'*'crew hire alpha'*) r1=named ;; *) r1="$OUT" ;; esac
+t reset-cut-unknown-agent-is-named named "$r1"
+t reset-cut-unknown-agent-never-probes-a-vendor 0 "$(calls_of 'vendor-probe')"
+t reset-cut-unknown-agent-cuts-nothing 0 "$(calls_of 'snapshot')"
+
+reset_case
+RST_AGENT_alpha=nosuchvendor capture reset --cut alpha
+t reset-cut-refuses-an-agent-with-no-profile 1 "$RC"
+case "$OUT" in *"installed as agent 'nosuchvendor'"*'resolves to no profile'*) r1=named ;; *) r1="$OUT" ;; esac
+t reset-cut-unresolvable-profile-is-named named "$r1"
+t reset-cut-unresolvable-profile-cuts-nothing 0 "$(calls_of 'snapshot')"
+
+# The vendor probe is per-box and reads the box's own agent: beta is a codex
+# box, and its refusal says codex.
+reset_case
+RST_VENDOR_OUT=beta capture reset --cut beta
+case "$OUT" in *'beta: REFUSED — its codex CLI is not logged in'*) r1=named ;; *) r1="$OUT" ;; esac
+t reset-cut-vendor-refusal-names-the-boxs-own-agent named "$r1"
+
+# --- D5's write side: an unparseable stamp is not a version to record -------
+#
+# This coerced to the literal `unknown` and RECORDED it, so `--cut` put a
+# nonempty non-version into CHECKPOINT_VERSION by its own hand and the
+# emptiness check downstream sailed past it. Legacy SHA-only stamps are a
+# supported, reachable state (fleet-floor/test/cli.sh pins them), so this is
+# the ordinary path for an old box and not a corner.
+reset_case
+RST_STAMP_alpha=1a2b3c4d capture reset --cut alpha
+t reset-cut-refuses-an-unparseable-stamp 1 "$RC"
+case "$OUT" in *"engine stamp 'crew@1a2b3c4d' is not a version that can be recorded"*) r1=named ;; *) r1="$OUT" ;; esac
+t reset-cut-unparseable-stamp-is-named named "$r1"
+t reset-cut-unparseable-stamp-cuts-nothing 0 "$(calls_of 'snapshot')"
+t reset-cut-unparseable-stamp-records-nothing absent \
+  "$([ -e "$CONF/checkpoints/alpha.conf" ] && echo present || echo absent)"
+# The refusal is a precondition: nothing was reclaimed or measured for it.
+t reset-cut-unparseable-stamp-never-reaps 0 "$(calls_of 'reap')"
+
 # --- D7: reclaim, THEN measure, THEN decide ---------------------------------
 # 95% before the sweep, 60% after: a cut that measured first refuses this box.
 
@@ -366,6 +428,32 @@ case "$OUT" in *'REFUSED — the on-demand reaper did not complete'*) r1=named ;
 t reset-cut-unswept-box-is-named named "$r1"
 t reset-cut-unswept-box-is-never-measured 0 "$(calls_of 'root-df')"
 t reset-cut-unswept-box-cuts-nothing 0 "$(calls_of 'snapshot')"
+
+# THE REFUSAL NAMES THE CAUSE IT ACTUALLY HAD. reap-now.sh documents three
+# exits and this asserted the first for all of them. 127 is not a corner: it
+# is every box still on a pre-#589 engine, which is the whole fleet on the
+# first fleet-wide `--cut` anybody runs — and telling that operator a duty
+# tick holds a lock sends them to look at the wrong thing entirely.
+reset_case
+RST_REAP_FAIL=alpha RST_REAP_RC=199 capture reset --cut alpha
+case "$OUT" in *'a duty tick took the duty lock between the drain probe and now'*) r1=lock ;; *) r1="$OUT" ;; esac
+t reset-cut-reaper-199-is-named-as-the-lock lock "$r1"
+
+reset_case
+RST_REAP_FAIL=alpha RST_REAP_RC=127 capture reset --cut alpha
+t reset-cut-reaper-127-is-refused 1 "$RC"
+case "$OUT" in *'this box has no reap-now.sh — its engine predates it'*'crew upgrade alpha'*) r1=named ;; *) r1="$OUT" ;; esac
+t reset-cut-reaper-127-names-the-missing-script named "$r1"
+case "$OUT" in *'duty tick'*) r1="$OUT" ;; *) r1=quiet ;; esac
+t reset-cut-reaper-127-does-not-blame-the-lock quiet "$r1"
+t reset-cut-reaper-127-cuts-nothing 0 "$(calls_of 'snapshot')"
+
+reset_case
+RST_REAP_FAIL=alpha RST_REAP_RC=1 capture reset --cut alpha
+case "$OUT" in *'(it exited 1)'*) r1=named ;; *) r1="$OUT" ;; esac
+t reset-cut-reaper-other-status-is-reported-as-itself named "$r1"
+case "$OUT" in *'duty tick'*|*'no reap-now.sh'*) r1="$OUT" ;; *) r1=quiet ;; esac
+t reset-cut-reaper-other-status-claims-neither-named-cause quiet "$r1"
 
 # --- D5: the cut records its version; a re-cut replaces the label -----------
 
@@ -588,6 +676,35 @@ printf 'CHECKPOINT_STALE=\n' >"$CONF/checkpoints/alpha.conf"
 capture reset alpha
 t reset-malformed-record-is-refused 1 "$RC"
 t reset-malformed-record-restores-nothing 0 "$(calls_of 'restore')"
+
+# NONEMPTY IS NOT THE SAME QUESTION AS COMPARABLE, and `unknown` is the value
+# that proves it: a `--cut` used to write that string itself out of a stamp it
+# could not parse. Emptiness was all the restore checked, so the record read as
+# present and the transcript `restored to armed (crew@unknown) and started`
+# came back at exit 0. Driven with NO live stamp, which is the state a stopped
+# box is in by construction — it is the only state where nothing else can
+# catch it.
+for bad in unknown 1a2b3c4d 0.1 'crew@0.1.3'; do
+  reset_case
+  arm alpha "$bad"
+  RST_STAMP_alpha="" capture reset alpha
+  label="$(printf '%s' "$bad" | tr -c 'A-Za-z0-9' '-')"
+  t "reset-nonversion-record-$label-is-refused" 1 "$RC"
+  t "reset-nonversion-record-$label-restores-nothing" 0 "$(calls_of 'restore')"
+  case "$OUT" in *"records '$bad'"*'is not an engine version'*) r1=named ;; *) r1="$OUT" ;; esac
+  t "reset-nonversion-record-$label-is-named" named "$r1"
+  case "$OUT" in *'restored to armed'*) r1="$OUT" ;; *) r1=quiet ;; esac
+  t "reset-nonversion-record-$label-never-reports-a-restore" quiet "$r1"
+done
+
+# And the shapes that ARE versions still restore, so the guard is a version
+# test and not a "looks like 0.1.3" test.
+for good in 0.1.3 0.1.3-dev 12.0.4-rc.1; do
+  reset_case
+  arm alpha "$good"
+  RST_STAMP_alpha="" capture reset alpha
+  t "reset-version-record-$good-restores" 0 "$RC"
+done
 
 # --- D5: THE STALE MARK IS A PRECONDITION TO MOVING THE ENGINE --------------
 #
@@ -837,6 +954,18 @@ reset_case
 CREW_RESET_CUT_MAX_USED_PCT=140 capture reset --cut alpha
 t reset-over-100-threshold-refuses 1 "$RC"
 t reset-over-100-threshold-cuts-nothing 0 "$(calls_of 'snapshot')"
+
+# ON THE PATH THAT READS IT, and only there. The variable's name says which
+# half of the verb it belongs to, and an operator with a malformed value
+# exported in their shell was having every restore die on a threshold the
+# restore never consults.
+reset_case
+arm alpha
+CREW_RESET_CUT_MAX_USED_PCT=80% capture reset alpha
+t reset-malformed-threshold-does-not-block-a-restore 0 "$RC"
+t reset-malformed-threshold-restores 1 "$(calls_of 'restore alpha armed')"
+case "$OUT" in *'CREW_RESET_CUT_MAX_USED_PCT'*) r1="$OUT" ;; *) r1=quiet ;; esac
+t reset-malformed-threshold-is-not-mentioned-on-the-restore-path quiet "$r1"
 
 reset_case
 capture reset --all alpha
