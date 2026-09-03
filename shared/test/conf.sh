@@ -288,9 +288,15 @@ kimi_usage_run() ( # kimi_usage_run SHAPE [decoy]
   # one case's decoys cannot reach another's read.
   # shellcheck disable=SC2030
   export KIMI_SHARE_DIR="$udir/share"
-  # A decoy: another session's artifact, written LATER and carrying different
-  # figures. Selecting by mtime would take this one (#571 D4).
-  # planted twice: once under a DIFFERENT work dir, and once as a sibling in
+  # A decoy: another session's artifact, carrying different figures, and made
+  # the NEWEST wire.jsonl on disk so that selecting by mtime really would take
+  # it (#571 D4). The mtime is what a wrong reader would sort on, and it is
+  # forced here rather than inherited: these files are written BEFORE
+  # run_session, so without the touch this session's own artifact is the
+  # newest and the mtime mutation would be tested against nothing. The
+  # `timestamp` INSIDE the record is a different thing entirely and no reader
+  # here consults it.
+  # Planted twice: once under a DIFFERENT work dir, and once as a sibling in
   # THIS session's own work-dir directory — the concurrent-lane shape, where
   # "the newest under my work dir" is the plausible wrong answer.
   if [ "$mode" = decoy ]; then
@@ -303,10 +309,23 @@ kimi_usage_run() ( # kimi_usage_run SHAPE [decoy]
         '{"type": "metadata", "protocol_version": "1.10"}' \
         '{"timestamp":1788499999.0,"message":{"type":"StatusUpdate","payload":{"token_usage":{"input_other":777777,"output":777777,"input_cache_read":0,"input_cache_creation":0}}}}' \
         >"$other/wire.jsonl"
+      touch -t 203001010000 "$other/wire.jsonl"
     done
   fi
   run_session build fixture/kimi "$udir/work" 5 'the prompt' \
     2>&1 | sed -e 's/^[0-9-]*T[0-9:]*Z //'
+  # The fixture's own premise, reported so it can be ASSERTED rather than
+  # assumed: the newest wire.jsonl under this run's share root. If a later
+  # edit drops the touch above, this names this session's own artifact and the
+  # assertion below reds — which is the state the fixture was actually in.
+  if [ "$mode" = decoy ]; then
+    local w newest=""
+    for w in "$KIMI_SHARE_DIR"/sessions/*/*/wire.jsonl; do
+      [ -f "$w" ] || continue
+      if [ -z "$newest" ] || [ "$w" -nt "$newest" ]; then newest="$w"; fi
+    done
+    printf '%s\n%s\n' '--newest--' "$newest"
+  fi
   printf '%s\n' '--argv--'
   cat "$udir/argv"
   printf '%s\n' '--prose--'
@@ -386,11 +405,26 @@ t kimi-unreadable-artifact-leaves-the-session-alone '0|ok' \
   "$(sed -n 's/.* rc=\([^ ]*\).* outcome=\([^ ]*\).*/\1|\2/p' \
       <<<"$(grep 'SESSION END' <<<"$kimi_unreadable")")"
 
-# D4, the assertion the whole design is for. A LATER artifact carrying wildly
-# different figures sits beside this session's under the same share root. A
-# reader that took the newest file, or the only file it happened to find,
-# would report 777777.
+# D4, the assertion the whole design is for. A NEWER artifact carrying wildly
+# different figures sits beside this session's under the same share root — one
+# under a different work-dir hash, one as a sibling under this session's own.
+# A reader that took the newest file, or the first file its glob happened to
+# match, would report 777777.
 kimi_decoy="$(kimi_usage_run full decoy)"
+kimi_decoy_sid="$(sed -n 's/.* sid=\([^ ]*\).*/\1/p' \
+  <<<"$(grep 'SESSION END' <<<"$kimi_decoy")")"
+# The fixture's premise, asserted rather than described. The pair below is
+# named for the mtime mutation, and it can only kill it if a decoy really is
+# the newest file on disk — which it was NOT as first written, because both
+# decoys are planted before run_session and so were the OLDER files. This
+# assertion is what fails if that regresses.
+kimi_decoy_newest="$(sed -n '/^--newest--$/{n;p;}' <<<"$kimi_decoy")"
+kimi_decoy_newest_sid="${kimi_decoy_newest%/wire.jsonl}"
+kimi_decoy_newest_sid="${kimi_decoy_newest_sid##*/}"
+t kimi-decoy-really-is-the-newest-on-disk 1 \
+  "$([ -n "$kimi_decoy_newest_sid" ] \
+    && [ "$kimi_decoy_newest_sid" != "$kimi_decoy_sid" ] \
+    && printf 1 || printf 0)"
 t kimi-newest-artifact-is-not-the-key '1246|940' \
   "$(sed -n 's/.* input_tokens=\([^ ]*\).* output_tokens=\([^ ]*\).*/\1|\2/p' \
       <<<"$(grep 'SESSION END' <<<"$kimi_decoy")")"
@@ -437,6 +471,20 @@ t kimi-profile-refuses-an-empty-id 0 "$(kimi_direct '' | wc -l)"
 # so a value carrying a separator is refused before it is composed.
 t kimi-profile-refuses-a-path-shaped-id 0 \
   "$(kimi_direct '../hash-one/aaaaaaaa-0000-4000-8000-000000000001' | wc -l)"
+# `.` and `..` carry no separator, so the character class admits them, and
+# neither is a path component: `..` composes `sessions/*/../wire.jsonl` and
+# `.` composes `sessions/*/./wire.jsonl`. Both landing sites are PLANTED here
+# with figures nothing else in this suite carries, so the refusal is proved by
+# name rather than by the file's absence — drop either arm from the profile
+# and the composed read succeeds and reports 424242.
+printf '%s\n' \
+  '{"timestamp":1.0,"message":{"type":"StatusUpdate","payload":{"token_usage":{"input_other":424242,"output":424242}}}}' \
+  >"$KIMI_SHARE_FIXTURE/sessions/wire.jsonl"
+printf '%s\n' \
+  '{"timestamp":1.0,"message":{"type":"StatusUpdate","payload":{"token_usage":{"input_other":424242,"output":424242}}}}' \
+  >"$KIMI_SHARE_FIXTURE/sessions/hash-one/wire.jsonl"
+t kimi-profile-refuses-dotdot-as-an-id 0 "$(kimi_direct '..' | wc -l)"
+t kimi-profile-refuses-dot-as-an-id 0 "$(kimi_direct '.' | wc -l)"
 t kimi-profile-refuses-an-id-that-matches-nothing 0 \
   "$(kimi_direct bbbbbbbb-0000-4000-8000-000000000002 | wc -l)"
 # Two concurrent sessions under ONE work dir, which is the acceptance
