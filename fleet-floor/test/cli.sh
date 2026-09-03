@@ -2000,28 +2000,46 @@ if [ "${CL_DIRECT:-0}" -ne 1 ]; then
   grep -nvE '^[[:space:]]*#' "$CL_DRILL_APP" | grep -E '\$ROOT/examples/fleet\.roster' | sed 's/^/    /'
 fi
 
-# --- a clone must not be handed the sizing flags (box refuses them) --------
-# `box new --from` rejects --cpu/--memory/--disk outright: "a clone carries its
-# source's resources". crew passed them anyway, so every roster line with a
-# 4th-column gold snapshot died at create. Never caught because no roster line
-# has ever had one — the same never-exercised path as #47 and #48.
+# --- a clone is sized only where this host's box can size one (#607 D5) -----
+# The sizing flags on a clone were removed because `box new --from` rejected
+# them outright — "a clone carries its source's resources" — so every roster
+# line with a 4th-column gold snapshot died at create (#590). box 0.10.0
+# reverses that: the flags ride the copy, incus sizing the clone's volume as it
+# creates it (box#171). Both boxes are still in the fleet, so what is asserted
+# here is not "flags" or "no flags" but that the choice is PROBED — an
+# unconditional pass re-breaks #590 on every pre-0.10.0 host.
+#
+# Source-level, and deliberately so: shared/test/cli-lifecycle.sh drives both
+# branches through a box shim and asserts the argv each produces. This says the
+# unguarded shape cannot come back, which no single invocation shows.
 # shellcheck disable=SC2016  # matching the literal source text, not expanding it
 CL_FROM="$(sed -n '/if \[ -n "\$from" \]; then/,/^  else/p' "$CL_ROOT/cli/crew")"
 if grep -q 'box new --name' <<<"$CL_FROM" &&
-   ! grep -q -- '--cpu' <<<"$CL_FROM"; then
-  ok "crew: a --from clone is created without the sizing flags"
+   grep -q 'box_supports_clone_sizing' <<<"$CL_FROM"; then
+  ok "crew: a --from clone is sized only behind the box capability probe"
 else
-  fail "crew: a --from clone is created without the sizing flags" \
-       "box new --from refuses --cpu/--memory/--disk; every gold-snapshot roster line would fail"
+  fail "crew: a --from clone is sized only behind the box capability probe" \
+       "box before 0.10.0 refuses --cpu/--memory/--disk on --from; an unguarded pass fails every gold-snapshot roster line"
 fi
-# The role profile's sizing does not apply to a clone, and that must be SAID —
-# a builder minted from a reviewer-sized gold comes up undersized either way,
-# but silently is how it gets discovered under load.
-if grep -qi 'inherits' <<<"$CL_FROM"; then
-  ok "crew: a clone says its resources are inherited, not from the role profile"
+# The probe must fail CLOSED, which is what makes the guard above safe on a
+# host whose box cannot answer at all: no help text, no sizing flags.
+# shellcheck disable=SC2016  # matching the literal source text, not expanding it
+CL_PROBE="$(sed -n '/^box_supports_clone_sizing() {/,/^}/p' "$CL_ROOT/cli/crew")"
+if grep -q 'box new --help' <<<"$CL_PROBE" && grep -q 'grep -qE' <<<"$CL_PROBE"; then
+  ok "crew: the clone-sizing probe reads box's own help and matches a needle"
 else
-  fail "crew: a clone says its resources are inherited, not from the role profile" \
-       "no note about the role profile's sizing being ignored"
+  fail "crew: the clone-sizing probe reads box's own help and matches a needle" \
+       "a version comparison is a proxy for the capability, and gets a fork or a local build wrong"
+fi
+# Where the clone could NOT be sized, the role profile's sizing did not apply,
+# and that must be SAID — a builder minted from a reviewer-sized gold comes up
+# undersized either way, but silently is how it gets discovered under load. One
+# line, naming the box and both sizes.
+if grep -q 'did NOT apply' <<<"$CL_FROM" && grep -q 'box_resources' <<<"$CL_FROM"; then
+  ok "crew: an unsizable clone names the box and both sizes, the carried one read back"
+else
+  fail "crew: an unsizable clone names the box and both sizes, the carried one read back" \
+       "no note, or a note stating a size crew never read off the daemon"
 fi
 
 # The status table must fit the names it prints. `crew-drill-reviewer` is 19
