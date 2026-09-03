@@ -690,6 +690,11 @@ t reset-cut-stopped-box-is-refused 1 "$RC"
 case "$OUT" in *'alpha: REFUSED — stopped'*'reads its login, its engine and its disk from inside it'*'box start alpha'*) r1=named ;; *) r1="$OUT" ;; esac
 t reset-cut-stopped-box-is-named named "$r1"
 t reset-cut-stopped-box-cuts-nothing 0 "$(calls_of 'snapshot')"
+# And it is refused HERE, not incidentally three steps later by a login probe
+# that a stopped box cannot answer: the restore path's announcement must not
+# appear on a cut.
+case "$OUT" in *'already stopped; restoring'*) r1="$OUT" ;; *) r1=quiet ;; esac
+t reset-cut-stopped-box-does-not-take-the-restore-path quiet "$r1"
 case "$OUT" in *'reset --cut: 0 cut, 0 skipped-busy, 1 failed'*) r1=failed ;; *) r1="$OUT" ;; esac
 t reset-cut-stopped-box-is-a-failure-not-a-skip failed "$r1"
 
