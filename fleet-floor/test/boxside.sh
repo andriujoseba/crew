@@ -464,40 +464,17 @@ PY
   t "message: $name operator timeout" "$expected|$expected" "$actual"
 }
 
+# shellcheck disable=SC2016  # These are bytes sourced later under the case HOME.
 BS_BASE_CONF='BOT_PATH_PREPEND="$HOME/bin"
 BOT_CLI_CMD=(fake-cli)'
-bs_operator_timeout_case builder 3600 "$BS_BASE_CONF
-TIMEOUT_ATTENTION=1800
-TIMEOUT_BUILD=3600
-TIMEOUT_RESUME=3600
-TIMEOUT_REBASE=1800
-TIMEOUT_CIRED=1800
-TIMEOUT_OPERATOR="""
-bs_operator_timeout_case triage 3000 "$BS_BASE_CONF
-TIMEOUT_ATTENTION=1800
-TIMEOUT_TRIAGE=1500
-TIMEOUT_MENTION=1500
-TIMEOUT_HYGIENE=3000
-TIMEOUT_OPERATOR="""
-bs_operator_timeout_case reviewer 2700 "$BS_BASE_CONF
-TIMEOUT_ATTENTION=1800
-TIMEOUT_REVIEW=2700
-TIMEOUT_OPERATOR="""
-bs_operator_timeout_case no-role 1800 "$BS_BASE_CONF
-TIMEOUT_ATTENTION=1800
-TIMEOUT_OPERATOR="""
-TIMEOUT_AMBIENT_ONLY=9999 bs_operator_timeout_case ambient-excluded 1800 "$BS_BASE_CONF
-TIMEOUT_ATTENTION=1800
-TIMEOUT_OPERATOR="""
-bs_operator_timeout_case fleet-override 4100 "$BS_BASE_CONF
-TIMEOUT_ATTENTION=1800
-TIMEOUT_OPERATOR=4100
-TIMEOUT_BUILD=3600"
-bs_operator_timeout_case role-override 4200 "$BS_BASE_CONF
-TIMEOUT_ATTENTION=1800
-TIMEOUT_OPERATOR=4100
-TIMEOUT_BUILD=3600
-TIMEOUT_OPERATOR=4200"
+bs_operator_timeout_case builder 3600 "$BS_BASE_CONF"$'\nTIMEOUT_ATTENTION=1800\nTIMEOUT_BUILD=3600\nTIMEOUT_RESUME=3600\nTIMEOUT_REBASE=1800\nTIMEOUT_CIRED=1800\nTIMEOUT_OPERATOR=""'
+bs_operator_timeout_case triage 3000 "$BS_BASE_CONF"$'\nTIMEOUT_ATTENTION=1800\nTIMEOUT_TRIAGE=1500\nTIMEOUT_MENTION=1500\nTIMEOUT_HYGIENE=3000\nTIMEOUT_OPERATOR=""'
+bs_operator_timeout_case reviewer 2700 "$BS_BASE_CONF"$'\nTIMEOUT_ATTENTION=1800\nTIMEOUT_REVIEW=2700\nTIMEOUT_OPERATOR=""'
+bs_operator_timeout_case no-role 1800 "$BS_BASE_CONF"$'\nTIMEOUT_ATTENTION=1800\nTIMEOUT_OPERATOR=""'
+TIMEOUT_AMBIENT_ONLY=9999 bs_operator_timeout_case ambient-excluded 1800 \
+  "$BS_BASE_CONF"$'\nTIMEOUT_ATTENTION=1800\nTIMEOUT_OPERATOR=""'
+bs_operator_timeout_case fleet-override 4100 "$BS_BASE_CONF"$'\nTIMEOUT_ATTENTION=1800\nTIMEOUT_OPERATOR=4100\nTIMEOUT_BUILD=3600'
+bs_operator_timeout_case role-override 4200 "$BS_BASE_CONF"$'\nTIMEOUT_ATTENTION=1800\nTIMEOUT_OPERATOR=4100\nTIMEOUT_BUILD=3600\nTIMEOUT_OPERATOR=4200'
 
 # All TIMEOUT_* variables in the shipped layers are session budgets today.
 # Pin the census so a future non-session variable cannot silently inflate the
