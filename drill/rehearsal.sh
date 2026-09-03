@@ -283,7 +283,12 @@ else
     exit 1
   fi
 fi
-for required in shared/install.sh shared/test/run.sh VERSION; do
+# The drilled role's conf joins the required inputs, because the drill box is
+# now minted at the size that file declares (#607 D4): a source that cannot say
+# how big a $ROLE box is cannot be drilled as one. Declared here with the rest
+# so the refusal is attributed the way every other missing input is, rather
+# than surfacing later as a box step that stopped for its own reasons.
+for required in shared/install.sh shared/test/run.sh VERSION "shared/conf/roles/$ROLE.conf"; do
   [ -f "$SOURCE_TREE/$required" ] \
     || { echo "phase 0: $SOURCE_DESC resolved, but '$required' is missing; acquisition aborted before checks" >&2; exit 1; }
 done

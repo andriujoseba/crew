@@ -5923,7 +5923,13 @@ t rehearsal-bad-ref-no-cascade stopped "$r1"
 # to drill, including the committed ref phase 1 installs (#183). Refuse every
 # dirty shape before the first box operation and show the paths and reason.
 P0TREE="$TMP/phase0-tree"
-mkdir -p "$P0TREE/shared/test" "$P0TREE/cli"
+mkdir -p "$P0TREE/shared/test" "$P0TREE/cli" "$P0TREE/shared/conf/roles"
+# The drilled role's conf is a required input since #607 D4 — the drill box is
+# minted at the size it declares — so a fixture tree that omits it is refused
+# at acquisition and never reaches the box, which is a different thing from
+# what the cases below are about.
+printf 'BOX_CPU="4"\nBOX_MEMORY="8GiB"\nBOX_DISK="60GiB"\n' \
+  >"$P0TREE/shared/conf/roles/reviewer.conf"
 printf '#!/usr/bin/env bash\nexit 0\n' >"$P0TREE/shared/install.sh"
 printf '#!/usr/bin/env bash\nprintf "failed 0\\n"\n' >"$P0TREE/shared/test/run.sh"
 printf '#!/usr/bin/env bash\nexit 1\n' >"$P0TREE/cli/crew"
@@ -6126,8 +6132,12 @@ t phase0-empty-verified-root-list-refused empty-verified-roots \
 P0VERIFYTREE="$TMP/phase0-verify-tree"
 P0VERIFYHOME="$TMP/phase0-verify-home"
 P0VERIFYSHIM="$TMP/phase0-verify-bin"
-mkdir -p "$P0VERIFYTREE"/{.ceremony,.github,cli,drill,fleet-floor,shared/test} \
+mkdir -p "$P0VERIFYTREE"/{.ceremony,.github,cli,drill,fleet-floor,shared/test,shared/conf/roles} \
   "$P0VERIFYHOME" "$P0VERIFYSHIM"
+# Required input since #607 D4, as above: this case is about the engine failing
+# VERIFICATION after transfer, which is downstream of acquisition.
+printf 'BOX_CPU="4"\nBOX_MEMORY="8GiB"\nBOX_DISK="60GiB"\n' \
+  >"$P0VERIFYTREE/shared/conf/roles/reviewer.conf"
 printf 'fixture\n' >"$P0VERIFYTREE/.ceremony/marker"
 printf 'fixture\n' >"$P0VERIFYTREE/.github/marker"
 printf '#!/usr/bin/env bash\nexit 1\n' >"$P0VERIFYTREE/cli/crew"
