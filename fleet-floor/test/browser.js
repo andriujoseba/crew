@@ -227,12 +227,20 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
         disk_total_mb:'61440', disk_used_mb:'48128',
       }}),
       absent: window.FLOORDEV.camHeadroom(null),
+      noMemory: window.FLOORDEV.camHeadroom({fields:{
+        disk_total_mb:'61440', disk_used_mb:'48128',
+      }}),
+      noDisk: window.FLOORDEV.camHeadroom({fields:{
+        mem_total_mb:'8090', mem_avail_mb:'1844',
+      }}),
       painted: window.__camHeadroomPaint.slice(),
     }));
     eq('god view: memory is current/max', '6.1/7.9G', headroom.measured[0][1]);
     eq('god view: disk is current/max', '47/60G', headroom.measured[1][1]);
     eq('god view: an old engine gives MEM an em dash', '—', headroom.absent[0][1]);
     eq('god view: an old engine gives DISK an em dash', '—', headroom.absent[1][1]);
+    eq('god view: an unreadable free gives MEM an em dash', '—', headroom.noMemory[0][1]);
+    eq('god view: an unreadable df gives DISK an em dash', '—', headroom.noDisk[1][1]);
     ok('god view: the shipped canvas paints both headroom rows',
        headroom.painted.includes('MEM') && headroom.painted.includes('DISK') &&
          headroom.painted.some((x) => /^\d+(?:\.\d+)?\/\d+(?:\.\d+)?G$/.test(x)),

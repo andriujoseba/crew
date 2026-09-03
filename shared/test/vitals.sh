@@ -429,6 +429,27 @@ out="$(run_probe "$B" BOX_DISK=30GiB BOOT_CHECK_LOG="$BC")"
 has "series-rising-is-a-disk-finding" "$out" \
   "finding=disk-low:want=under-90%,got=48%-after-12-rising-boots"
 
+# Eleven rising points are not the declared twelve-boot window, and one fall
+# inside a full window breaks monotonicity. Either shape must stay clean.
+B="$(mk_box series-short)"
+BC="$B/boot-check.log"
+for i in 1 2 3 4 5 6 7 8 9 10 11; do
+  boot_block "$BC" "2026-08-$(printf '%02d' "$i")T09:00:01+00:00" \
+    "/dev/sda2        58G  2.5G   56G   $((20 + i))% /"
+done
+out="$(run_probe "$B" BOX_DISK=30GiB BOOT_CHECK_LOG="$BC")"
+hasnt "series-short-is-not-a-disk-finding" "$out" "disk-low"
+
+B="$(mk_box series-fell)"
+BC="$B/boot-check.log"
+for i in 1 2 3 4 5 6 7 8 9 10 11 12; do
+  pct=$((30 + i)); [ "$i" -eq 8 ] && pct=32
+  boot_block "$BC" "2026-08-$(printf '%02d' "$i")T09:00:01+00:00" \
+    "/dev/sda2        58G  2.5G   56G   ${pct}% /"
+done
+out="$(run_probe "$B" BOX_DISK=30GiB BOOT_CHECK_LOG="$BC")"
+hasnt "series-with-a-fall-is-not-a-disk-finding" "$out" "disk-low"
+
 # A boot the gate could not complete writes a header and no df line. It
 # contributes no point rather than a point with the previous block's number.
 B="$(mk_box series-partial)"
@@ -590,5 +611,26 @@ log="$(cat "$LOGF" 2>/dev/null || true)"
 same "tick-without-conf-still-emits" "1" "$(vitals_lines "$LOGF")"
 hasnt "tick-without-conf-has-no-profile-finding" "$log" "profile-mismatch"
 has  "tick-without-conf-still-ticks" "$log" "duty run start"
+
+# The tick loads fleet defaults and the operator overlay before the probe. A
+# standalone probe accepts env overrides above; these guards prove an installed
+# tick actually supplies persistent fleet.conf values.
+has "tick-loads-vitals-defaults" "$(sed -n '/fleet.defaults.conf/p' "$SHARED/bin/tick.sh")" \
+  'fleet.defaults.conf'
+has "tick-loads-vitals-operator-overlay" "$(sed -n '/fleet.conf/p' "$SHARED/bin/tick.sh")" \
+  'fleet.conf'
+
+# MUST-FAIL: a host-side threshold. The consoles quote generic finding tokens;
+# neither reader may learn either finding name and re-derive it.
+ROOT="$(dirname "$SHARED")"
+for host_reader in "$ROOT/cli/crew" "$ROOT/fleet-floor/src/app.js" \
+                   "$ROOT/fleet-floor/server/floor/units.py"; do
+  if grep -Eq 'disk-low|memory-low|VITALS_(DISK|MEMORY)_LOW_PCT' "$host_reader"; then
+    fail "headroom-policy-stays-box-side: ${host_reader#"$ROOT/"}" \
+      "host reader contains a headroom threshold or finding name"
+  else
+    same "headroom-policy-stays-box-side: ${host_reader#"$ROOT/"}" clean clean
+  fi
+done
 
 suite_finish
