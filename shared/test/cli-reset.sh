@@ -725,7 +725,7 @@ arm alpha
 chmod 500 "$CONF/checkpoints"
 capture upgrade alpha
 chmod u+w "$CONF/checkpoints"
-t reset-unwritable-stale-mark-refuses-the-upgrade 0 "$RC"
+t reset-unwritable-stale-mark-does-not-take-the-command-down 0 "$RC"
 case "$OUT" in *'could NOT be marked stale'*'Nothing was staged and nothing was installed'*) r1=refused ;; *) r1="$OUT" ;; esac
 t reset-unwritable-stale-mark-is-named refused "$r1"
 case "$OUT" in *'upgrade REFUSED on alpha — its engine is unchanged'*) r1=named ;; *) r1="$OUT" ;; esac
