@@ -1,5 +1,6 @@
 """The telemetry snapshot both tiers publish into."""
 
+import os
 import threading
 import time
 from datetime import datetime, timezone
