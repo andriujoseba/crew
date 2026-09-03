@@ -2037,6 +2037,16 @@ hire_box() {
      ! install_staged_engine "$name" "$identity_args $registry_arg --arm-cron $force_arg"; then
     cleanup_staged_engine "$name"
     echo "$name: hire FAILED — the engine is NOT installed and cron is NOT armed (output above)"
+    # The same residual cmd_upgrade names, said in the same amount here: the
+    # gate above marked the checkpoint stale for a move that then did not
+    # happen, so a reset refuses this box until it is re-cut. The gate's own
+    # STALE note has already printed, but the two routes that install an
+    # engine saying different amounts about one state is the drift this
+    # checkpoint spent a round removing. Guarded on the record, so a box that
+    # never had one is not told about a mark that was never written.
+    if [ -f "$(checkpoint_file "$name")" ]; then
+      echo "  note: $name's $RESET_LABEL checkpoint was already marked stale for crew@$want and stays marked; a reset REFUSES this box until it is re-cut with: crew reset --cut $name"
+    fi
     return 1
   fi
   if bxn "$name" 'gh auth status >/dev/null 2>&1'; then
@@ -2666,10 +2676,31 @@ checkpoint_file() { printf '%s\n' "$(checkpoint_dir)/$1.conf"; }
 # Parsed, never sourced: three strings are not worth executing a file for, and
 # this one is written by a verb that runs as the operator (same call the
 # box_agent reader makes about instance.conf).
-checkpoint_field() { # KEY BOX
-  local f; f="$(checkpoint_file "$2")"
+#
+# A READ THAT FAILS ANSWERS EMPTY, AND SAYS SO IN ITS CONTRACT — rc is always
+# 0. This used to end on the bare pipeline, so an unreadable record (mode 000,
+# a re-pointed CREW_CONFIG_DIR on a foreign uid) exited 2 through pipefail, and
+# a duplicate key exited 141 through head's SIGPIPE on a perfectly readable
+# one. Neither is a value, and under `set -euo pipefail` neither is inert: what
+# an assignment of it does depends entirely on whether the CALLER happens to
+# sit in a condition or an `&&`/`||` list, where errexit is suppressed. Every
+# caller does today, which is why nothing misbehaves — and that is not a
+# property anyone can maintain, because `local x; x="$(checkpoint_field …)"` in
+# a plain statement would abort a fleet verb mid-loop. So the failure is
+# absorbed here, once, where the question is asked.
+#
+# Empty is the fail-safe answer and not a shrug: restore_box refuses on it, in
+# the same direction as its neighbours — an unreadable listing is not "no
+# label", an unreadable lock is not "idle", an unreadable version is not "the
+# versions agree". Captured and then printed rather than streamed, so a read
+# that fails PART WAY through cannot emit a truncated version string that
+# compares as a real one.
+checkpoint_field() { # KEY BOX — rc 0 always; empty when it cannot be answered
+  local f v
+  f="$(checkpoint_file "$2")"
   [ -f "$f" ] || return 0
-  sed -n "s/^$1=//p" "$f" 2>/dev/null | head -1 | tr -d '"'\''\r'
+  v="$(sed -n "s/^$1=//p" "$f" 2>/dev/null | head -1 | tr -d '"'\''\r')" || v=
+  printf '%s\n' "$v"
 }
 checkpoint_record() { # BOX VERSION — the cut's own write; clears any stale mark
   local f; f="$(checkpoint_file "$1")"
@@ -2677,13 +2708,21 @@ checkpoint_record() { # BOX VERSION — the cut's own write; clears any stale ma
   # Written whole to a temporary and moved into place: a reset reading this
   # file half-written would see no version and refuse a box that has a good
   # checkpoint, and `mv` within one directory is atomic.
+  #
+  # Cleaning up after itself on both arms, and swallowing the shell's own
+  # diagnostic, exactly as checkpoint_mark_stale does — the two halves of one
+  # store answering a failed write differently is how the next reader learns
+  # the wrong lesson. Nothing READS the litter (only `<box>.conf` is ever
+  # read), so this is symmetry rather than correctness; the raw `bash: … :
+  # Permission denied` printed above crew's own named FAILED line is the half
+  # that is worth it on its own.
   {
     printf '# crew reset checkpoint record for %s (#589 D5). Written by crew.\n' "$1"
     printf 'CHECKPOINT_VERSION=%s\n' "$2"
     printf 'CHECKPOINT_CUT_AT=%s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
     printf 'CHECKPOINT_STALE=\n'
-  } >"$f.tmp.$$" || return 1
-  mv -f "$f.tmp.$$" "$f"
+  } 2>/dev/null >"$f.tmp.$$" || { rm -f "$f.tmp.$$" 2>/dev/null; return 1; }
+  mv -f "$f.tmp.$$" "$f" || { rm -f "$f.tmp.$$" 2>/dev/null; return 1; }
 }
 # checkpoint_mark_stale BOX VERSION — "this box's engine moved to VERSION after
 # its checkpoint was cut". Called by cmd_upgrade in the same write as the
