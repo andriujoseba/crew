@@ -61,9 +61,12 @@
 #
 # What the deferral costs until 0.1.4, said here because it is real and
 # currently unowned: the weekly reset had become the fleet's de-facto garbage
-# collector, and nothing else removes the detached review worktrees (#606).
-# The daily restart clears /tmp and week-old guest state; it does not remove
-# those. The runbook names the reading an operator should take.
+# collector. The daily restart clears /tmp and week-old guest state; the reset
+# is what returned a box to a known size. NOT the detached review worktrees,
+# though — #606 closed 2026-09-02 and the duty tick reclaims those itself now.
+# What no tick reclaims is a kept-* preserved dirty tree and a build worktree
+# the engine declined to force. The runbook has the reading to take, and it is
+# a measurement rather than a deadline.
 #
 # Read the evidence in the host job log, not in cron mail:
 #   ~/.local/state/crew/host-maintenance.log

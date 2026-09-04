@@ -25,10 +25,12 @@ CONF="$TMP/conf"
 SHIM="$TMP/shim"
 STATE="$TMP/state"
 PROBE_BIN="$TMP/probe-bin"
-# #590. `crew reset` is the weekly scheduled job, so it now takes a host lock
-# and writes a host job log. Both are pointed at this sandbox — otherwise the
-# suite writes into the machine's real ~/.local/state, and contends over one
-# real lock with any other suite driving `crew restart`.
+# #590. `crew reset` takes a host lock and writes a host job log. It was the
+# weekly scheduled job when that was written; since #678 it is unscheduled and
+# on demand, and the lock and the log are the verb's either way — which is why
+# this sandboxing is unaffected. Both are pointed at this sandbox —
+# otherwise the suite writes into the machine's real ~/.local/state, and
+# contends over one real lock with any other suite driving `crew restart`.
 HOSTSTATE="$TMP/host-state"
 HOSTLOG="$HOSTSTATE/host-maintenance.log"
 mkdir -p "$CONF" "$SHIM" "$STATE" "$STATE/guests" "$PROBE_BIN" "$HOSTSTATE"

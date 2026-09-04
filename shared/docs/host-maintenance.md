@@ -79,16 +79,40 @@ removes the collision rather than the argument.
 
 This is real and currently unowned, so it is stated rather than left to be
 discovered. **The weekly reset had become the fleet's de-facto garbage
-collector.** The daily restart clears `/tmp` and week-old guest state; it does
-**not** remove the detached review worktrees, and nothing else does either —
-`shared/conf/roles/reviewer.conf` records that they are not throwaway and that
-nothing removes them (**#606**). A reviewer box measured after weeks of duty
-still carried `review-256/` plus a second full copy of the tree, and the
-`2026-08-28` sweep that motivated the schedule in the first place found
-`claude-builder` at 91% of its disk.
+collector** — the daily restart clears `/tmp` and week-old guest state, and the
+reset is what returned a box to a known size rather than merely to a smaller
+one. Deferring it leaves that job to nothing.
 
-So this change makes #606 the **live** disk risk rather than a latent one. It
-does not fix #606 and does not claim to.
+**What this costs is narrower than it was a week ago, and the difference is
+worth stating because the schedule was argued from the wider version.** The
+detached review worktrees are **no longer part of it**: **#606** closed
+`2026-09-02`, and `shared/bin/duty.sh` now calls
+`reclaim_detached_review_worktrees` on every tick, above the boot gate. Clean
+detached worktrees are removed; dirty ones are moved to `kept-<name>-<head>`
+rather than left on the path the next review needs
+(`shared/lib/duty-review.sh`). The reviewer box that carried `review-256/` plus
+a second full copy of the tree, and the `2026-08-28` sweep that found
+`claude-builder` at 91% of its disk, are **historical**: they are why the
+schedule was written, and both predate that reclaimer. Read them as the
+provenance of this file, not as a description of a box today.
+
+**What no tick reclaims, and what a hand reset therefore still buys.** Two
+residues, and both are deliberate rather than gaps:
+
+- **`kept-*` preserved trees.** A dirty detached worktree is moved aside
+  instead of removed, and a tree already named `kept-*` is never moved again.
+  That is the point — it is somebody's uncommitted work — and it also means
+  nothing on a schedule will ever reclaim it.
+- **A build worktree the engine declined to force.** `_wt_release`
+  (`shared/lib/duty-builder.sh`) removes a done branch's worktree, but where
+  the clean removal refuses and the upstream record does not post, it keeps the
+  worktree on purpose until the record lands. The work is safe; the disk is
+  spent.
+
+Both are bounded by how much unfinished work a box has actually left behind,
+not by how long the box has been up — which is why this is a cost to **measure**
+rather than one to predict from the calendar, and why the reading below is a
+command rather than a schedule.
 
 **The reading an operator should take between now and `0.1.4`, and it is a
 command that already ships rather than a new habit.** A `--cut` reclaims first,
