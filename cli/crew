@@ -260,6 +260,19 @@ SILENT_AFTER_S="${CREW_SILENT_AFTER:-600}"
 # same override for STUCK and treats an unmatched START as live for six hours;
 # shared/test pins both readers so either side moving alone fails loudly.
 STUCK_AFTER_S="${CREW_FLOOR_STUCK_AFTER:-$SILENT_AFTER_S}"
+# The engine's kill grace, from shared/lib/common/operating-limits.sh:18
+# (`session_kill_grace_seconds`), and spelled here rather than sourced because
+# that file's own header says nothing sources it directly. A session AT its
+# ceiling has not failed yet: `timeout` signals and waits this long before
+# SIGKILL, so a lock still held one second past the ceiling is a session being
+# killed on schedule, not a wedge.
+#
+# NOT operator-overridable, and that is the point of naming it: the floor holds
+# the same number as a bare constant (fleet-floor/server/floor/units.py), and
+# `kill-grace-cli-matches-floor` in shared/test/common.sh reds if either reader
+# moves alone. A knob on one side would leave that pin comparing two defaults
+# while the two consoles disagreed in front of the operator (#624 D4).
+SESSION_KILL_GRACE_S=60
 # Twice the longest shipped role-session ceiling (builder: 3600s). A normal
 # session gets its whole governed budget; a lock held through another whole
 # budget is maintenance-wedge evidence rather than ordinary work (#588 D4).
@@ -1859,11 +1872,30 @@ vendor_probe() {
 }
 
 # auth_from_flow NAME — the box's credential state as the DUTY ENGINE last
-# observed it, in one exec of pure local file reads. Echoes eleven fields:
+# observed it, in one exec of pure local file reads. Echoes thirteen fields:
 #
 #     <gh-state> <vendor-state> <tick-age-seconds-or--1> <armed> <paused>
 #     <suppression-age-or--1> <lane-or--> <repo#pr@head-or-->
 #     <log-present> <session-active> <lock-age-or--1>
+#     <session-kind-or--> <session-ceiling-seconds-or--1>
+#
+# The last two are the in-flight `SESSION START`'s own `kind=` and `timeout=`,
+# and they are APPENDED for the reason the field order already had one: a field
+# added at the end cannot push an existing one off the line a caller `read`s,
+# which is how the #189 count bug shipped. They cost nothing — the line they
+# come off is already inside the 600-line tail this function already takes, and
+# already matched by the awk pass below. Nothing new is fetched and there is no
+# second `box exec`.
+#
+# They exist because `crew status` and the floor must grade one lock the same
+# way. The floor measures a held lock against the ceiling the running session
+# declared on its own record (#610); a CLI firing at a fleet-wide constant
+# called a `build` forty minutes into its governed 3600s STUCK while the floor
+# called it healthy, in front of the same operator, about the same box (#624).
+# The ceiling is read off the WIRE and never out of `shared/conf/roles/*.conf`:
+# those are the box's files, the box already states its own ceiling on the
+# record, and a host-side copy is a second source of truth that drifts on the
+# first role edit.
 #
 # `armed` and `paused` are crontab line COUNTS, read with probe.sh's own
 # patterns, so `crew status` and the floor answer "is this box armed?" from
@@ -1905,6 +1937,7 @@ auth_from_flow() {
       else printf "nofail "; fi
     done
     age=-1; log_timestamped=0; session_active=0; lockage=-1
+    session_kind=-; session_ceiling=-1
     if [ -r "$HOME/duty/duty.log" ]; then
       log_tail="$(tail -n 600 "$HOME/duty/duty.log")"
       ts="$(printf "%s\n" "$log_tail" | grep -oE "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z" | tail -1)"
@@ -1914,12 +1947,31 @@ auth_from_flow() {
       fi
       # Match floor.units.derive_sessions: END pops the newest unmatched START,
       # and an orphan older than six hours is a crashed session, not live work.
-      session_start="$(printf "%s\n" "$log_tail" | awk "
+      #
+      # `kind=` and `timeout=` are SCANNED, never counted off as fields, for
+      # the reason floor.units gives about RE_END: the engine appends new
+      # tokens to this line (holder=, sid=), so a reader that assumed a
+      # position would break on the next one. `timeout=` is also OPTIONAL —
+      # absent on every line an engine older than #538 wrote — and a line
+      # carrying none must leave the ceiling at -1 rather than at a guess.
+      # Both are carried per depth, so the pop above discards the popped
+      # session'\''s numbers with its timestamp instead of leaking them upward.
+      session_flow="$(printf "%s\n" "$log_tail" | awk "
         / SESSION END / { if (depth > 0) depth--; next }
-        / SESSION START / { depth++; started[depth]=substr(\$0, 1, 20) }
-        END { if (depth > 0) print started[depth] }
+        / SESSION START / { depth++; started[depth]=substr(\$0, 1, 20)
+          k = \"-\"
+          if (match(\$0, / kind=[^ ]+/)) k = substr(\$0, RSTART + 6, RLENGTH - 6)
+          c = -1
+          if (match(\$0, / timeout=[0-9]+s/) &&
+              (RSTART + RLENGTH > length(\$0) || substr(\$0, RSTART + RLENGTH, 1) == \" \"))
+            c = substr(\$0, RSTART + 9, RLENGTH - 10)
+          kinds[depth] = k; ceilings[depth] = c
+        }
+        END { if (depth > 0) print started[depth], kinds[depth], ceilings[depth] }
       ")"
-      if [ -n "$session_start" ]; then
+      if [ -n "$session_flow" ]; then
+        read -r session_start session_kind session_ceiling <<<"$session_flow"
+        session_kind="${session_kind:--}"; session_ceiling="${session_ceiling:--1}"
         session_epoch="$(date -u -d "$session_start" +%s 2>/dev/null || echo 0)"
         case "$session_epoch" in
           ""|*[!0-9]*) : ;;
@@ -1961,9 +2013,10 @@ auth_from_flow() {
       if [ "$sw" -eq 0 ] || [ "$when" -lt "$sw" ]; then sw="$when"; sk="$kind"; sid="$key"; fi
     done
     if [ "$sw" -gt 0 ]; then sage=$(( $(date +%s) - sw )); else sage=-1; fi
-    printf "%s %s %s %s %s %s %s %s %s\n" \
+    printf "%s %s %s %s %s %s %s %s %s %s %s\n" \
       "$age" "$armed" "$paused" "$sage" "$sk" "$sid" \
-      "$log_timestamped" "$session_active" "$lockage"
+      "$log_timestamped" "$session_active" "$lockage" \
+      "$session_kind" "$session_ceiling"
     printf "\n"
   ' 2>/dev/null | tr -d '\r'
 }
@@ -3896,6 +3949,7 @@ cmd_status() {
   printf "$fmt" MEMBER STATE HOST ENGINE INTEGRITY GH VENDOR NOTE
   local name agent role _from state hired ghs vs ghs_d vs_d note last
   local supp_age supp_kind supp_key supp_subject log_timestamped session_active lock_age
+  local session_kind session_ceiling lock_ceiling lock_bound
   local report estate erecorded edisplay
   local rreport conv convnote
   while read -r name agent role _from; do
@@ -3916,7 +3970,8 @@ cmd_status() {
     erecorded="$(report_field recorded "$report")"
     # One exec, no network, same evidence the floor reads — see auth_from_flow.
     read -r ghs vs tickage armed cpaused supp_age supp_kind supp_key \
-      log_timestamped session_active lock_age <<<"$(auth_from_flow "$name")"
+      log_timestamped session_active lock_age session_kind session_ceiling \
+      <<<"$(auth_from_flow "$name")"
     ghs="${ghs:-unknown}"; vs="${vs:-unknown}"; tickage="${tickage:--1}"
     # An older engine, or a box that answered nothing, reports no counts. Treat
     # that as "armed" rather than inventing an alarm: absence of evidence about
@@ -3925,6 +3980,34 @@ cmd_status() {
     armed="${armed:-1}"; cpaused="${cpaused:-0}"
     supp_age="${supp_age:--1}"; supp_kind="${supp_kind:--}"; supp_key="${supp_key:--}"
     log_timestamped="${log_timestamped:-0}"; session_active="${session_active:-0}"; lock_age="${lock_age:--1}"
+    # An engine older than #624 answers eleven fields, so these two are empty
+    # on exactly the boxes whose `SESSION START` lines the second clause below
+    # could not have used anyway. Defaulting them to "nothing declared" is what
+    # makes an un-upgraded box's reading bit-identical to today's.
+    session_kind="${session_kind:--}"; session_ceiling="${session_ceiling:--1}"
+    # The CLI's half of floor.units.stuck_verdict, and the same two clauses in
+    # the same order (#624 D3). Computed here rather than inside the ladder
+    # below because the ladder's rungs are single conditions.
+    #
+    #   · a session is in flight and declared a ceiling  → that ceiling + the
+    #     kill grace. The knob is deliberately NOT consulted: it bounds a run
+    #     with no session to speak for it, and capping a declared ceiling with
+    #     it would re-introduce the false alarm this replaces, silently, on the
+    #     boxes whose operator had raised it.
+    #   · nothing in flight, or a START carrying no `timeout=`  → STUCK_AFTER_S
+    #     unchanged, which is the one meaning of CREW_FLOOR_STUCK_AFTER that
+    #     this keeps intact.
+    #
+    # `session_active` gates the first clause because the floor's `cur` is None
+    # for an orphan past the six-hour bound, and a ceiling read off a dead
+    # session's line is exactly the second source of truth this refuses.
+    lock_ceiling=-1
+    lock_bound="$STUCK_AFTER_S"
+    if [ "$session_active" = 1 ] && [[ "$session_ceiling" =~ ^[0-9]+$ ]] \
+       && [ "$session_ceiling" -gt 0 ]; then
+      lock_ceiling="$session_ceiling"
+      lock_bound=$(( session_ceiling + SESSION_KILL_GRACE_S ))
+    fi
     # `nofail` aged into a verdict HERE, on the host, with the same rule the
     # floor applies. SILENT_AFTER_S must equal floor.py's; shared/test asserts
     # it, because two readers with private thresholds is the defect this whole
@@ -4013,9 +4096,23 @@ cmd_status() {
       fi
     elif [ -n "$hired" ] && [ "$hired" != "not hired" ] \
          && [[ "$lock_age" =~ ^[0-9]+$ ]] \
-         && [ "$lock_age" -gt "$STUCK_AFTER_S" ]; then
+         && [ "$lock_age" -gt "$lock_bound" ]; then
       state=working
-      note="STUCK — duty run has held the lock for $(status_duration "$lock_age")"
+      if [ "$lock_ceiling" != -1 ]; then
+        # Name the bound, not only the age: an operator who can see 62m and not
+        # the 60m it passed cannot tell a wedge from a raised threshold. Word
+        # for word the floor's sentence, because the two consoles describing
+        # one box differently is the defect, not the wording.
+        note="STUCK — duty run has held the lock for $(status_duration "$lock_age"), past the $session_kind session's $(status_duration "$lock_ceiling") ceiling"
+      elif [ "$session_active" = 1 ]; then
+        # In flight, ceiling unknown. Today's sentence to the byte: there is no
+        # bound to name that the box has told us about, and inventing one from
+        # the host's idea of this lane is the second source of truth refused
+        # above.
+        note="STUCK — duty run has held the lock for $(status_duration "$lock_age")"
+      else
+        note="STUCK — duty run has held the lock for $(status_duration "$lock_age") with no session in flight, past $(status_duration "$STUCK_AFTER_S")"
+      fi
     elif [ -n "$hired" ] && [ "$hired" != "not hired" ] \
          && [ "$session_active" = 1 ]; then
       state=working
