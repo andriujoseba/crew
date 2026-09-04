@@ -8354,22 +8354,39 @@ SVSHIM="$TMP/sv-shim"; mkdir -p "$SVSHIM"
 cat >"$SVSHIM/gh" <<'SHIM'
 #!/usr/bin/env bash
 set -eu
+printf '%s\n' "$*" >>"$SVSHIM_CALLS"
 [ "$1" = api ] || exit 3
 sub="$2"
 case "$sub" in
-  user)    printf '%s\n' "$SVSHIM_ME";    exit 0 ;;
+  user)
+    if [ -n "${SVSHIM_USER_BLOCK:-}" ]; then
+      : >"$SVSHIM_USER_BLOCK.ready"
+      while [ ! -e "$SVSHIM_USER_BLOCK.release" ]; do sleep 0.02; done
+    fi
+    printf '%s\n' "$SVSHIM_ME"; exit 0 ;;
   graphql) printf '%s\n' "$SVSHIM_ROUND"; exit 0 ;;
 esac
-is_post=0; cid=""; event=""
+is_post=0; cid=""; event=""; body=""
 for a in "$@"; do
   [ "$a" = POST ] && is_post=1
-  case "$a" in commit_id=*) cid="${a#commit_id=}" ;; event=*) event="${a#event=}" ;; esac
+  case "$a" in
+    commit_id=*) cid="${a#commit_id=}" ;;
+    event=*) event="${a#event=}" ;;
+    body=@*) body="${a#body=@}" ;;
+  esac
 done
 case "$sub" in
   */reviews)
     if [ "$is_post" = 1 ]; then
+      post_n="$(($(cat "$SVSHIM_POST_COUNT" 2>/dev/null || echo 0) + 1))"
+      printf '%s\n' "$post_n" >"$SVSHIM_POST_COUNT"
+      sha256sum "$body" | awk '{print $1}' >>"$SVSHIM_POST_BODIES"
+      case "${SVSHIM_POST_MODE:-land}" in
+        drop-first) [ "$post_n" -eq 1 ] && { printf '{}\n'; exit 0; } ;;
+        always-drop) printf '{}\n'; exit 0 ;;
+      esac
       case "$event" in APPROVE) st=APPROVED ;; REQUEST_CHANGES) st=CHANGES_REQUESTED ;; *) st="$event" ;; esac
-      tmp="$(mktemp)"
+      tmp="$(mktemp "$SVSHIM_WORK/reviews.XXXXXX")"
       jq --arg me "$SVSHIM_ME" --arg st "$st" --arg cid "$cid" \
         '. + [{user:{login:$me},state:$st,commit_id:$cid}]' "$SVSHIM_REVIEWS" >"$tmp"
       mv "$tmp" "$SVSHIM_REVIEWS"
@@ -8381,15 +8398,30 @@ esac
 exit 3
 SHIM
 chmod +x "$SVSHIM/gh"
+cat >"$SVSHIM/cp" <<'SHIM'
+#!/usr/bin/env bash
+set -eu
+printf 'copy\n' >>"$SVSHIM_CP_CALLS"
+exec /bin/cp "$@"
+SHIM
+chmod +x "$SVSHIM/cp"
 SV_H="cccccccccccccccccccccccccccccccccccccccc"
 SV_BODY="$TMP/sv-body.txt"; printf 'considered verdict\n' >"$SV_BODY"
 sv_reviews() { printf '%s' "$1" >"$TMP/sv-reviews.json"; }
 sv_count()   { jq 'length' "$TMP/sv-reviews.json"; }
 sv_run() {  # <round-ts "mine req"> <verdict> [--supersede-own]
   local round="$1" verdict="$2"; shift 2
-  SVSHIM_ME=kimi-bot SVSHIM_HEAD="$SV_H" SVSHIM_ROUND="$round" \
-  SVSHIM_REVIEWS="$TMP/sv-reviews.json" PATH="$SVSHIM:$PATH" DUTY_DIR="$TMP" \
-    bash "$SV" o/r 1 "$SV_H" "$verdict" "$SV_BODY" "$@" >/dev/null 2>&1
+  SVSHIM_ME=kimi-bot SVSHIM_HEAD="${SVSHIM_HEAD:-$SV_H}" SVSHIM_ROUND="$round" \
+  SVSHIM_REVIEWS="$TMP/sv-reviews.json" SVSHIM_WORK="$TMP" \
+  SVSHIM_CALLS="${SVSHIM_CALLS:-$TMP/sv-calls}" \
+  SVSHIM_CP_CALLS="${SVSHIM_CP_CALLS:-$TMP/sv-cp-calls}" \
+  SVSHIM_POST_COUNT="${SVSHIM_POST_COUNT:-$TMP/sv-post-count}" \
+  SVSHIM_POST_BODIES="${SVSHIM_POST_BODIES:-$TMP/sv-post-bodies}" \
+  SVSHIM_POST_MODE="${SVSHIM_POST_MODE:-land}" \
+  SVSHIM_USER_BLOCK="${SVSHIM_USER_BLOCK:-}" \
+  PATH="$SVSHIM:$PATH" DUTY_DIR="${SV_DUTY_DIR:-$TMP}" \
+    bash "$SV" o/r 1 "$SV_H" "$verdict" "$SV_BODY" "$@" \
+      >"${SV_STDOUT:-/dev/null}" 2>"${SV_STDERR:-/dev/null}"
 }
 SV_CR="[{\"user\":{\"login\":\"kimi-bot\"},\"state\":\"CHANGES_REQUESTED\",\"commit_id\":\"$SV_H\"}]"
 SV_AP="[{\"user\":{\"login\":\"kimi-bot\"},\"state\":\"APPROVED\",\"commit_id\":\"$SV_H\"}]"
@@ -8414,6 +8446,91 @@ sv_reviews "$SV_AP"
 if sv_run "2026-07-28T11:00:00Z 2026-07-28T10:00:00Z" approve --supersede-own; then r1=0; else r1=$?; fi
 t submit-supersede-still-lands-rc 0 "$r1"
 t submit-supersede-still-lands 2 "$(sv_count)"
+
+# #672: the frozen verdict belongs on the duty volume, never TMPDIR. Keep the
+# existing stateful shim and add only the storage behaviours around it.
+sv_reset() {
+  rm -f "$TMP"/sv-{calls,cp-calls,post-count,post-bodies,stderr}
+  sv_reviews '[]'
+}
+sv_store_files() {
+  [ -d "$1/.submit-verdict" ] || { echo 0; return; }
+  find "$1/.submit-verdict" -type f | wc -l | tr -d ' '
+}
+SV_BODY_HASH="$(sha256sum "$SV_BODY" | awk '{print $1}')"
+
+# /tmp (represented by TMPDIR) can be unusable while the duty-volume store
+# still submits and cleans up successfully.
+sv_reset
+SV_BAD_TMP="$TMP/not-a-directory"; printf 'regular file\n' >"$SV_BAD_TMP"
+if TMPDIR="$SV_BAD_TMP" sv_run "- -" approve; then r1=0; else r1=$?; fi
+t submit-freeze-ignores-tmpdir-rc 0 "$r1"
+t submit-freeze-ignores-tmpdir-landed 1 "$(sv_count)"
+t submit-freeze-success-clean 0 "$(sv_store_files "$TMP")"
+t submit-freeze-success-preserves-caller "$SV_BODY_HASH" "$(sha256sum "$SV_BODY" | awk '{print $1}')"
+
+# A real store-creation failure is diagnosed before even the identity lookup.
+SV_BAD_DUTY="$TMP/sv-bad-duty"; mkdir -p "$SV_BAD_DUTY"
+printf 'regular file\n' >"$SV_BAD_DUTY/.submit-verdict"
+sv_reset
+if SV_DUTY_DIR="$SV_BAD_DUTY" SV_STDERR="$TMP/sv-stderr" sv_run "- -" approve; then r1=0; else r1=$?; fi
+t submit-freeze-bad-store-rc 1 "$r1"
+if [ -e "$TMP/sv-calls" ]; then r1="$(wc -l <"$TMP/sv-calls")"; else r1=0; fi
+t submit-freeze-bad-store-no-gh-calls 0 "$r1"
+if grep -Fq "store '$SV_BAD_DUTY/.submit-verdict'" "$TMP/sv-stderr" &&
+   grep -Fq 'filesystem:' "$TMP/sv-stderr"; then r1=named; else r1=MISSING; fi
+t submit-freeze-bad-store-names-path-and-filesystem named "$r1"
+if grep -Fq "caller body '$SV_BODY'" "$TMP/sv-stderr"; then r1=named; else r1=MISSING; fi
+t submit-freeze-bad-store-names-caller named "$r1"
+t submit-freeze-bad-store-preserves-caller "$SV_BODY_HASH" "$(sha256sum "$SV_BODY" | awk '{print $1}')"
+
+# The retry reads the caller once, posts the exact frozen bytes twice, and
+# removes the internal duplicate after the second attempt lands.
+sv_reset
+if SVSHIM_POST_MODE=drop-first sv_run "- -" approve; then r1=0; else r1=$?; fi
+t submit-freeze-retry-rc 0 "$r1"
+t submit-freeze-retry-two-posts 2 "$(wc -l <"$TMP/sv-post-bodies")"
+t submit-freeze-retry-identical-bodies "$SV_BODY_HASH $SV_BODY_HASH" "$(paste -sd' ' "$TMP/sv-post-bodies")"
+t submit-freeze-retry-reads-caller-once 1 "$(wc -l <"$TMP/sv-cp-calls")"
+t submit-freeze-retry-clean 0 "$(sv_store_files "$TMP")"
+t submit-freeze-retry-preserves-caller "$SV_BODY_HASH" "$(sha256sum "$SV_BODY" | awk '{print $1}')"
+
+# Head movement and a hard submit failure both leave only the caller's durable
+# file. The hard failure is after two intentionally dropped POSTs.
+sv_reset
+if SVSHIM_HEAD="dddddddddddddddddddddddddddddddddddddddd" sv_run "- -" approve; then r1=0; else r1=$?; fi
+t submit-freeze-moved-head-rc 2 "$r1"
+t submit-freeze-moved-head-clean 0 "$(sv_store_files "$TMP")"
+t submit-freeze-moved-head-preserves-caller "$SV_BODY_HASH" "$(sha256sum "$SV_BODY" | awk '{print $1}')"
+sv_reset
+if SVSHIM_POST_MODE=always-drop SV_STDERR="$TMP/sv-stderr" sv_run "- -" approve; then r1=0; else r1=$?; fi
+t submit-freeze-hard-failure-rc 1 "$r1"
+t submit-freeze-hard-failure-two-posts 2 "$(cat "$TMP/sv-post-count")"
+t submit-freeze-hard-failure-clean 0 "$(sv_store_files "$TMP")"
+t submit-freeze-hard-failure-preserves-caller "$SV_BODY_HASH" "$(sha256sum "$SV_BODY" | awk '{print $1}')"
+if grep -Fq "$SV_BODY" "$TMP/sv-stderr"; then r1=named; else r1=MISSING; fi
+t submit-freeze-hard-failure-names-caller named "$r1"
+
+# TERM arrives after the freeze (the shim has entered `gh api user`) and before
+# any submit. Releasing the shim lets bash service its pending trap.
+sv_reset
+SV_BLOCK="$TMP/sv-block"
+SVSHIM_ME=kimi-bot SVSHIM_HEAD="$SV_H" SVSHIM_ROUND="- -" \
+SVSHIM_REVIEWS="$TMP/sv-reviews.json" SVSHIM_WORK="$TMP" \
+SVSHIM_CALLS="$TMP/sv-calls" SVSHIM_CP_CALLS="$TMP/sv-cp-calls" \
+SVSHIM_POST_COUNT="$TMP/sv-post-count" SVSHIM_POST_BODIES="$TMP/sv-post-bodies" \
+SVSHIM_POST_MODE=land SVSHIM_USER_BLOCK="$SV_BLOCK" \
+PATH="$SVSHIM:$PATH" DUTY_DIR="$TMP" \
+  bash "$SV" o/r 1 "$SV_H" approve "$SV_BODY" >/dev/null 2>&1 &
+sv_pid=$!
+for _ in $(seq 1 100); do [ -e "$SV_BLOCK.ready" ] && break; sleep 0.02; done
+kill -TERM "$sv_pid"
+: >"$SV_BLOCK.release"
+if wait "$sv_pid"; then r1=0; else r1=$?; fi
+t submit-freeze-term-rc 143 "$r1"
+t submit-freeze-term-no-posts 0 "$(cat "$TMP/sv-post-count" 2>/dev/null || echo 0)"
+t submit-freeze-term-clean 0 "$(sv_store_files "$TMP")"
+t submit-freeze-term-preserves-caller "$SV_BODY_HASH" "$(sha256sum "$SV_BODY" | awk '{print $1}')"
 
 # --- crew host: one repo belongs to one fleet (#70) ----------------------
 # The check consumes GitHub's shared board state, never another fleet's

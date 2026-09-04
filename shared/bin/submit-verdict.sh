@@ -201,7 +201,7 @@ while :; do
   fi
 
   if [ "$attempt" -ge 2 ]; then
-    glog "HARD FAIL: verdict on $REPO#$NUM did not land after $attempt attempts (last rc=$rc) — NOT submitting again; next tick re-detects"
+    glog "HARD FAIL: verdict on $REPO#$NUM did not land after $attempt attempts (last rc=$rc); caller body remains at '$BODY_FILE' — NOT submitting again; next tick re-detects"
     exit 1
   fi
   glog "attempt $attempt did not land (rc=$rc); retrying once with the identical body"
