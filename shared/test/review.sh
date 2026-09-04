@@ -276,10 +276,11 @@ DUTY_DIR="$D671_COUNT" _review_owed_prune_inactive 'fx/repo#8'
 t review-owed-complete-sweep-prunes-ended-request "fx/repo#8@$D671_HEAD_B 1" \
   "$(cat "$D671_COUNT/.review-owed")"
 
-d671_drive() ( # root post-mode ticks [capture] [invalid] [multi] [mutation] [ready] [lifecycle] [rerequest]
+d671_drive() ( # root post-mode ticks [capture] [invalid] [multi] [mutation] [ready] [lifecycle] [rerequest] [clear-failure]
   local root="$1" post_mode="$2" ticks="$3" capture="${4:-}" invalid="${5:-0}" multi="${6:-0}"
   local mutation="${7:-none}" ready="${8:-0}" lifecycle="${9:-0}"
   local rerequest="${10:-0}"
+  local clear_failure="${11:-0}"
   # shellcheck disable=SC2030  # fixture globals are intentionally isolated
   local DUTY_DIR="$root" WORK_DIR="$root/work" TREES_DIR="$root/trees"
   local LOG_DIR="$root/logs" CONF_DIR="$root/conf" PROMPTS_DIR="$SHARED/prompts"
@@ -387,6 +388,9 @@ d671_drive() ( # root post-mode ticks [capture] [invalid] [multi] [mutation] [re
     unbounded) _review_owed_exhausted() { return 1; } ;;
     no-prune) _review_owed_prune_inactive() { :; } ;;
   esac
+  if [ "$clear_failure" -eq 1 ]; then
+    _review_owed_clear() { return 1; }
+  fi
   for ((tick=1; tick<=ticks; tick++)); do
     duty_review
     if [ -s "$root/.review-owed" ]; then
@@ -511,6 +515,21 @@ t review-mixed-session-retry-excludes-settled-sibling 1 \
   "$(grep -c 'oldest first: 8\.' "$D671_MIXED/session-log")"
 t review-postcondition-query-is-scoped-to-me 3 \
   "$(grep -c '^POST-SCOPED-TO-ME$' "$D671_MIXED/calls")"
+
+# The production caller runs duty_review under set -e. Retry-ledger cleanup is
+# best-effort after a durable outcome: its failure must warn without aborting
+# the tick, losing completed siblings, or skipping retry accounting for others.
+D671_CLEAR_FAILURE="$TMP/review-owed-clear-failure"
+( set -e; d671_drive "$D671_CLEAR_FAILURE" mixed 1 '' 0 1 none 0 0 0 1 )
+D671_CLEAR_FAILURE_RC=$?
+t review-owed-clear-failure-is-best-effort 0 "$D671_CLEAR_FAILURE_RC"
+t review-owed-clear-failure-keeps-verdict-sibling-settled \
+  'fx/repo#7 2026-09-04T11:00:00Z' "$(cat "$D671_CLEAR_FAILURE/.seen-review")"
+t review-owed-clear-failure-keeps-missing-sibling-owed \
+  "fx/repo#8@$D671_HEAD_A 1" "$(cat "$D671_CLEAR_FAILURE/.review-owed")"
+t review-owed-clear-failure-warns 1 \
+  "$(grep -c 'fx/repo#7 could not clear settled missing-verdict attempts' \
+      "$D671_CLEAR_FAILURE/warn")"
 
 # Required mutations: each deliberately weakens one failure direction. The
 # fixture reports `red` only when that weakening violates its safety property.

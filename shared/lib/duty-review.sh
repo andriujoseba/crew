@@ -782,11 +782,13 @@ $key $updated"
           [ -n "${updated:-}" ] || continue
           key_pr="${key##*#}"
           if [[ "$captured_prs" == *" $key_pr "* ]]; then
-            _review_owed_clear "$SR" "$key_pr"
+            _review_owed_clear "$SR" "$key_pr" \
+              || warn "review: $SR#$key_pr could not clear parked missing-verdict attempts"
           elif _review_verdict_at_head "$SR" "$key_pr" "${candidate_heads["$SR#$key_pr"]}"; then
             commit_items="$commit_items
 $key $updated"
-            _review_owed_clear "$SR" "$key_pr"
+            _review_owed_clear "$SR" "$key_pr" \
+              || warn "review: $SR#$key_pr could not clear settled missing-verdict attempts"
           else
             # A lookup failure is still one completed reviewer attempt without
             # a durable verdict, so it warns and spends the same bounded budget.
@@ -801,7 +803,8 @@ $key $updated"
               warn "review: $SR#$key_pr at ${candidate_heads["$SR#$key_pr"]} still has no exact-head verdict after $attempt attempts — settling local spend; GitHub request remains live"
               commit_items="$commit_items
 $key $updated"
-              _review_owed_clear "$SR" "$key_pr"
+              _review_owed_clear "$SR" "$key_pr" \
+                || warn "review: $SR#$key_pr could not clear exhausted missing-verdict attempts"
             fi
           fi
         done <<<"${repo_items[$SR]}"
