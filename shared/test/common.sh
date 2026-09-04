@@ -7866,7 +7866,11 @@ t silent-rule-cli-matches-floor "$FL_SILENT" "$CL_SILENT"
 #   · the bound WHERE NOTHING DECLARES A CEILING — `STUCK_AFTER_S` in both,
 #     which is the no-session clause and every pre-#538 `SESSION START`;
 #   · the bound WHERE ONE IS DECLARED — that ceiling plus the kill grace, and
-#     the grace is the same 60 in both (`kill-grace-cli-matches-floor` below).
+#     the grace is the same 60 in both (`kill-grace-cli-matches-floor` below);
+#   · the CANONICALISATION — the record carries digits and each reader turns
+#     them into a base-10 number itself, `10#` in one and `int()` in the
+#     other, so a leading zero on the wire grades the same on both sides
+#     rather than aborting one of them (`stuck-ceiling-*-canonical` below).
 #
 # What these greps cannot see is whether the two then GRADE a box alike, which
 # is a question about behaviour and is answered where behaviour runs: the
@@ -7928,7 +7932,7 @@ else
 fi
 t kill-grace-floor-consumed consumed "$r1"
 # shellcheck disable=SC2016  # matching crew's literal arithmetic expansion
-if grep -q 'lock_bound=\$(( session_ceiling + SESSION_KILL_GRACE_S ))' "$CREW_CLI"; then
+if grep -q 'lock_bound=\$(( lock_ceiling + SESSION_KILL_GRACE_S ))' "$CREW_CLI"; then
   r1=consumed
 else
   r1=DRIFTED
@@ -7959,7 +7963,7 @@ t kill-grace-cli-consumed consumed "$r1"
 cli_status_code="$(sed -n '/^cmd_status()/,/^}$/p' "$CREW_CLI" | grep -v '^[[:space:]]*#')"
 stuck_clause="$(sed -n '/^    lock_ceiling=-1$/,/^    fi$/p' "$CREW_CLI")"
 # shellcheck disable=SC2016  # matching crew's literal assignment
-if grep -q 'lock_ceiling="\$session_ceiling"' <<<"$stuck_clause" \
+if grep -q 'lock_ceiling=\$(( 10#\$session_ceiling ))' <<<"$stuck_clause" \
    && ! grep -qE 'ROLES_DIR|conf/roles' <<<"$stuck_clause" \
    && ! grep -qE 'ROLES_DIR|conf/roles' <<<"$cli_status_code"; then
   r1=wire
@@ -7973,8 +7977,34 @@ t stuck-ceiling-cli-off-the-wire wire "$r1"
 # it — the `:--1` default that makes an un-upgraded box's row bit-identical to
 # today's. Any second assignment is a host-side source of truth whatever file
 # it came out of, including ones spelled without `ROLES_DIR` at all.
+#
+# OCCURRENCES, not lines, and the distinction is not academic here: `grep -c`
+# counts matching LINES, and the very assignment this counts shares its line
+# with another — `session_kind="${session_kind:--}"; session_ceiling=…`. So a
+# second assignment appended to an existing line would have walked straight
+# past a line count, in a file that demonstrably writes that shape (round 1,
+# claude-bot).
 t stuck-ceiling-cli-not-rederived 1 \
-  "$(grep -c 'session_ceiling=' <<<"$cli_status_code")"
+  "$(grep -o 'session_ceiling=' <<<"$cli_status_code" | wc -l | tr -d ' ')"
+# ...and the digits it carries become a NUMBER in the reader, not in the log.
+# Both readers canonicalise to base 10 at the point they grade — `10#` here,
+# `int()` there — and neither rewrites the box's record, which is D1 again:
+# `timeout=0900s` is what a role conf saying `TIMEOUT_BUILD=0900` puts on the
+# wire, nothing between the two canonicalises, and GNU `timeout 0900` runs it.
+# Python reads those digits as 900. Bash reads a leading zero as OCTAL, so
+# without `10#` the CLI's `$(( ))` takes an invalid octal literal and dies —
+# fatally, under this file's own `set -euo pipefail`, out of the middle of the
+# roster loop. Pinned in the source as well as in the behaviour cases because
+# it is one token, and a token is what gets tidied away.
+# shellcheck disable=SC2016  # matching crew's literal arithmetic expansion
+if grep -q 'lock_ceiling=\$(( 10#\$session_ceiling ))' "$CREW_CLI"; then
+  r1=base10
+else
+  r1=DRIFTED
+fi
+t stuck-ceiling-cli-canonical base10 "$r1"
+if grep -q '"timeout": int(m.group(' <<<"$FLOOR_CODE"; then r1=base10; else r1=DRIFTED; fi
+t stuck-ceiling-floor-canonical base10 "$r1"
 # D1's other half, and it is invisible to every fixture here for the same
 # reason: the stub answers a second round trip as readily as the first. The
 # datum comes out of the tail auth_from_flow already takes, so its body stays

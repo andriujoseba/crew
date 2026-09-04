@@ -1977,6 +1977,14 @@ auth_from_flow() {
           ""|*[!0-9]*) : ;;
           *) [ $(( $(date -u +%s) - session_epoch )) -lt 21600 ] && session_active=1 ;;
         esac
+        # Past that bound the floor has no session at all — `cur` is None, so
+        # it holds no kind and no ceiling. Say the same thing on the wire
+        # rather than emitting a dead START'\''s numbers and relying on every
+        # future reader to gate them: an inertly wrong field is a second
+        # source of truth that happens to be unread, and this helper exists
+        # to refuse those. Nothing rendered moves — `cmd_status` already
+        # gates on session_active — which is what makes it safe to state.
+        [ "$session_active" = 1 ] || { session_kind=-; session_ceiling=-1; }
       fi
     fi
     if [ -r "$HOME/duty/.duty.lock.since" ]; then
@@ -4001,12 +4009,30 @@ cmd_status() {
     # `session_active` gates the first clause because the floor's `cur` is None
     # for an orphan past the six-hour bound, and a ceiling read off a dead
     # session's line is exactly the second source of truth this refuses.
+    # auth_from_flow clears both fields at that bound too, so this gate is
+    # belt-and-braces rather than the only thing holding the two apart.
+    #
+    # `10#` — THE WIRE CARRIES DIGITS, AND THIS READER TURNS THEM INTO A
+    # NUMBER, which is where the floor does it too: `int(m.group(4))` in
+    # units.derive_sessions. Neither reader normalises the LOG, because the
+    # record is the box's and D1 is that it is read rather than restated.
+    # Bash reads a leading zero in an arithmetic context as octal, and a role
+    # conf may legitimately say `TIMEOUT_BUILD=0900` — nothing between it and
+    # `session.sh`'s `timeout=${tmo}s` canonicalises, and GNU `timeout 0900`
+    # runs the session happily. Without `10#` that reaches `$(( ))` as an
+    # invalid octal literal: the guards above do NOT stop it, because the
+    # regex matches and `test -gt` parses base 10. The expansion is then a
+    # FATAL error under `set -euo pipefail`, so `cmd_status` returns 1 out of
+    # this `while read` and the roster stops printing at that box while the
+    # floor renders it fine — the disagreement this whole change removes,
+    # wearing its worst hat. It is also what `lock_ceiling` is RENDERED from
+    # three screens down, so the canonical value has to be the stored one.
     lock_ceiling=-1
     lock_bound="$STUCK_AFTER_S"
     if [ "$session_active" = 1 ] && [[ "$session_ceiling" =~ ^[0-9]+$ ]] \
        && [ "$session_ceiling" -gt 0 ]; then
-      lock_ceiling="$session_ceiling"
-      lock_bound=$(( session_ceiling + SESSION_KILL_GRACE_S ))
+      lock_ceiling=$(( 10#$session_ceiling ))
+      lock_bound=$(( lock_ceiling + SESSION_KILL_GRACE_S ))
     fi
     # `nofail` aged into a verdict HERE, on the host, with the same rule the
     # floor applies. SILENT_AFTER_S must equal floor.py's; shared/test asserts
