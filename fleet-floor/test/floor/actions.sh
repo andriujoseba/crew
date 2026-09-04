@@ -99,6 +99,30 @@ FS_RECORD="$(fs_calls_since "$FS_RECORD_M")"
 t "calls: a multi-line argv is escaped into one record" \
   'exec ff-working -- bash -lc \ntail -n 1 ~/duty/duty.log\nprintf done\n' \
   "$FS_RECORD"
+
+# The streaming encoder makes more than one write for a large record, so the
+# lock is part of the record contract rather than an implementation detail.
+# Drive two records long enough for their encoders to overlap and require both
+# exact lines: a count alone would miss one record's tail inside the other.
+FS_LONG_A=$'alpha-start\n'
+FS_LONG_B=$'bravo-start\n'
+for _ in $(seq 1 1500); do
+  FS_LONG_A+=$'alpha-payload\n'
+  FS_LONG_B+=$'bravo-payload\n'
+done
+"$HERE/stub-box" list "$FS_LONG_A" >/dev/null & FS_LONG_A_PID=$!
+"$HERE/stub-box" list "$FS_LONG_B" >/dev/null & FS_LONG_B_PID=$!
+wait "$FS_LONG_A_PID" "$FS_LONG_B_PID"
+FS_LONG_A_RECORD="list ${FS_LONG_A//$'\n'/\\n}"
+FS_LONG_B_RECORD="list ${FS_LONG_B//$'\n'/\\n}"
+t "calls: concurrent large argv remain two records" 3 "$(fs_mark)"
+if grep -Fqx "$FS_LONG_A_RECORD" "$FLOOR_CALLS" && \
+   grep -Fqx "$FS_LONG_B_RECORD" "$FLOOR_CALLS"; then
+  ok "calls: concurrent records keep their own complete argv"
+else
+  fail "calls: concurrent records keep their own complete argv" \
+       "$(wc -l -c < "$FLOOR_CALLS")"
+fi
 FLOOR_CALLS="$FS_CALLS_ACTUAL"
 FLOOR_STATE="$FS_STATE_ACTUAL"
 
