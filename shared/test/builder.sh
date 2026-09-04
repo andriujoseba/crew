@@ -4004,7 +4004,15 @@ d533_tick() (
     fi
     if [ "$1" = search ]; then return 0; fi
     if [ "$1" = api ] && [ "$2" = graphql ]; then
-      printf '%s - - - 2026-08-30T06:30:00Z\n' "$D533_HEAD"
+      if [[ "$*" == *'states:[APPROVED,CHANGES_REQUESTED])'* ]]; then
+        jq -cn --arg h "$D533_HEAD" \
+          '{data:{repository:{pullRequest:{reviews:{nodes:[{commit:{oid:$h},state:"APPROVED"}]}}}}}'
+      elif [ -e "$D533/verdict-landed-$D533_NUM" ]; then
+        printf '%s %s 2026-08-30T07:01:00Z APPROVED 2026-08-30T06:30:00Z\n' \
+          "$D533_HEAD" "$D533_HEAD"
+      else
+        printf '%s - - - 2026-08-30T06:30:00Z\n' "$D533_HEAD"
+      fi
       return 0
     fi
     return 3
@@ -4027,6 +4035,7 @@ d533_tick() (
     elif [ -n "${D533_PARK_LINE:-}" ]; then
       printf '%s\n' "$D533_PARK_LINE" >"$RUN_SESSION_LOG"
     fi
+    : >"$D533/verdict-landed-$D533_NUM"
     RUN_SESSION_RC=0
   }
   duty_review
