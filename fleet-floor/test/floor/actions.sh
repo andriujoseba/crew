@@ -90,9 +90,12 @@ FS_STATE_ACTUAL="$FLOOR_STATE"
 FLOOR_CALLS="$TMP/atomic-calls.log"
 FLOOR_STATE="$TMP/atomic-state"
 : > "$FLOOR_CALLS"
+# stub-box's exec arm drains stdin because the real transport forwards it.
+# Keep recorder-only probes detached from the suite's terminal stdin or this
+# direct exec waits for EOF when the documented command is run interactively.
 FS_RECORD_M=$(fs_mark)
 "$HERE/stub-box" exec ff-working -- bash -lc \
-  $'\ntail -n 1 ~/duty/duty.log\nprintf done\n' >/dev/null
+  $'\ntail -n 1 ~/duty/duty.log\nprintf done\n' </dev/null >/dev/null
 t "calls: a multi-line argv advances the mark once" 1 \
   "$(( $(fs_mark) - FS_RECORD_M ))"
 FS_RECORD="$(fs_calls_since "$FS_RECORD_M")"
@@ -102,8 +105,14 @@ t "calls: a multi-line argv is escaped into one record" \
 
 # The streaming encoder makes more than one write for a large record, so the
 # lock is part of the record contract rather than an implementation detail.
-# Drive two records long enough for their encoders to overlap and require both
-# exact lines: a count alone would miss one record's tail inside the other.
+# Pin the lock directly so its removal always reds; the concurrent behavior
+# case beneath it then proves what the lock protects without depending on a
+# scheduler race to turn a source mutation into corruption.
+if grep -Fqx '  flock -x 9' "$HERE/stub-box"; then
+  ok "calls: the streaming append holds its record lock"
+else
+  fail "calls: the streaming append holds its record lock" "flock -x 9 missing"
+fi
 FS_LONG_A=$'alpha-start\n'
 FS_LONG_B=$'bravo-start\n'
 for _ in $(seq 1 1500); do
@@ -275,7 +284,18 @@ else ok "mode: the harmless direction fires nothing either"; fi
 # loaded runner. Wait for a fresh wedged publication: otherwise this request
 # may legitimately see the heartbeat become unmeasured, take the graceful
 # path, and spend the action timeout proving a race instead of this contract.
-FS_PING_FRESH_MAX=$(( ${FLOOR_TEST_PING_INTERVAL:-2} * (${FLOOR_TEST_PING_FAILS:-2} + 2) - 1 ))
+FS_PING_STALE_AFTER="$(
+  CREW_FLOOR_PING_INTERVAL="${FLOOR_TEST_PING_INTERVAL:-2}" \
+  CREW_FLOOR_PING_FAILS="${FLOOR_TEST_PING_FAILS:-2}" \
+  FF_SERVER="$FLOOR/server" python3 - <<'PY'
+import os
+import sys
+sys.path.insert(0, os.environ["FF_SERVER"])
+from floor.ping import PING_STALE_AFTER_S
+print(PING_STALE_AFTER_S)
+PY
+)"
+FS_PING_FRESH_MAX=$(( FS_PING_STALE_AFTER - 1 ))
 FS_DL=$(( $(date +%s) + 60 ))
 while [ "$(uf ff-wedged "u[\"ping\"][\"wedged\"] and u[\"ping\"][\"age\"] <= $FS_PING_FRESH_MAX")" != "True" ] \
       && [ "$(date +%s)" -lt "$FS_DL" ]; do sleep 1; done
