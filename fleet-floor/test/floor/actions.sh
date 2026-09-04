@@ -251,11 +251,12 @@ else ok "mode: the harmless direction fires nothing either"; fi
 # loaded runner. Wait for a fresh wedged publication: otherwise this request
 # may legitimately see the heartbeat become unmeasured, take the graceful
 # path, and spend the action timeout proving a race instead of this contract.
+FS_PING_FRESH_MAX=$(( ${FLOOR_TEST_PING_TIMEOUT:-4} + 1 ))
 FS_DL=$(( $(date +%s) + 60 ))
-while [ "$(uf ff-wedged 'u["ping"]["wedged"] and u["ping"]["age"] <= 1')" != "True" ] \
+while [ "$(uf ff-wedged "u[\"ping\"][\"wedged\"] and u[\"ping\"][\"age\"] <= $FS_PING_FRESH_MAX")" != "True" ] \
       && [ "$(date +%s)" -lt "$FS_DL" ]; do sleep 1; done
 t "mode: the no-mode check starts from a fresh wedged verdict" True \
-  "$(uf ff-wedged 'u["ping"]["wedged"] and u["ping"]["age"] <= 1')"
+  "$(uf ff-wedged "u[\"ping\"][\"wedged\"] and u[\"ping\"][\"age\"] <= $FS_PING_FRESH_MAX")"
 FS_M=$(fs_mark)
 t "mode: a restart naming no mode never escalates" 409 \
   "$(status POST /api/command '{"action":"restart","box":"ff-wedged"}')"
