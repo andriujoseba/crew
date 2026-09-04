@@ -8005,6 +8005,58 @@ fi
 t stuck-ceiling-cli-canonical base10 "$r1"
 if grep -q '"timeout": int(m.group(' <<<"$FLOOR_CODE"; then r1=base10; else r1=DRIFTED; fi
 t stuck-ceiling-floor-canonical base10 "$r1"
+# ...and the canonicalisation must survive a record BASH CANNOT HOLD, which is
+# the one place the two readers are not symmetrical and therefore the one that
+# needs pinning rather than mirroring. Python's int is unbounded; bash's is a
+# fixed-width signed 64, and BOTH of bash's ways of touching a wider value are
+# wrong — `test` exits 2 with `integer expression expected` on the operator's
+# stderr, and `$(( ))` wraps silently. The wire can carry it: a role conf is
+# operator-editable, nothing between it and `timeout=${tmo}s` range-checks, and
+# GNU `timeout 999999999999999999999999 true` exits 0. With a `test` in front
+# of the arithmetic the clause was SKIPPED on such a box and a 700s lock read
+# STUCK against STUCK_AFTER_S while the floor read it healthy — #624's own
+# defect inside #624's own fix (round 2, codex-bot).
+#
+# So: the clause validates with a REGEX, which has no width, and puts
+# `session_ceiling` through no `test` at all. The negative half is the pin that
+# matters — `[ "$session_ceiling" -gt 0 ]` is the exact expression that stood
+# here, it looks harmless, and it is the one thing that must never come back.
+# shellcheck disable=SC2016  # matching crew's literal regex and comparisons
+if grep -q '=~ \^0\*(\[1-9\]\[0-9\]\*)\$' <<<"$stuck_clause" \
+   && ! grep -qE '\$session_ceiling"? +-(gt|ge|lt|le|eq|ne)' <<<"$stuck_clause"; then
+  r1=unbounded
+else
+  r1=DRIFTED
+fi
+t stuck-ceiling-cli-range-safe unbounded "$r1"
+# ...and past the width it can hold, the CLI SATURATES rather than computing.
+# Wrapping would fabricate a ceiling that is nobody's record — the second
+# source of truth D1 refuses, arrived at by arithmetic instead of by a conf
+# read. Saturating grades identically to the floor's unbounded `int()` for
+# every lock age that can exist, because 10^18 seconds is 31.7 billion years.
+# The gate is taken on the capture's LENGTH against the CONSTANT'S OWN length,
+# so a raised constant cannot leave a stale `18` behind it.
+# shellcheck disable=SC2016  # matching crew's literal length comparison
+if grep -q '\[ "${#BASH_REMATCH\[1\]}" -gt "${#SESSION_CEILING_MAX_S}" \]' <<<"$stuck_clause" \
+   && grep -q 'lock_ceiling=\$SESSION_CEILING_MAX_S' <<<"$stuck_clause"; then
+  r1=saturated
+else
+  r1=DRIFTED
+fi
+t stuck-ceiling-cli-saturates saturated "$r1"
+# ...and the saturation must not itself be the thing that wraps. COMPUTED, not
+# grepped: the bound the clause reaches for a saturated ceiling is that
+# constant plus the kill grace, and if a later edit raises the constant past
+# what bash can add 60 to, this reds here rather than in a fixture nobody
+# writes at 10^19.
+CL_CEILING_MAX="$(sed -n 's/^SESSION_CEILING_MAX_S=\([0-9]*\).*/\1/p' "$CREW_CLI" | head -1)"
+if [ -n "$CL_CEILING_MAX" ] \
+   && [ "$(( CL_CEILING_MAX + CL_KILL_GRACE ))" -gt "$CL_CEILING_MAX" ]; then
+  r1=positive
+else
+  r1=WRAPPED
+fi
+t stuck-ceiling-cli-bound-in-range positive "$r1"
 # D1's other half, and it is invisible to every fixture here for the same
 # reason: the stub answers a second round trip as readily as the first. The
 # datum comes out of the tail auth_from_flow already takes, so its body stays
