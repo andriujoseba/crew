@@ -163,16 +163,18 @@ oom_counter_run() ( # oom_counter_run KEY BEFORE AFTER RC OUTPUT
   local odir="$TMP/oom-counter-$key" events="$TMP/oom-counter-$key.events"
   mkdir -p "$odir/logs" "$odir/work"
   printf 'oom_kill %s\n' "$before" >"$events"
-  DUTY_DIR="$odir"; LOG_DIR="$odir/logs"; DUTY_TICK_ID=tick-oom-counter
+  DUTY_DIR="$odir"; LOG_DIR="$odir/logs"; DUTY_TICK_ID="tick_oom_counter"
   _SESSION_OOM_EVENTS_FILE="$events"
   export OOM_EVENTS="$events" OOM_AFTER="$after" OOM_RC="$rc" OOM_OUTPUT="$output"
+  # shellcheck disable=SC2016  # expanded by the nested fixture shell
   BOT_CLI_CMD=(bash -c \
     'printf "%s" "$OOM_OUTPUT"; printf "oom_kill %s\n" "$OOM_AFTER" >"$OOM_EVENTS"; exit "$OOM_RC"')
+  # shellcheck disable=SC2317  # invoked indirectly by session_acted
   bot_session_acted() { return 0; }
   bot_session_terminal() { grep -qx 'Execution error' "$1"; }
   # A deterministic peak makes the new field's position assertable without a
   # scheduler race in the real watcher.
-  _session_peak_rss_start() { printf '42\n' >"$1"; _SESSION_PEAK_PID=""; }
+  _session_peak_rss_start() { printf '42\n' >"$1"; }
   _session_peak_rss_stop() { :; }
   run_session build "fixture/$key" "$odir/work" 5 prompt
 )
@@ -304,6 +306,8 @@ sid_run() (
   [ -e "$sdir/memory.events" ] || printf 'oom_kill 0\n' >"$sdir/memory.events"
   export SID_OOM_EVENTS="$sdir/memory.events"
   _SESSION_OOM_EVENTS_FILE="$sdir/memory.events"
+  # shellcheck disable=SC1090  # test-selected mutated copy of the subject
+  [ -z "${SID_SESSION_MUTANT:-}" ] || source "$SID_SESSION_MUTANT"
   alert() { :; }
   bot_session_terminal() { grep -qx 'Execution error' "$1"; }
   case "$hooks" in
@@ -326,6 +330,16 @@ sid_run() (
   printf -- '--argv--\n'
   cat "$sdir/argv" 2>/dev/null
 )
+
+sid_mutant() { # sid_mutant NAME SED-EXPR
+  local out="$TMP/session-sid-mutant-$1.sh"
+  sed "$2" "$SHARED/lib/common/session.sh" >"$out"
+  if cmp -s "$out" "$SHARED/lib/common/session.sh"; then
+    t "sid-mutation-$1-applies" applied INERT
+  else
+    t "sid-mutation-$1-applies" applied applied
+  fi
+}
 
 # The record the LAST dispatch into this box wrote.
 sid_line() { # sid_line BOX RECORD
@@ -471,6 +485,28 @@ t sid-memory-resume-forbids-the-suspect-command 1 \
 t sid-memory-resume-keeps-the-original-prompt 1 \
   "$(grep -c '^prompt$' <<<"$sid_memory_resumed" || true)"
 
+# MUST FAIL: restoring the old non-empty byte test admits the real 15-byte
+# error body, and dropping the informed preamble hides why the resume exists.
+# shellcheck disable=SC2016  # sed matches the subject's literal variables
+sid_mutant nonempty-log \
+  's/^  \[ "$productive" = yes \] || return 0$/  [ "$logb" != unknown ] \&\& [ "$logb" -gt 0 ] || return 0/'
+sid_run memerror-mut fixture/memerror-mut 5 oom-error both >/dev/null
+sid_error_mut_killed="$(sid_of memerror-mut START)"
+sid_error_mut_resumed="$(SID_SESSION_MUTANT="$TMP/session-sid-mutant-nonempty-log.sh" \
+  sid_run memerror-mut fixture/memerror-mut 5 reply both)"
+t sid-mutation-nonempty-log-wrongly-resumes-the-error RESUMED \
+  "$([ "$(sid_argv_flag "$sid_error_mut_resumed" --resume)" = "$sid_error_mut_killed" ] \
+    && printf RESUMED || printf ordinary)"
+
+sid_mutant no-preamble \
+  's/^    resume_preamble=.*$/    resume_preamble=""/'
+sid_run memprompt-mut fixture/memprompt-mut 5 oom-progress both >/dev/null
+sid_prompt_mut="$(SID_SESSION_MUTANT="$TMP/session-sid-mutant-no-preamble.sh" \
+  sid_run memprompt-mut fixture/memprompt-mut 5 reply both)"
+t sid-mutation-dropping-preamble-hides-the-cause 0 \
+  "$(grep -c 'previous attempt was terminated because this box ran out of memory' \
+    <<<"$sid_prompt_mut" || true)"
+
 # --- the six refusals, one case each (D6) --------------------------------
 #
 # Each drives a real timeout, changes exactly one of the six facts, and then
@@ -563,7 +599,7 @@ t sid-refuses-a-profile-that-cannot-resume ordinary \
 SID_PLAN_BOX="$(sid_box planonly)"
 sid_plan_verdict() ( # sid_plan_verdict none|both
   local stub="$SID_PLAN_BOX/.session-resume.build.fixture_plan"
-  printf 'kind=build\nkey=fixture/plan\nsid=%s\nhead=%s\nwall=1\ntry=0\noutcome=TIMEOUT\nproductive=yes\nleft=0\n' \
+  printf 'kind=build\nkey=fixture/plan\nsid=%s\nhead=%s\nwall=1\ntry=0\nlog=14\noutcome=TIMEOUT\nproductive=yes\nleft=0\n' \
     "$(_session_mint_sid)" "$(git -C "$SID_PLAN_BOX/work" rev-parse HEAD)" >"$stub"
   DUTY_DIR="$SID_PLAN_BOX"
   unset -f bot_cli_resume_args
@@ -659,7 +695,7 @@ sid_record_says() ( # sid_record_says RC VERDICT [STALE] — WROTE | deleted
   slog="$TMP/sid-record.log"
   printf 'partial work\n' >"$slog"
   bot_session_terminal() { return 1; }
-  _session_resume_record build fixture/rec "$TMP" "$1" 5 0 "$2" "$slog"
+  _session_resume_record build fixture/rec "$TMP" "$1" 5 100 0 "$2" "$slog"
   [ -s "$state" ] && printf WROTE || printf deleted
   return 0
 )

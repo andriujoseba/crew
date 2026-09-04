@@ -387,7 +387,7 @@ _session_resume_state() {
 # what `run_session` already calls this quantity where it emits it.
 _session_resume_read() {
   local file="$1" want_kind="${2-}" want_key="${3-}" line field value lines=0
-  local kind="" key="" sid="" head="" wall="" try="" outcome="" productive=""
+  local kind="" key="" sid="" head="" wall="" try="" logb="" outcome="" productive=""
   local survivor_count=""
   local seen=""
   [ -s "$file" ] || return 0
@@ -413,7 +413,7 @@ _session_resume_read() {
     # `$field` is unquoted in the pattern below, so one carrying a glob
     # metacharacter can only match MORE readily — the worst that produces is a
     # refusal, which is the safe direction; and an unknown field still falls to
-    # the `*)` arm. The nine real names are plain lowercase, so no legitimate
+    # the `*)` arm. The ten real names are plain lowercase, so no legitimate
     # stub can trip it.
     case " $seen " in *" $field "*) return 0 ;; esac
     seen="$seen $field"
@@ -424,6 +424,7 @@ _session_resume_read() {
       head) head="$value" ;;
       wall) wall="$value" ;;
       try) try="$value" ;;
+      log) logb="$value" ;;
       outcome) outcome="$value" ;;
       productive) productive="$value" ;;
       left) survivor_count="$value" ;;
@@ -433,7 +434,7 @@ _session_resume_read() {
   # Every field is required. A short stub was half-written when the box died,
   # so it is never treated as resumable.
   [ -n "$kind" ] && [ -n "$key" ] && [ -n "$sid" ] && [ -n "$head" ] \
-    && [ -n "$wall" ] && [ -n "$try" ] && [ -n "$outcome" ] \
+    && [ -n "$wall" ] && [ -n "$try" ] && [ -n "$logb" ] && [ -n "$outcome" ] \
     && [ -n "$productive" ] && [ -n "$survivor_count" ] || return 0
   # The identity the path could not carry. A stub reached through a colliding
   # fold names the OTHER lane's pair, and a lane that is not this one is not a
@@ -443,11 +444,12 @@ _session_resume_read() {
   { _session_head_valid "$head" || [ "$head" = unknown ]; } || return 0
   case "$wall" in '' | *[!0-9]*) return 0 ;; esac
   case "$try" in '' | *[!0-9]*) return 0 ;; esac
+  case "$logb" in unknown) ;; '' | *[!0-9]*) return 0 ;; esac
   case "$outcome" in TIMEOUT | MEMORY) ;; *) return 0 ;; esac
   case "$productive" in yes | no) ;; *) return 0 ;; esac
   case "$survivor_count" in unknown) ;; '' | *[!0-9]*) return 0 ;; esac
-  printf 'sid=%s\nhead=%s\nwall=%s\ntry=%s\noutcome=%s\nproductive=%s\nleft=%s\n' \
-    "$sid" "$head" "$wall" "$try" "$outcome" "$productive" "$survivor_count"
+  printf 'sid=%s\nhead=%s\nwall=%s\ntry=%s\nlog=%s\noutcome=%s\nproductive=%s\nleft=%s\n' \
+    "$sid" "$head" "$wall" "$try" "$logb" "$outcome" "$productive" "$survivor_count"
 }
 
 # _session_resume_plan KIND KEY DIR — decide whether this dispatch continues
@@ -478,7 +480,7 @@ _session_resume_read() {
 # would be the second resume D7 exists to forbid.
 _session_resume_plan() {
   local kind="$1" key="$2" dir="$3" state fields
-  local sid="" head="" try="" outcome="" productive="" survivor_count=""
+  local sid="" head="" try="" logb="" outcome="" productive="" survivor_count=""
   _SESSION_SID=""
   _SESSION_RESUMED=no
   _SESSION_TRY=0
@@ -490,10 +492,11 @@ _session_resume_plan() {
   while IFS='=' read -r field value; do
     case "$field" in
       sid) sid="$value" ;; head) head="$value" ;; try) try="$value" ;;
-      outcome) outcome="$value" ;; productive) productive="$value" ;;
+      log) logb="$value" ;; outcome) outcome="$value" ;; productive) productive="$value" ;;
       left) survivor_count="$value" ;;
     esac
   done <<<"$fields"
+  : "$logb" # Retained record evidence; `productive=` is the decision (#600).
   [ "$head" != unknown ] || return 0
   [ "$head" = "$(_session_head "$dir")" ] || return 0
   [ "$productive" = yes ] || return 0
@@ -568,7 +571,7 @@ _session_identity() {
   return 0
 }
 
-# _session_resume_record KIND KEY DIR RC WALL LEFT VERDICT LOG — the
+# _session_resume_record KIND KEY DIR RC WALL LOG_BYTES LEFT VERDICT LOG — the
 # stub, D5.
 #
 # Written on a TIMEOUT or MEMORY end and on nothing else; ANY other end deletes
@@ -585,24 +588,25 @@ _session_identity() {
 # classified end, because the delete is here too. Guarding the call would leave
 # a previous resumable stub alive across an ordinary end.
 #
-# WHAT IT CARRIES, and why it is nine fields rather than D5's four. The `sid`,
+# WHAT IT CARRIES, and why it is ten fields rather than D5's four. The `sid`,
 # the head, the wall and the try count are D5's list. `kind` and `key` are the
 # lane's identity, written because the filename cannot hold it — see
 # `_session_resume_state`, where the fold is lossy — and read back as a gate:
 # a stub whose pair is not the reader's is another lane's and is refused. A
 # key carrying a newline would write a stub its own reader then refuses, which
 # is the same failure direction; no key this engine dispatches has one (`$R`,
-# `$R#$N`, `fleet`). `outcome` supplies the informed prompt. `productive` is
+# `$R#$N`, `fleet`). `log` preserves the old byte evidence while `productive`
+# replaces it as the gate. `outcome` supplies the informed prompt. `productive` is
 # the result of running the shipped terminal classifier while the killed log
 # still exists; `left` is the survivor count only the ending dispatch can see.
 #
 # The write is not atomic, deliberately. A box that dies mid-write leaves a
-# stub missing fields, and `_session_resume_read` requires all nine — so the
+# stub missing fields, and `_session_resume_read` requires all ten — so the
 # truncated stub reads as absent, which is the answer it should get. A rename
 # dance would buy the same outcome through a second mechanism.
 _session_resume_record() {
-  local kind="$1" key="$2" dir="$3" rc="$4" wall="$5" survivor_count="$6"
-  local verdict="$7" slog="$8" productive=yes state
+  local kind="$1" key="$2" dir="$3" rc="$4" wall="$5" logb="$6" survivor_count="$7"
+  local verdict="$8" slog="$9" productive=yes state
   state="$(_session_resume_state "$kind" "$key")"
   # TIMEOUT keeps its 124 invariant. MEMORY instead requires only a dirty end:
   # its raw status varies with which kernel/timeout signal reached reap first.
@@ -617,9 +621,9 @@ _session_resume_record() {
   [ "$_SESSION_SID" != unknown ] || { rm -f "$state" 2>/dev/null || true; return 0; }
   session_terminal "$slog" && productive=no
   case "$wall" in '' | *[!0-9]*) wall=0 ;; esac
-  printf 'kind=%s\nkey=%s\nsid=%s\nhead=%s\nwall=%s\ntry=%s\noutcome=%s\nproductive=%s\nleft=%s\n' \
+  printf 'kind=%s\nkey=%s\nsid=%s\nhead=%s\nwall=%s\ntry=%s\nlog=%s\noutcome=%s\nproductive=%s\nleft=%s\n' \
     "$kind" "$key" "$_SESSION_SID" "$(_session_head "$dir")" "$wall" \
-    "$_SESSION_TRY" "$verdict" "$productive" "$survivor_count" \
+    "$_SESSION_TRY" "$logb" "$verdict" "$productive" "$survivor_count" \
     >"$state" 2>/dev/null || true
   return 0
 }
@@ -885,7 +889,7 @@ $prompt"
   # that bill it, reading the two figures that line just published: this stub
   # and that record can never disagree about what the session left behind.
   _session_resume_record "$kind" "$key" "$dir" "$rc" "$tmo" \
-    "$survivor_count" "$verdict" "$slog"
+    "$log_bytes" "$survivor_count" "$verdict" "$slog"
   _session_terminal_record "$kind" "$terminal" "$acted" "$slog"
   # The rolling counter is written alongside the line that carries the same
   # duration, so the budget and the log can never disagree about what a
