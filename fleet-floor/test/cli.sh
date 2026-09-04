@@ -367,6 +367,76 @@ else
   fail "crew status: suppressed, idle, and unreachable remain distinct" \
        "$(grep -E '^cli-(suppressed|idle|unreachable)' "$CL_TMP/crew-out")"
 fi
+
+# --- STUCK, against the ceiling on the box's own record (#624) --------------
+#
+# The quartet below is the CLI half of #610's, box for box and number for
+# number, and the assertion is that the two consoles now render ONE sentence
+# about one box. Before this, `crew status` compared every lock against
+# STUCK_AFTER_S — 600s, fleet-wide — so cli-lane-build read STUCK at ten
+# minutes while the floor, reading the 3600s ceiling that box's own
+# `SESSION START` declares, called it healthy. The operator saw both.
+#
+# `cl_note` is the row minus its columns: the note is the last field and the
+# only one these cases are about. Cut at the LAST run of two or more spaces,
+# not by counting columns — ENGINE renders as `crew@0.4.1 (deadbee)` and
+# carries a space of its own, so a field count reads one column short.
+cl_note() { sed -n "s/^$1 .*  \(.*\)\$/\1/p" "$CL_TMP/crew-out"; }
+
+# 40 minutes into a build entitled to 3600s. The one row this issue exists for.
+if grep -qE '^cli-lane-build .*session active' "$CL_TMP/crew-out" \
+   && ! grep -qE '^cli-lane-build .*STUCK' "$CL_TMP/crew-out"; then
+  ok "crew status: a build inside its own ceiling is not STUCK"
+else
+  fail "crew status: a build inside its own ceiling is not STUCK" \
+       "$(grep '^cli-lane-build' "$CL_TMP/crew-out")"
+fi
+# The boundary from both sides, one second apart, and it is `-gt` on this side
+# exactly as `held <= bound` is the not-stuck return on the floor's.
+if ! grep -qE '^cli-lane-edge .*STUCK' "$CL_TMP/crew-out"; then
+  ok "crew status: the ceiling plus the kill grace is not yet STUCK"
+else
+  fail "crew status: the ceiling plus the kill grace is not yet STUCK" \
+       "$(grep '^cli-lane-edge' "$CL_TMP/crew-out")"
+fi
+# ...and one second past it, worded to the byte as fleet-floor/test/floor's
+# `stuck: the note names the lane and its ceiling` asserts of the collector.
+t "crew status: one second past the grace is STUCK, naming the ceiling" \
+  "STUCK — duty run has held the lock for 1h 01m, past the build session's 1h 00m ceiling" \
+  "$(cl_note cli-lane-over)"
+# An engine older than the `timeout=` token has no ceiling on the record, so
+# the fallback and its wording are today's, unchanged.
+t "crew status: a START with no timeout= falls back to STUCK_AFTER_S" \
+  "STUCK — duty run has held the lock for 11m" "$(cl_note cli-lane-legacy)"
+# Nothing in flight at all: no ceiling can ever catch it, so STUCK_AFTER_S is
+# its bound and the sentence says which state it is describing.
+t "crew status: a lock held with no session in flight names that" \
+  "STUCK — duty run has held the lock for 47m with no session in flight, past 10m" \
+  "$(cl_note cli-stuck)"
+
+# The knob keeps its one meaning and gains no second one. Raising it must
+# release the no-session clause and must NOT silently re-cap a declared
+# ceiling — which would re-introduce the false alarm this replaces, on exactly
+# the boxes whose operator had raised it.
+CL_RC=0
+PATH="$CL_TMP/bin:$PATH" \
+FLOOR_FIXTURE="$CL_CREW_FLEET" FLOOR_STATE="$CL_TMP/crew-state" \
+CREW_CONFIG_DIR="$CL_CONFIG" CREW_ROSTER="$CL_CREW_ROSTER" \
+CREW_FLOOR_STUCK_AFTER=5000 \
+  timeout 60 "$CL_ROOT/cli/crew" status </dev/null > "$CL_TMP/crew-knob" 2>&1 || CL_RC=$?
+t "crew status: exits 0 with the operator override set" 0 "$CL_RC"
+if ! grep -qE '^cli-stuck .*STUCK' "$CL_TMP/crew-knob"; then
+  ok "crew status: CREW_FLOOR_STUCK_AFTER still bounds the no-session clause"
+else
+  fail "crew status: CREW_FLOOR_STUCK_AFTER still bounds the no-session clause" \
+       "$(grep '^cli-stuck' "$CL_TMP/crew-knob")"
+fi
+if grep -qE '^cli-lane-over .*STUCK' "$CL_TMP/crew-knob"; then
+  ok "crew status: the override does not re-cap a declared ceiling"
+else
+  fail "crew status: the override does not re-cap a declared ceiling" \
+       "$(grep '^cli-lane-over' "$CL_TMP/crew-knob")"
+fi
 # The floor and this CLI must derive credential state from the SAME evidence.
 # `rehearsal-app.sh` asserts they agree about every box on a real host, and
 # that assertion only means anything while neither has a private source: when

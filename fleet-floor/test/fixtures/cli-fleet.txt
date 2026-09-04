@@ -47,3 +47,14 @@ cli-unconverged running  unconverged
 # gating on the manifest would turn every box on an older rig into a refusal,
 # which #220's own test plan calls the outcome worse than the bug.
 cli-premanifest running  premanifest
+# A `build` in flight declaring the 3600s ceiling roles/builder.conf gives that
+# lane, on three boxes whose only difference is the lock age: 40 minutes,
+# exactly ceiling-plus-kill-grace, and one second past it. Before #624 all
+# three read STUCK in `crew status` at ten minutes while the floor called the
+# first two healthy — two consoles, one box, two answers.
+cli-lane-build running  lane-build
+cli-lane-edge  running  lane-edge
+cli-lane-over  running  lane-over
+# An engine older than the `timeout=` token: there is no ceiling to read, so
+# both readers fall back to STUCK_AFTER_S. This is the box that must not move.
+cli-lane-legacy running  lane-legacy

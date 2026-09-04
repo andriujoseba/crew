@@ -29,6 +29,14 @@ cli-nothired   grok    reviewer
 cli-noauth     kimi    reviewer
 cli-absent     claude  triage
 cli-disarmed   grok    builder
+# The #610/#624 lane quartet. They differ only in how long the lock has been
+# held, so a `crew status` grading them alike is comparing against a fleet-wide
+# constant rather than against the ceiling on each box's own record. Kept above
+# the unconverged row below, whose position is its own assertion.
+cli-lane-build claude  builder
+cli-lane-edge  claude  builder
+cli-lane-over  claude  builder
+cli-lane-legacy claude builder
 # The box whose tenant role never converged (#220). LAST, so the bulk verbs
 # have to carry on past every healthy box before reaching it — a skip that
 # aborted the run would still have hired the rows above and read as a partial

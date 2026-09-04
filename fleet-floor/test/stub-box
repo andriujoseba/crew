@@ -169,123 +169,17 @@ vitals_record_of() {
   esac
 }
 
-# emit_probe NAME SCENARIO — the `::key value` record probe.sh would produce.
-emit_probe() {
-  local n="$1" sc="$2" paused=0 cron=1
-  # Pausing COMMENTS the tick line out, so a paused box counts zero live
-  # `tick.sh` lines exactly like a disarmed one — probe.sh's ::cron is
-  # `grep -cE '^[^#].*tick\.sh'`. The stub used to report cron=1 while paused,
-  # which is the one shape a real box cannot be in, and it would have hidden a
-  # wake-silent that skipped paused boxes (#189).
-  [ "$(cron_of "$n")" = "paused" ] && paused=1
-  armed_of "$n" || cron=0
-
-  case "$sc" in
-    nothired|unconverged|premanifest) printf '::engine \n' ;;
-    *)        printf '::engine crew@0.4.1 (deadbee)\n' ;;
-  esac
-  # The engine-integrity verdict probe.sh gets from engine-manifest.sh (#159),
-  # and the one field on this record the stub cannot honestly compute: there is
-  # no installed tree here to hash, so the VALUE is fixture data. Its TRUTH is
-  # asserted where it can be — boxside.sh runs the real engine-manifest.sh
-  # through the real probe.sh for all three hired states, as shared/test/run.sh
-  # does for the CLI half. What this fixture buys is the page walk: three
-  # verdicts that must render distinctly, which needs three boxes carrying them.
-  #
-  # `absent` tracks ::engine above and must keep tracking it: state() answers
-  # absent exactly when VERSION is empty, which is exactly when the stamp is,
-  # and a fixture where one says hired and the other says absent is a shape no
-  # box can be in.
-  case "$sc" in
-    nothired|unconverged|premanifest) printf '::integrity absent\n' ;;
-    modified)   printf '::integrity modified\n' ;;
-    unverified) printf '::integrity unverified\n' ;;
-    *)          printf '::integrity current\n' ;;
-  esac
-  # The agent the box was ACTUALLY installed as. The roster may claim another,
-  # and that disagreement is the thing the floor now reports — so the stub has
-  # to be able to produce it. 'wrongagent' is a box installed as codex while
-  # the roster says otherwise.
-  case "$sc" in
-    nothired|unconverged|premanifest)   printf '::agent \n' ;;
-    wrongagent) printf '::agent codex\n' ;;
-    *)          printf '::agent %s\n' "$(roster_agent_of "$n")" ;;
-  esac
-  printf '::uptime %s\n' "$([ "$sc" = fresh ] && echo 61 || echo 91820)"
-  printf '::now %s\n' "$(box_now "$sc")"
-  # `flowing`, not `ok`: the probe no longer TESTS a credential, it reports
-  # what the duty flow last observed. Keeping `ok` here would have let the
-  # collector be written against a vocabulary probe.sh does not emit — the
-  # exact circularity this stub exists to avoid, and the reason boxside.sh
-  # re-checks these keys against the real script.
-  # Mirrors probe.sh exactly: a rejection is `missing`, a box with no engine
-  # has never had a flow to report anything so it is `unknown`, and only a
-  # hired box with no recorded failure is `flowing`. A stub that said
-  # `flowing` for an unhired box would have let the collector treat "nobody
-  # has complained yet" as a working credential.
-  # The box reports a FACT (`nofail` + ::tickage); the host ages it into
-  # flowing-or-stale. Emitting a verdict here would let the collector be
-  # written against a vocabulary probe.sh no longer speaks.
-  _cred=nofail
-  case "$sc" in
-    nothired|unconverged|premanifest) _cred=unknown ;;
-    noauth)   _cred=missing ;;
-  esac
-  # Tick age drives the host's verdict: fresh for a healthy box, long past two
-  # boundaries for the ones that have stopped ticking — which is what makes
-  # `stale` reachable at all.
-  case "$sc" in
-    silent|suppressed-silent|nocron|disarmed|skew-silent-behind|skew-silent-ahead) _tickage=4000 ;;
-    # -1 is "no duty.log to read an age from" — true of a box that was never
-    # hired, and equally true of one hired a minute ago that has not ticked.
-    invalid-tickage|suppressed-unknown) _tickage=garbage ;;
-    nothired|neverticked|unconverged|premanifest) _tickage=-1 ;;
-    skew-behind|skew-ahead) _tickage=110 ;;
-    # The newest idle log line is 190 seconds old. Keep the box-side age on
-    # that same fact so this is the synchronized counterpart to the skew pair.
-    idle)            _tickage=190 ;;
-    *)             _tickage=30 ;;
-  esac
-  [ "$sc" = missing-tickage ] || printf '::tickage %s\n' "$_tickage"
-  printf '::gh %s\n'     "$_cred"
-  printf '::vendor %s\n' "$_cred"
-  [ "$sc" = noauth ] && printf '::authfail-gh 2026-07-27T09:14:02Z 401 Bad credentials\n'
-  # A duty run holding the lock, and for how long. Absent for a box between
-  # runs, which is the normal state. One reader, shared with the ping arm.
-  _lh="$(lockheld_of "$sc")"
-  [ -n "$_lh" ] && printf '::lockheld %s\n' "$_lh"
-  case "$sc" in suppressed|suppressed-silent|suppressed-unknown|suppressed-working|suppressed-stuck|suppressed-notimestamp|suppressed-old-orphan|suppressed-paired-crash)
-    printf '::suppression 780 draft heavy-duty/crew#561@abcdef123456\n'
-    ;;
-  *)
-    printf '::suppression \n'
-    ;;
-  esac
-  printf '::cron %s\n'   "$cron"
-  printf '::paused %s\n' "$paused"
-  # Full owner/repo, exactly as repos.txt holds them. Bare names here are
-  # what let a broken repo-link URL pass review-clean for two rounds.
-  printf '::repos heavy-duty/crew heavy-duty/box heavy-duty/ceremony\n'
-  printf '::sessionlogs 20260726T090000Z-build-heavy-duty_crew_601.log 20260726T093000Z-review-box_158.log\n'
-  [ "$sc" = idle ] && printf '::limitdropped 2\n' || printf '::limitdropped 0\n'
-  echo '::limitstart'
-  if [ "$sc" = idle ]; then
-    printf '1700000000-33-1\t2026-08-28T09:00:00Z\twarn\tgithub_connection_nodes\t90\t100\theavy-duty/crew#482\tfixture-payload says ::not-a-key\n'
-  elif [ "$sc" = limited-event ]; then
-    printf '1700000000-34-1\t%s\terror\tgithub_connection_nodes\t100\t100\theavy-duty/crew#611\tlane stopped\n' "$(ago 45)"
-  elif [ "$sc" = limited-recovered ]; then
-    printf '1700000000-35-1\t%s\terror\tgithub_connection_nodes\t100\t100\theavy-duty/crew#611\tlane stopped\n' "$(ago 180)"
-  elif [ "$sc" = stuck ]; then
-    printf '1700000000-36-1\t%s\terror\tgithub_connection_nodes\t100\t100\theavy-duty/crew#611\tlane stopped\n' "$(ago 45)"
-  fi
-  echo '::limitend'
-  # The box vitals record (#483), carried by probe.sh verbatim off duty.log.
-  # ONE source for it, because the CLI half of this stub answers with the same
-  # record a few hundred lines down: a stub whose two halves disagreed about
-  # one box would let exactly the disagreement these tests exist to catch pass
-  # green — the rule this file already applies to the armed/paused counts.
-  printf '::vitals %s\n' "$(vitals_record_of "$sc")"
-  echo '::logstart'
+# duty_log_of SCENARIO — the ~/duty/duty.log tail this box would carry.
+#
+# ONE reader, and the newest member of the list of things this file states
+# exactly once. probe.sh's `::logstart` section is built from it, and so is the
+# session evidence the CLI half of this stub answers `crew status` with a few
+# hundred lines down. A stub that spelled the sessions twice could hold those
+# two readers apart while the suite stayed green — and two readers disagreeing
+# about one box is the whole subject of #624, so a fixture able to hide it
+# would be worse than no fixture at all.
+duty_log_of() {
+  local sc="$1"
   case "$sc" in
     working|suppressed-working|paused|noauth|skew-behind|skew-ahead|invalid-tickage)
       # a closed session, then an open one: state must read WORKING
@@ -418,6 +312,126 @@ emit_probe() {
       ;;
     *) echo "$(now) duty run start" ;;
   esac
+}
+
+# emit_probe NAME SCENARIO — the `::key value` record probe.sh would produce.
+emit_probe() {
+  local n="$1" sc="$2" paused=0 cron=1
+  # Pausing COMMENTS the tick line out, so a paused box counts zero live
+  # `tick.sh` lines exactly like a disarmed one — probe.sh's ::cron is
+  # `grep -cE '^[^#].*tick\.sh'`. The stub used to report cron=1 while paused,
+  # which is the one shape a real box cannot be in, and it would have hidden a
+  # wake-silent that skipped paused boxes (#189).
+  [ "$(cron_of "$n")" = "paused" ] && paused=1
+  armed_of "$n" || cron=0
+
+  case "$sc" in
+    nothired|unconverged|premanifest) printf '::engine \n' ;;
+    *)        printf '::engine crew@0.4.1 (deadbee)\n' ;;
+  esac
+  # The engine-integrity verdict probe.sh gets from engine-manifest.sh (#159),
+  # and the one field on this record the stub cannot honestly compute: there is
+  # no installed tree here to hash, so the VALUE is fixture data. Its TRUTH is
+  # asserted where it can be — boxside.sh runs the real engine-manifest.sh
+  # through the real probe.sh for all three hired states, as shared/test/run.sh
+  # does for the CLI half. What this fixture buys is the page walk: three
+  # verdicts that must render distinctly, which needs three boxes carrying them.
+  #
+  # `absent` tracks ::engine above and must keep tracking it: state() answers
+  # absent exactly when VERSION is empty, which is exactly when the stamp is,
+  # and a fixture where one says hired and the other says absent is a shape no
+  # box can be in.
+  case "$sc" in
+    nothired|unconverged|premanifest) printf '::integrity absent\n' ;;
+    modified)   printf '::integrity modified\n' ;;
+    unverified) printf '::integrity unverified\n' ;;
+    *)          printf '::integrity current\n' ;;
+  esac
+  # The agent the box was ACTUALLY installed as. The roster may claim another,
+  # and that disagreement is the thing the floor now reports — so the stub has
+  # to be able to produce it. 'wrongagent' is a box installed as codex while
+  # the roster says otherwise.
+  case "$sc" in
+    nothired|unconverged|premanifest)   printf '::agent \n' ;;
+    wrongagent) printf '::agent codex\n' ;;
+    *)          printf '::agent %s\n' "$(roster_agent_of "$n")" ;;
+  esac
+  printf '::uptime %s\n' "$([ "$sc" = fresh ] && echo 61 || echo 91820)"
+  printf '::now %s\n' "$(box_now "$sc")"
+  # `flowing`, not `ok`: the probe no longer TESTS a credential, it reports
+  # what the duty flow last observed. Keeping `ok` here would have let the
+  # collector be written against a vocabulary probe.sh does not emit — the
+  # exact circularity this stub exists to avoid, and the reason boxside.sh
+  # re-checks these keys against the real script.
+  # Mirrors probe.sh exactly: a rejection is `missing`, a box with no engine
+  # has never had a flow to report anything so it is `unknown`, and only a
+  # hired box with no recorded failure is `flowing`. A stub that said
+  # `flowing` for an unhired box would have let the collector treat "nobody
+  # has complained yet" as a working credential.
+  # The box reports a FACT (`nofail` + ::tickage); the host ages it into
+  # flowing-or-stale. Emitting a verdict here would let the collector be
+  # written against a vocabulary probe.sh no longer speaks.
+  _cred=nofail
+  case "$sc" in
+    nothired|unconverged|premanifest) _cred=unknown ;;
+    noauth)   _cred=missing ;;
+  esac
+  # Tick age drives the host's verdict: fresh for a healthy box, long past two
+  # boundaries for the ones that have stopped ticking — which is what makes
+  # `stale` reachable at all.
+  case "$sc" in
+    silent|suppressed-silent|nocron|disarmed|skew-silent-behind|skew-silent-ahead) _tickage=4000 ;;
+    # -1 is "no duty.log to read an age from" — true of a box that was never
+    # hired, and equally true of one hired a minute ago that has not ticked.
+    invalid-tickage|suppressed-unknown) _tickage=garbage ;;
+    nothired|neverticked|unconverged|premanifest) _tickage=-1 ;;
+    skew-behind|skew-ahead) _tickage=110 ;;
+    # The newest idle log line is 190 seconds old. Keep the box-side age on
+    # that same fact so this is the synchronized counterpart to the skew pair.
+    idle)            _tickage=190 ;;
+    *)             _tickage=30 ;;
+  esac
+  [ "$sc" = missing-tickage ] || printf '::tickage %s\n' "$_tickage"
+  printf '::gh %s\n'     "$_cred"
+  printf '::vendor %s\n' "$_cred"
+  [ "$sc" = noauth ] && printf '::authfail-gh 2026-07-27T09:14:02Z 401 Bad credentials\n'
+  # A duty run holding the lock, and for how long. Absent for a box between
+  # runs, which is the normal state. One reader, shared with the ping arm.
+  _lh="$(lockheld_of "$sc")"
+  [ -n "$_lh" ] && printf '::lockheld %s\n' "$_lh"
+  case "$sc" in suppressed|suppressed-silent|suppressed-unknown|suppressed-working|suppressed-stuck|suppressed-notimestamp|suppressed-old-orphan|suppressed-paired-crash)
+    printf '::suppression 780 draft heavy-duty/crew#561@abcdef123456\n'
+    ;;
+  *)
+    printf '::suppression \n'
+    ;;
+  esac
+  printf '::cron %s\n'   "$cron"
+  printf '::paused %s\n' "$paused"
+  # Full owner/repo, exactly as repos.txt holds them. Bare names here are
+  # what let a broken repo-link URL pass review-clean for two rounds.
+  printf '::repos heavy-duty/crew heavy-duty/box heavy-duty/ceremony\n'
+  printf '::sessionlogs 20260726T090000Z-build-heavy-duty_crew_601.log 20260726T093000Z-review-box_158.log\n'
+  [ "$sc" = idle ] && printf '::limitdropped 2\n' || printf '::limitdropped 0\n'
+  echo '::limitstart'
+  if [ "$sc" = idle ]; then
+    printf '1700000000-33-1\t2026-08-28T09:00:00Z\twarn\tgithub_connection_nodes\t90\t100\theavy-duty/crew#482\tfixture-payload says ::not-a-key\n'
+  elif [ "$sc" = limited-event ]; then
+    printf '1700000000-34-1\t%s\terror\tgithub_connection_nodes\t100\t100\theavy-duty/crew#611\tlane stopped\n' "$(ago 45)"
+  elif [ "$sc" = limited-recovered ]; then
+    printf '1700000000-35-1\t%s\terror\tgithub_connection_nodes\t100\t100\theavy-duty/crew#611\tlane stopped\n' "$(ago 180)"
+  elif [ "$sc" = stuck ]; then
+    printf '1700000000-36-1\t%s\terror\tgithub_connection_nodes\t100\t100\theavy-duty/crew#611\tlane stopped\n' "$(ago 45)"
+  fi
+  echo '::limitend'
+  # The box vitals record (#483), carried by probe.sh verbatim off duty.log.
+  # ONE source for it, because the CLI half of this stub answers with the same
+  # record a few hundred lines down: a stub whose two halves disagreed about
+  # one box would let exactly the disagreement these tests exist to catch pass
+  # green — the rule this file already applies to the armed/paused counts.
+  printf '::vitals %s\n' "$(vitals_record_of "$sc")"
+  echo '::logstart'
+  duty_log_of "$sc"
   echo '::logend'
 }
 
@@ -581,24 +595,53 @@ case "${1:-}" in
         _armed=1; _cpaused=0
         [ "$(cron_of "$name")" = "paused" ] && { _armed=0; _cpaused=1; }
         case "$sc" in nocron|disarmed|nothired|unconverged|premanifest) _armed=0 ;; esac
-        _log=1; _active=0; _lock=-1
+        _log=1; _active=0
         case "$sc" in
           nothired|unconverged|premanifest|neverticked|suppressed-notimestamp) _log=0 ;;
-          working|suppressed-working|suppressed-paired-crash|noauth|skew-behind|skew-ahead|invalid-tickage) _active=1 ;;
-          stuck|suppressed-stuck) _lock=2820 ;;
+          working|suppressed-working|suppressed-paired-crash|noauth|skew-behind|skew-ahead|invalid-tickage|lane-build|lane-edge|lane-over|lane-ping|lane-legacy) _active=1 ;;
         esac
+        # The lock age comes from lockheld_of, the same reader probe.sh's
+        # ::lockheld and the ping's `l` field use. It used to be spelled a
+        # second time here — `stuck) _lock=2820`, the one number that happened
+        # to agree — which is the shape that could have let the CLI half and
+        # the floor half report different ages for one box while the suite
+        # stayed green.
+        _lock="$(lockheld_of "$sc")"; _lock="${_lock:--1}"
+        # Since #624 the line also carries the in-flight session's own lane and
+        # ceiling, and they are SCANNED off the very lines duty_log_of hands the
+        # floor half rather than typed into a table beside them. That matters
+        # more here than anywhere else in this file: the assertion the lane
+        # boxes exist for is that `crew status` and the floor grade one lock
+        # alike, and a fixture holding two answers could satisfy it by agreeing
+        # with itself. This is the fixture's own reader — the REAL one runs for
+        # real in test/boxside.sh, over logs of its own.
+        read -r _kind _ceiling <<<"$(duty_log_of "$sc" | awk '
+          / SESSION END /   { if (d > 0) d--; next }
+          / SESSION START / { d++
+            k[d] = "-"
+            if (match($0, / kind=[^ ]+/)) k[d] = substr($0, RSTART + 6, RLENGTH - 6)
+            c[d] = -1
+            if (match($0, / timeout=[0-9]+s/) &&
+                (RSTART + RLENGTH > length($0) || substr($0, RSTART + RLENGTH, 1) == " "))
+              c[d] = substr($0, RSTART + 9, RLENGTH - 10)
+          }
+          END { if (d > 0) print k[d], c[d]; else print "-", -1 }')"
+        # One tail for every arm below. Spelling the trailing fields seven
+        # times is how a field gets added to six of them (#189 is the record of
+        # what one malformed line costs a reader).
+        _tail="$_log $_active $_lock $_kind $_ceiling"
         case "$sc" in
-          noauth)        echo "missing missing 30 $_armed $_cpaused -1 - - $_log $_active $_lock" ;;
-          nothired|unconverged|premanifest) echo "unknown unknown -1 $_armed $_cpaused -1 - - $_log $_active $_lock" ;;
+          noauth)        echo "missing missing 30 $_armed $_cpaused -1 - - $_tail" ;;
+          nothired|unconverged|premanifest) echo "unknown unknown -1 $_armed $_cpaused -1 - - $_tail" ;;
           # Hired and armed, nothing recorded against it, and no duty.log to
           # age: the box is healthy and has simply not run yet.
-          neverticked)   echo "nofail nofail -1 $_armed $_cpaused -1 - - $_log $_active $_lock" ;;
-          silent|nocron|disarmed) echo "nofail nofail 4000 $_armed $_cpaused -1 - - $_log $_active $_lock" ;;
-          suppressed-silent) echo "nofail nofail 4000 $_armed $_cpaused 780 draft heavy-duty/crew#561@abcdef123456 $_log $_active $_lock" ;;
-          suppressed-unknown) echo "nofail nofail garbage $_armed $_cpaused 780 draft heavy-duty/crew#561@abcdef123456 $_log $_active $_lock" ;;
+          neverticked)   echo "nofail nofail -1 $_armed $_cpaused -1 - - $_tail" ;;
+          silent|nocron|disarmed) echo "nofail nofail 4000 $_armed $_cpaused -1 - - $_tail" ;;
+          suppressed-silent) echo "nofail nofail 4000 $_armed $_cpaused 780 draft heavy-duty/crew#561@abcdef123456 $_tail" ;;
+          suppressed-unknown) echo "nofail nofail garbage $_armed $_cpaused 780 draft heavy-duty/crew#561@abcdef123456 $_tail" ;;
           suppressed|suppressed-working|suppressed-stuck|suppressed-notimestamp|suppressed-old-orphan|suppressed-paired-crash)
-            echo "nofail nofail 30 $_armed $_cpaused 780 draft heavy-duty/crew#561@abcdef123456 $_log $_active $_lock" ;;
-          *)             echo "nofail nofail 30 $_armed $_cpaused -1 - - $_log $_active $_lock" ;;
+            echo "nofail nofail 30 $_armed $_cpaused 780 draft heavy-duty/crew#561@abcdef123456 $_tail" ;;
+          *)             echo "nofail nofail 30 $_armed $_cpaused -1 - - $_tail" ;;
         esac ;;
       # RESUME_SH, then PAUSE_SH. Since #188 each script states what it DID and
       # a box with nothing to do says so on stdout and exits 0 — so the stub has
