@@ -367,6 +367,158 @@ else
   fail "crew status: suppressed, idle, and unreachable remain distinct" \
        "$(grep -E '^cli-(suppressed|idle|unreachable)' "$CL_TMP/crew-out")"
 fi
+
+# --- STUCK, against the ceiling on the box's own record (#624) --------------
+#
+# The quartet below is the CLI half of #610's, box for box and number for
+# number, and the assertion is that the two consoles now render ONE sentence
+# about one box. Before this, `crew status` compared every lock against
+# STUCK_AFTER_S — 600s, fleet-wide — so cli-lane-build read STUCK at ten
+# minutes while the floor, reading the 3600s ceiling that box's own
+# `SESSION START` declares, called it healthy. The operator saw both.
+#
+# `cl_note` is the row minus its columns: the note is the last field and the
+# only one these cases are about. Cut at the LAST run of two or more spaces,
+# not by counting columns — ENGINE renders as `crew@0.4.1 (deadbee)` and
+# carries a space of its own, so a field count reads one column short.
+cl_note() { sed -n "s/^$1 .*  \(.*\)\$/\1/p" "$CL_TMP/crew-out"; }
+
+# 40 minutes into a build entitled to 3600s. The one row this issue exists for.
+if grep -qE '^cli-lane-build .*session active' "$CL_TMP/crew-out" \
+   && ! grep -qE '^cli-lane-build .*STUCK' "$CL_TMP/crew-out"; then
+  ok "crew status: a build inside its own ceiling is not STUCK"
+else
+  fail "crew status: a build inside its own ceiling is not STUCK" \
+       "$(grep '^cli-lane-build' "$CL_TMP/crew-out")"
+fi
+# The boundary from both sides, one second apart, and it is `-gt` on this side
+# exactly as `held <= bound` is the not-stuck return on the floor's.
+if ! grep -qE '^cli-lane-edge .*STUCK' "$CL_TMP/crew-out"; then
+  ok "crew status: the ceiling plus the kill grace is not yet STUCK"
+else
+  fail "crew status: the ceiling plus the kill grace is not yet STUCK" \
+       "$(grep '^cli-lane-edge' "$CL_TMP/crew-out")"
+fi
+# ...and one second past it, worded to the byte as fleet-floor/test/floor's
+# `stuck: the note names the lane and its ceiling` asserts of the collector.
+t "crew status: one second past the grace is STUCK, naming the ceiling" \
+  "STUCK — duty run has held the lock for 1h 01m, past the build session's 1h 00m ceiling" \
+  "$(cl_note cli-lane-over)"
+# An engine older than the `timeout=` token has no ceiling on the record, so
+# the fallback and its wording are today's, unchanged.
+t "crew status: a START with no timeout= falls back to STUCK_AFTER_S" \
+  "STUCK — duty run has held the lock for 11m" "$(cl_note cli-lane-legacy)"
+# Nothing in flight at all: no ceiling can ever catch it, so STUCK_AFTER_S is
+# its bound and the sentence says which state it is describing.
+t "crew status: a lock held with no session in flight names that" \
+  "STUCK — duty run has held the lock for 47m with no session in flight, past 10m" \
+  "$(cl_note cli-stuck)"
+
+# --- ...and where the two readers' LANGUAGES disagree about the digits -------
+#
+# `TIMEOUT_BUILD=0900` is a role conf a host may hold. Nothing between it and
+# `session.sh`'s `timeout=${tmo}s` canonicalises, GNU `timeout 0900` runs that
+# session, and the floor's `int()` reads 900. Bash reads a leading zero as
+# octal and `0900` is not octal, so `$(( session_ceiling + … ))` was a FATAL
+# expansion under this file's own `set -euo pipefail` — which makes this the
+# only row in the quartet whose failure was never a wrong badge. The pair
+# below is the ordinary boundary asked of that value; the row-count assertion
+# further up is what catches the abort, and the case after them says so where
+# a reader will find it (round 1, codex-bot).
+if grep -qE '^cli-lane-zero .*session active' "$CL_TMP/crew-out" \
+   && ! grep -qE '^cli-lane-zero .*STUCK' "$CL_TMP/crew-out"; then
+  ok "crew status: a leading-zero ceiling is read as decimal, not octal"
+else
+  fail "crew status: a leading-zero ceiling is read as decimal, not octal" \
+       "$(grep '^cli-lane-zero ' "$CL_TMP/crew-out")"
+fi
+# 800s is inside 900+60 and PAST the 600s constant, so this row also separates
+# the two readings rather than merely surviving one: a `crew status` still
+# grading against STUCK_AFTER_S calls this box STUCK.
+t "crew status: one second past a leading-zero ceiling is STUCK, naming it" \
+  "STUCK — duty run has held the lock for 16m, past the build session's 15m ceiling" \
+  "$(cl_note cli-lane-zero-over)"
+# The abort, asserted AS an abort. `crew status` returning 1 out of its roster
+# loop is not a mislabelled box — it is a table that stops, and every row
+# after the offending one is simply absent. Two rows follow the pair in the
+# fixture, and naming them here is what makes this case fail LOUDLY rather
+# than shrink the row count by two somewhere else in the file.
+if grep -qE '^cli-unconverged ' "$CL_TMP/crew-out" \
+   && grep -qE '^cli-premanifest ' "$CL_TMP/crew-out"; then
+  ok "crew status: the rows below a leading-zero ceiling still print"
+else
+  fail "crew status: the rows below a leading-zero ceiling still print" \
+       "table ends at: $(tail -1 "$CL_TMP/crew-out")"
+fi
+
+# --- ...and where bash cannot HOLD the record at all ------------------------
+#
+# `timeout=999999999999999999999999s`, reachable by the same argument the pair
+# above rests on and refused for a different reason: this is not a spelling the
+# two languages read differently, it is a value one of them has no room for.
+# `[ "$session_ceiling" -gt 0 ]` exits 2 on it, so the ceiling clause was
+# SKIPPED and `cli-lane-huge` was graded against STUCK_AFTER_S — 700s past a
+# 600s constant, STUCK — while the floor's unbounded `int()` graded it against
+# 10^24 + 60 and called it healthy. #624's own defect, inside #624's own fix.
+# `$(( ))` is no repair either: it wraps silently, so letting the value through
+# the guard would have traded a wrong verdict for a fabricated ceiling
+# (round 2, codex-bot).
+if grep -qE '^cli-lane-huge .*session active' "$CL_TMP/crew-out" \
+   && ! grep -qE '^cli-lane-huge .*STUCK' "$CL_TMP/crew-out"; then
+  ok "crew status: a ceiling past bash's range is not STUCK at 700s"
+else
+  fail "crew status: a ceiling past bash's range is not STUCK at 700s" \
+       "$(grep '^cli-lane-huge ' "$CL_TMP/crew-out")"
+fi
+# ...and the OTHER half of that fix, which the box above cannot red. Deleting
+# the width gate turns twenty-four nines into 2003764205206896639 — nobody's
+# ceiling, but still an enormous one, so `cli-lane-huge` comes out `session
+# active` by accident and only the source pin notices. 2^63 wraps NEGATIVE:
+# the bound lands below every lock age there is and this row reads STUCK. A
+# guard whose behaviour cannot red it is the shape 1b already caught once here.
+if grep -qE '^cli-lane-wrap .*session active' "$CL_TMP/crew-out" \
+   && ! grep -qE '^cli-lane-wrap .*STUCK' "$CL_TMP/crew-out"; then
+  ok "crew status: a ceiling whose wrap goes negative is not STUCK either"
+else
+  fail "crew status: a ceiling whose wrap goes negative is not STUCK either" \
+       "$(grep '^cli-lane-wrap ' "$CL_TMP/crew-out")"
+fi
+# The NOISE, asserted as absent. `crew status` merges stderr into this capture,
+# and a `[` that fails on its operand writes a line of its own between two
+# roster rows — not fatal, since an `if` condition is exempt from `set -e`, and
+# therefore not caught by the row count or by any verdict assertion. It is
+# still a diagnostic the operator cannot attribute to anything on their screen,
+# and it is the visible half of the defect above.
+if ! grep -q 'integer expression expected' "$CL_TMP/crew-out"; then
+  ok "crew status: no integer expression expected lands between the rows"
+else
+  fail "crew status: no integer expression expected lands between the rows" \
+       "$(grep -n 'integer expression expected' "$CL_TMP/crew-out" | head -3)"
+fi
+
+# The knob keeps its one meaning and gains no second one. Raising it must
+# release the no-session clause and must NOT silently re-cap a declared
+# ceiling — which would re-introduce the false alarm this replaces, on exactly
+# the boxes whose operator had raised it.
+CL_RC=0
+PATH="$CL_TMP/bin:$PATH" \
+FLOOR_FIXTURE="$CL_CREW_FLEET" FLOOR_STATE="$CL_TMP/crew-state" \
+CREW_CONFIG_DIR="$CL_CONFIG" CREW_ROSTER="$CL_CREW_ROSTER" \
+CREW_FLOOR_STUCK_AFTER=5000 \
+  timeout 60 "$CL_ROOT/cli/crew" status </dev/null > "$CL_TMP/crew-knob" 2>&1 || CL_RC=$?
+t "crew status: exits 0 with the operator override set" 0 "$CL_RC"
+if ! grep -qE '^cli-stuck .*STUCK' "$CL_TMP/crew-knob"; then
+  ok "crew status: CREW_FLOOR_STUCK_AFTER still bounds the no-session clause"
+else
+  fail "crew status: CREW_FLOOR_STUCK_AFTER still bounds the no-session clause" \
+       "$(grep '^cli-stuck' "$CL_TMP/crew-knob")"
+fi
+if grep -qE '^cli-lane-over .*STUCK' "$CL_TMP/crew-knob"; then
+  ok "crew status: the override does not re-cap a declared ceiling"
+else
+  fail "crew status: the override does not re-cap a declared ceiling" \
+       "$(grep '^cli-lane-over' "$CL_TMP/crew-knob")"
+fi
 # The floor and this CLI must derive credential state from the SAME evidence.
 # `rehearsal-app.sh` asserts they agree about every box on a real host, and
 # that assertion only means anything while neither has a private source: when

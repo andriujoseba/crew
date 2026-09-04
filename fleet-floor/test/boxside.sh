@@ -815,6 +815,241 @@ if grep -qE "$BS_NETRE" <<<'if gh auth status; then :; fi'; then
   ok "flow: the no-network guard detects a reintroduced gh call"
 else fail "flow: the no-network guard detects a reintroduced gh call" "guard is blind"; fi
 
+# --------------------------------------------------------------------------
+# cli/crew's auth_from_flow, EXECUTED FOR REAL.
+#
+# The third box-side script, and it arrives for the reason the first two did.
+# test/stub-box answers `crew status`'s read by hand-writing the field line it
+# believes auth_from_flow produces, so every cli.sh assertion about that table
+# is circular in exactly the way #188 was: the script could stop emitting a
+# field entirely and nothing on the collector side would notice. It needs no
+# box — pure local file reads, one `crontab -l`, and an awk pass over the log.
+#
+# The case it must survive is #624's: the in-flight `SESSION START`'s own
+# `timeout=` is what `crew status` grades a held lock against, and the token is
+# OPTIONAL, appears among tokens the engine keeps appending, and belongs to one
+# depth of a START/END stack. None of those three can be checked by grepping
+# the source, and none of them is visible to the stub.
+# --------------------------------------------------------------------------
+BS_FLOW_SH="$(awk '
+  /^auth_from_flow\(\) \{$/     { inf = 1; next }
+  inf && /^  bxn "\$1" .$/      { body = 1; next }
+  body && /^  . 2>\/dev\/null/  { body = 0; inf = 0 }
+  body                          { print }
+' "$BS_ROOT/cli/crew")"
+# The script is a single-quoted shell word inside cli/crew, so its own literal
+# single quotes arrive escaped. Undo that, or the two comments carrying one
+# are a syntax error the moment this runs.
+BS_FLOW_SH="${BS_FLOW_SH//\'\\\'\'/\'}"
+if [ -n "$BS_FLOW_SH" ] && grep -q 'SESSION START' <<<"$BS_FLOW_SH" \
+   && bash -n <<<"$BS_FLOW_SH" 2>/dev/null; then
+  ok "flow-cli: the box script could be extracted from cli/crew"
+else
+  fail "flow-cli: the box script could be extracted from cli/crew" \
+       "extraction produced $(wc -l <<<"$BS_FLOW_SH") lines that do not parse"
+fi
+
+# A crontab(1) stand-in of its own: the pair built for PAUSE_SH lived in the
+# $BS_TMP the degraded section already removed and rebuilt.
+BS_FC="$BS_TMP/flowcron"; mkdir -p "$BS_FC"
+cat > "$BS_FC/crontab" <<'EOF'
+#!/usr/bin/env bash
+[ "${1:-}" = "-l" ] || { echo "unsupported: ${1:-}" >&2; exit 1; }
+[ -s "$CRONTAB_STATE" ] || { echo "no crontab for tester" >&2; exit 1; }
+cat "$CRONTAB_STATE"
+EOF
+chmod +x "$BS_FC/crontab"
+# shellcheck disable=SC2016  # a crontab line is stored unexpanded; $HOME is cron's
+printf '*/5 * * * * $HOME/duty/bin/tick.sh\n' > "$BS_FC/state"
+
+# bs_flow <home> -> the one field line the script prints, \r stripped exactly
+# as the caller strips it. `head -1` is what `read -r` does to the trailing
+# blank line the script emits.
+bs_flow() {
+  HOME="$1" PATH="$BS_FC:$PATH" CRONTAB_STATE="$BS_FC/state" \
+    bash -c "$BS_FLOW_SH" 2>/dev/null | tr -d '\r' | head -1
+}
+# bs_flow_log <home> LINES... — a duty.log built from `<seconds-ago> <rest>`.
+bs_flow_log() {
+  local h="$1" line ago rest; shift
+  mkdir -p "$h/duty"
+  : > "$h/duty/duty.log"
+  for line in "$@"; do
+    ago="${line%% *}"; rest="${line#* }"
+    printf '%s %s\n' \
+      "$(date -u -d "@$(( $(date +%s) - ago ))" '+%Y-%m-%dT%H:%M:%SZ')" "$rest" \
+      >> "$h/duty/duty.log"
+  done
+}
+bs_flow_field() { awk -v n="$1" '{print $n}' <<<"$2"; }
+
+BS_FH="$BS_TMP/flowcli"; mkdir -p "$BS_FH/duty"
+echo "crew@0.4.1 (feedbee)" > "$BS_FH/duty/VERSION"
+printf '%s' "$(( $(date +%s) - 2400 ))" > "$BS_FH/duty/.duty.lock.since"
+
+# #624's own box: a `build` in flight, declaring the 3600s ceiling
+# roles/builder.conf gives that lane, with the two tokens the engine appends
+# after it. The ceiling must come out even though `timeout=` is neither the
+# first token nor the last.
+bs_flow_log "$BS_FH" \
+  "3700 duty run start" \
+  "3690 SESSION START kind=build key=crew#624 timeout=3600s log=/h/g.log holder=tick sid=8f1c0a2e"
+BS_FLOW_LINE="$(bs_flow "$BS_FH")"
+t "flow-cli: the script emits thirteen fields" 13 "$(awk '{print NF}' <<<"$BS_FLOW_LINE")"
+t "flow-cli: the in-flight ceiling is carried out" 3600 \
+  "$(bs_flow_field 13 "$BS_FLOW_LINE")"
+t "flow-cli: ...beside its lane" build "$(bs_flow_field 12 "$BS_FLOW_LINE")"
+# The half a field count cannot see. These are the two fields the ceiling was
+# appended AFTER, and #189 is the record of what pushing one off costs: a
+# paused box emitted an extra line, `read` saw only the first, and the operator
+# was told to re-hire a box they had just paused.
+t "flow-cli: session-active still lands in field 10" 1 \
+  "$(bs_flow_field 10 "$BS_FLOW_LINE")"
+BS_FLOW_LOCK="$(bs_flow_field 11 "$BS_FLOW_LINE")"
+if [ -n "$BS_FLOW_LOCK" ] && [ "$BS_FLOW_LOCK" -ge 2400 ] && [ "$BS_FLOW_LOCK" -lt 2460 ]; then
+  ok "flow-cli: the lock age still lands in field 11 ($BS_FLOW_LOCK s)"
+else
+  fail "flow-cli: the lock age still lands in field 11" "got '$BS_FLOW_LOCK'"
+fi
+
+# An engine older than #538 wrote no `timeout=` at all. -1 is "nothing
+# declared", and it is what makes an un-upgraded box's reading identical to
+# the one it got before this change.
+bs_flow_log "$BS_FH" \
+  "800 duty run start" \
+  "790 SESSION START kind=build key=crew#77 log=/h/h.log"
+t "flow-cli: a START with no timeout= declares no ceiling" "build -1" \
+  "$(awk '{print $12, $13}' <<<"$(bs_flow "$BS_FH")")"
+
+# The token is SCANNED, so a line that carries it in another position still
+# answers, and one that merely contains the letters does not.
+bs_flow_log "$BS_FH" \
+  "600 SESSION START kind=triage key=board holder=tick sid=abc timeout=2400s log=/h/i.log"
+t "flow-cli: the ceiling is scanned, not counted off the line" "triage 2400" \
+  "$(awk '{print $12, $13}' <<<"$(bs_flow "$BS_FH")")"
+bs_flow_log "$BS_FH" \
+  "600 SESSION START kind=build key=crew#9 attn_timeout=99s log=/h/j.log"
+t "flow-cli: a lookalike token declares no ceiling" "build -1" \
+  "$(awk '{print $12, $13}' <<<"$(bs_flow "$BS_FH")")"
+
+# The numbers belong to a DEPTH, not to the file: an END pops the session it
+# closes and the enclosing START's own ceiling is what remains in flight.
+bs_flow_log "$BS_FH" \
+  "7000 SESSION START kind=build key=crew#a timeout=3600s log=/h/a.log" \
+  "300 SESSION START kind=review key=crew#b timeout=2400s log=/h/b.log" \
+  "60 SESSION END kind=review key=crew#b rc=0 dur=240s outcome=ok"
+t "flow-cli: an END pops its own START's ceiling" "build 3600" \
+  "$(awk '{print $12, $13}' <<<"$(bs_flow "$BS_FH")")"
+
+# Nothing in flight: no ceiling to declare, whatever the closed sessions said.
+bs_flow_log "$BS_FH" \
+  "600 SESSION START kind=build key=crew#c timeout=3600s log=/h/c.log" \
+  "60 SESSION END kind=build key=crew#c rc=0 dur=540s outcome=ok"
+BS_FLOW_LINE="$(bs_flow "$BS_FH")"
+t "flow-cli: a closed session declares nothing" "- -1" \
+  "$(awk '{print $12, $13}' <<<"$BS_FLOW_LINE")"
+t "flow-cli: ...and reports no session in flight" 0 \
+  "$(bs_flow_field 10 "$BS_FLOW_LINE")"
+
+# The other way a session stops being in flight, and until round 1 it was the
+# one the wire lied about: an orphan past the six-hour bound is a crashed
+# session, not live work, and the floor holds NO kind and NO ceiling for it —
+# its `cur` is None. The script used to emit that dead START's numbers anyway,
+# inertly, correct only because `cmd_status` gates them on field 10. A field
+# that is wrong-but-unread is a second source of truth waiting for a reader,
+# which is the thing auth_from_flow exists to refuse, so it now says what the
+# floor says (round 1, claude-bot).
+bs_flow_log "$BS_FH" \
+  "25000 duty run start" \
+  "24990 SESSION START kind=build key=crew#d timeout=3600s log=/h/d.log holder=tick sid=dead1"
+BS_FLOW_LINE="$(bs_flow "$BS_FH")"
+t "flow-cli: an orphan past the six-hour bound declares nothing" "- -1" \
+  "$(awk '{print $12, $13}' <<<"$BS_FLOW_LINE")"
+t "flow-cli: ...and reports no session in flight either" 0 \
+  "$(bs_flow_field 10 "$BS_FLOW_LINE")"
+
+# bs_flow_cur <log> — `derive_sessions`'s in-flight session over the same file
+# the shell just scanned, as `<kind> <timeout>` or `none`. One reader of the
+# floor, for the same reason duty_log_of is one writer of the fixtures: two
+# spellings of "what the floor makes of this log" could drift apart and leave
+# every cross-reader case below comparing a box against itself.
+bs_flow_cur() {
+  BS_SERVER="$BS_FLOOR/server" python3 - "$1" <<'PY'
+import os, sys, time
+sys.path.insert(0, os.environ["BS_SERVER"])
+import floor
+_, cur = floor.derive_sessions(open(sys.argv[1]).read().splitlines(), time.time())
+print("%s %s" % (cur["kind"], cur["timeout"]) if cur else "none")
+PY
+}
+
+t "flow-cli: ...and the floor makes nothing of that log either" none \
+  "$(bs_flow_cur "$BS_FH/duty/duty.log")"
+
+# The floor reads the same evidence, and this is where the two readers are held
+# together on it: `derive_sessions` over the same log must name the same lane
+# and the same ceiling the shell just scanned. A private regex on either side
+# is the disagreement auth_from_flow exists to remove.
+bs_flow_log "$BS_FH" \
+  "3690 SESSION START kind=build key=crew#624 timeout=3600s log=/h/g.log holder=tick sid=8f1c0a2e"
+BS_FLOW_CUR="$(bs_flow_cur "$BS_FH/duty/duty.log")"
+t "flow-cli: both readers scan one line to the same ceiling" "$BS_FLOW_CUR" \
+  "$(awk '{print $12, $13}' <<<"$(bs_flow "$BS_FH")")"
+
+# ...and the same claim where the two readers' LANGUAGES disagree about the
+# digits rather than about the line (round 1, codex-bot). `TIMEOUT_BUILD=0900`
+# is a role conf a host may hold: nothing between it and `session.sh`'s
+# `timeout=${tmo}s` canonicalises, and GNU `timeout 0900` runs that session.
+# Neither reader rewrites the box's record — D1 is that the record is read —
+# so the wire carries `0900` and each reader turns it into a number itself.
+# Python reads a leading zero as decimal. Bash reads it as OCTAL, so a
+# `crew status` without the `10#` took `0900` into `$(( ))` as an invalid
+# octal literal and died out of the middle of the roster loop, on a box the
+# floor rendered fine. The pair below is the wire and the agreement, stated
+# separately because only the second one is about both readers.
+bs_flow_log "$BS_FH" \
+  "600 duty run start" \
+  "590 SESSION START kind=build key=crew#624 timeout=0900s log=/h/z.log holder=tick sid=0a1b2c3d"
+BS_FLOW_LINE="$(bs_flow "$BS_FH")"
+t "flow-cli: a leading-zero ceiling goes out as the record spells it" "build 0900" \
+  "$(awk '{print $12, $13}' <<<"$BS_FLOW_LINE")"
+# The floor's absolute reading is pinned as well as the agreement: two readers
+# that were broken the same way would satisfy an agreement test on its own.
+t "flow-cli: the floor reads those digits as nine hundred" "build 900" \
+  "$(bs_flow_cur "$BS_FH/duty/duty.log")"
+t "flow-cli: ...and the CLI's own canonicalisation reaches the same number" 900 \
+  "$(( 10#$(bs_flow_field 13 "$BS_FLOW_LINE") ))"
+
+# ...and the same claim where one reader has no ROOM for the record rather
+# than a different reading of it (round 2, codex-bot). Reachable by the same
+# argument as `0900`: the conf is operator-editable, nothing between it and
+# `timeout=${tmo}s` range-checks, and `timeout 999999999999999999999999 true`
+# exits 0. The producer's job is unchanged and that is the point — the wire
+# carries the record's own digits whatever either reader can hold, which is D1.
+bs_flow_log "$BS_FH" \
+  "800 duty run start" \
+  "790 SESSION START kind=build key=crew#624 timeout=999999999999999999999999s log=/h/h.log holder=tick sid=1f2e3d4c"
+BS_FLOW_LINE="$(bs_flow "$BS_FH")"
+t "flow-cli: a ceiling past bash's range goes out as the record spells it" \
+  "build 999999999999999999999999" "$(awk '{print $12, $13}' <<<"$BS_FLOW_LINE")"
+t "flow-cli: the floor holds every one of those digits" \
+  "build 999999999999999999999999" "$(bs_flow_cur "$BS_FH/duty/duty.log")"
+# The DIVERGENCE, pinned rather than left to be re-derived. This is the one
+# place the two readers cannot be made to reach the same number, and stating
+# it here is what keeps a later "simplification" back to plain arithmetic from
+# looking harmless: `$(( 10# ))` does not fail on these digits, it WRAPS, and
+# a wrapped ceiling is a number that is nobody's record. `cmd_status` saturates
+# instead, which reaches the same VERDICT as the floor for every lock age that
+# can exist — asserted where verdicts run, in cli.sh and floor/units.sh.
+BS_FLOW_WIRE="$(bs_flow_field 13 "$BS_FLOW_LINE")"
+if [ "$(( 10#$BS_FLOW_WIRE ))" = "$BS_FLOW_WIRE" ]; then
+  BS_FLOW_HOLD=held
+else
+  BS_FLOW_HOLD=wraps
+fi
+t "flow-cli: ...which bash's own arithmetic cannot, hence the saturation" \
+  wraps "$BS_FLOW_HOLD"
+
 if [ -n "${BS_STANDALONE:-}" ]; then
   echo
   echo "== box-side summary: $PASS ok, $SKIP skipped, ${#FAILS[@]} failed"

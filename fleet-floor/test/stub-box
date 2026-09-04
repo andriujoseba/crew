@@ -118,6 +118,26 @@ lockheld_of() {
     lane-over)              printf 3661 ;;
     # Past STUCK_AFTER_S with a session in flight that declared no ceiling.
     lane-legacy)            printf 700 ;;
+    # The round-1 pair, and the numbers are chosen to be discriminating: their
+    # session declares `timeout=0900s`, so the bound is 960. 800 is inside it
+    # and PAST the 600s fleet-wide constant, so a reader still grading against
+    # the constant calls this box STUCK and the ceiling-reading one does not;
+    # 961 is one second past the bound, the same both-sides boundary the trio
+    # above states at 3600.
+    lane-zero)              printf 800 ;;
+    lane-zero-over)         printf 961 ;;
+    # Round 2's box, and 700 is discriminating in the one direction that
+    # matters: PAST the 600s fleet-wide constant, and inside a bound of
+    # 10^24 + 60 by every order of magnitude there is. A reader that cannot
+    # hold the declared ceiling falls back to the constant and calls this box
+    # STUCK; the floor, whose `int()` has no range, calls it healthy. There is
+    # no over-the-bound twin because no lock age can be past that bound.
+    lane-huge)              printf 700 ;;
+    # Its twin, and 700 is discriminating there for the OPPOSITE arithmetic
+    # reason: 2^63 wraps to a NEGATIVE ceiling, so an ungated `$(( ))` puts
+    # the bound below every lock age there is and calls the box STUCK. Same
+    # age, so the two boxes differ only in which half of the fix they red.
+    lane-wrap)              printf 700 ;;
     *)                      printf '' ;;
   esac
 }
@@ -166,6 +186,196 @@ vitals_record_of() {
       printf 'VITALS ts=%s cores=2 load1=0.00 disk_total_mb=29696 disk_used_mb=14254 disk_pct=48 platform=linux os=debian-13\n' \
         "$(now)" ;;
     *) printf '\n' ;;
+  esac
+}
+
+# duty_log_of SCENARIO — the ~/duty/duty.log tail this box would carry.
+#
+# ONE reader, and the newest member of the list of things this file states
+# exactly once. probe.sh's `::logstart` section is built from it, and so is the
+# session evidence the CLI half of this stub answers `crew status` with a few
+# hundred lines down. A stub that spelled the sessions twice could hold those
+# two readers apart while the suite stayed green — and two readers disagreeing
+# about one box is the whole subject of #624, so a fixture able to hide it
+# would be worse than no fixture at all.
+duty_log_of() {
+  local sc="$1"
+  case "$sc" in
+    working|suppressed-working|paused|noauth|skew-behind|skew-ahead|invalid-tickage)
+      # a closed session, then an open one: state must read WORKING
+      echo "$(box_ago "$sc" 900) duty run start"
+      echo "$(box_ago "$sc" 900) heavy-duty/crew: build duty (ready unclaimed=2, whole rounds owed=0)"
+      echo "$(box_ago "$sc" 890) SESSION START kind=build key=heavy-duty/crew#601 timeout=7200s log=/h/duty/logs/20260726T090000Z-build-heavy-duty_crew_601.log"
+      echo "$(box_ago "$sc" 600) SESSION END kind=build key=heavy-duty/crew#601 rc=0 dur=290s outcome=ok"
+      echo "$(box_ago "$sc" 600) duty run end"
+      echo "$(box_ago "$sc" 120) duty run start"
+      echo "$(box_ago "$sc" 120) attention: heavy-duty/ceremony#12 — launching pickup session"
+      echo "$(box_ago "$sc" 110) SESSION START kind=triage key=board timeout=2400s log=/h/duty/logs/b.log"
+      ;;
+    idle)
+      # A reconciled orphan has no START in the window by construction. Keep
+      # it beside the ordinary aged-out row so the page can prove both are
+      # inert without manufacturing a transcript basename for either one.
+      echo "$(ago 210) SESSION END kind=build key=crew#orphan rc=- dur=- outcome=ORPHANED acted=unknown reply_tail= log=- left=- tier=unknown peak_rss=- started=$(ago 300) sid=unknown"
+      echo "$(ago 200) duty run start"
+      echo "$(ago 200) heavy-duty/crew: no build duty"
+      # The one scenario written with #473's field: the newest session per box
+      # is what the page renders it for, and `working` above deliberately
+      # keeps the pre-field line shape so both halves have a fixture.
+      echo "$(ago 195) SESSION END kind=review key=box#158 rc=0 dur=64s outcome=approved acted=yes reply_tail= tier=default peak_rss=3588324"
+      echo "$(ago 190) duty run end"
+      ;;
+    limited-terminal)
+      echo "$(ago 180) SESSION END kind=build key=crew#611 rc=1 dur=30s outcome=TERMINAL acted=no reply_tail=$(printf 'resets at 18:00 UTC' | base64 -w0)"
+      ;;
+    limited-breaker)
+      echo "$(ago 180) SESSION END kind=review key=crew#610 rc=0 dur=30s outcome=ok"
+      echo "$(ago 120) SESSION SKIP kind=review key=crew#611 reason=terminal-breaker count=3"
+      ;;
+    limited-budget)
+      echo "$(ago 90) SESSION SKIP kind=triage key=board reason=budget count=1"
+      ;;
+    limited-recovered)
+      echo "$(ago 180) SESSION END kind=build key=crew#610 rc=1 dur=30s outcome=TERMINAL"
+      echo "$(ago 60) SESSION END kind=build key=crew#611 rc=0 dur=30s outcome=ok"
+      ;;
+    # limited-recovered's twin, and the pair is the point: the SAME terminal
+    # evidence, retried, differing only in how the retry ended — and BOTH read
+    # healthy, because the box already let go of the limit either way.
+    # `_session_terminal_record` runs after every SESSION END and deletes the
+    # lane's breaker file on any non-TERMINAL outcome: "any success, timeout,
+    # transient failure, or unclassified failure resets the count"
+    # (shared/lib/common/breaker.sh:71-81). A floor that kept this box LIMITED
+    # would be latching a state the engine has already cleared, which is
+    # exactly what #611's fourth criterion forbids. What an ordinary failure
+    # still does NOT do is acknowledge a durable operating-limit event —
+    # nothing on the box retracts one of those — and that split is asserted
+    # directly in test/floor/units.sh (#611 round 3).
+    limited-failed)
+      echo "$(ago 180) SESSION END kind=build key=crew#610 rc=1 dur=30s outcome=TERMINAL"
+      echo "$(ago 60) SESSION END kind=build key=crew#611 rc=1 dur=12s outcome=FAILED acted=no reply_tail="
+      ;;
+    # The recovery evidence that arrives with no END at all: the gates run
+    # BEFORE the start line — budget, then terminal, then SESSION START
+    # (shared/lib/common/session.sh:624-663) — so a START newer than the
+    # terminal evidence is the engine stating that both gates admitted this
+    # lane. It is also the one shape where latching had a second, louder
+    # consequence: LIMITED sits above the open-session branch in the collector
+    # ladder, so a box with a build genuinely in flight published `idle` with
+    # a LIMITED note. This box must read WORKING.
+    limited-restarted)
+      echo "$(ago 180) SESSION END kind=build key=crew#610 rc=1 dur=30s outcome=TERMINAL"
+      echo "$(ago 60) SESSION START kind=build key=crew#611 timeout=7200s log=/h/duty/logs/c.log"
+      ;;
+    silent|suppressed-silent|disarmed)   # newest line is older than two tick boundaries
+      echo "$(ago 3000) duty run start"
+      echo "$(ago 2990) duty run end"
+      ;;
+    skew-silent-behind|skew-silent-ahead)
+      echo "$(box_ago "$sc" 4010) duty run start"
+      echo "$(box_ago "$sc" 4000) duty run end"
+      ;;
+    missing-tickage|suppressed-unknown)
+      echo "$(ago 110) duty run start"
+      ;;
+    suppressed-notimestamp)
+      echo "log exists but carries no parseable timestamp"
+      ;;
+    suppressed-old-orphan)
+      echo "$(ago 28800) SESSION START kind=build key=crew#old timeout=7200s log=/h/duty/logs/old.log"
+      ;;
+    suppressed-paired-crash)
+      echo "$(ago 7200) SESSION START kind=build key=crew#crashed timeout=7200s log=/h/duty/logs/crashed.log"
+      echo "$(ago 120) SESSION START kind=review key=crew#done timeout=2400s log=/h/duty/logs/done.log"
+      echo "$(ago 60) SESSION END kind=review key=crew#done rc=0 dur=60s outcome=ok"
+      ;;
+    lane-build|lane-edge|lane-over|lane-ping)
+      # #610 — a `build` session genuinely in flight, declaring on its own
+      # record the 3600s ceiling roles/builder.conf gives that lane. The
+      # evidence is IDENTICAL across the three scenarios; only lockheld_of
+      # differs, which is the whole point: a reader grading them alike is
+      # comparing against a fleet-wide constant rather than against this line.
+      echo "$(ago 3700) duty run start"
+      echo "$(ago 3700) heavy-duty/crew: build duty (ready unclaimed=1, whole rounds owed=0)"
+      echo "$(ago 3690) SESSION START kind=build key=crew#610 timeout=3600s log=/h/duty/logs/g.log holder=tick sid=8f1c0a2e-1d3b-4c5a-9e70-2b6d4f8a1c33"
+      ;;
+    lane-zero|lane-zero-over)
+      # The digits a role conf saying `TIMEOUT_BUILD=0900` puts on the record.
+      # Nothing between that conf and `session.sh`'s `timeout=${tmo}s`
+      # canonicalises, and GNU `timeout 0900` runs the session, so this is a
+      # line the engine can genuinely write. It is spelled here rather than
+      # normalised because the two readers must each canonicalise it
+      # themselves: Python reads a leading zero as decimal, bash reads it as
+      # OCTAL, and `0900` is not octal at all — a `crew status` that took
+      # these digits into `$(( ))` raw died out of the middle of the roster
+      # loop under `set -euo pipefail` while the floor rendered the same box
+      # fine. Same evidence on both boxes; only lockheld_of differs.
+      echo "$(ago 1000) duty run start"
+      echo "$(ago 1000) heavy-duty/crew: build duty (ready unclaimed=1, whole rounds owed=0)"
+      echo "$(ago 990) SESSION START kind=build key=crew#624 timeout=0900s log=/h/duty/logs/z.log holder=tick sid=0a1b2c3d-4e5f-6071-8293-a4b5c6d7e8f9"
+      ;;
+    lane-huge)
+      # The same question asked of a record BASH CANNOT HOLD (round 2,
+      # codex-bot). Reachable by the same argument the pair above rests on: a
+      # role conf is operator-editable, nothing between it and
+      # `timeout=${tmo}s` range-checks, and `timeout 999999999999999999999999
+      # true` exits 0 — so the engine will write this line as readily as it
+      # writes `0900`. Python's int holds every digit; bash's is a fixed-width
+      # signed 64, and BOTH of its ways of touching the value are wrong. `[
+      # "$session_ceiling" -gt 0 ]` exits 2 with `integer expression expected`
+      # and skips the clause, so this box was graded against the fleet-wide
+      # constant and called STUCK while the floor called it healthy — and
+      # `$(( ))` would have wrapped SILENTLY to 2003764205206896639, a ceiling
+      # that is nobody's record.
+      echo "$(ago 800) duty run start"
+      echo "$(ago 800) heavy-duty/crew: build duty (ready unclaimed=1, whole rounds owed=0)"
+      echo "$(ago 790) SESSION START kind=build key=crew#624 timeout=999999999999999999999999s log=/h/duty/logs/h.log holder=tick sid=1f2e3d4c-5b6a-7988-9a0b-1c2d3e4f5a6b"
+      ;;
+    lane-wrap)
+      # 2^63 exactly, and it is here because the box above cannot catch the
+      # OTHER half of the fix. Drop the width gate and `$(( ))` turns twenty-
+      # four nines into 2003764205206896639 — a fabricated ceiling, but still
+      # a huge one, so the verdict on that box comes out right by accident and
+      # only the source pin reds. These digits wrap to
+      # -9223372036854775808, which puts the bound below every lock age there
+      # is: the box reads STUCK, loudly, in the table. A guard the behaviour
+      # cannot red is the shape this PR already learned about once (1b).
+      echo "$(ago 800) duty run start"
+      echo "$(ago 800) heavy-duty/crew: build duty (ready unclaimed=1, whole rounds owed=0)"
+      echo "$(ago 790) SESSION START kind=build key=crew#624 timeout=9223372036854775808s log=/h/duty/logs/w.log holder=tick sid=2a3b4c5d-6e7f-8091-a2b3-c4d5e6f70819"
+      ;;
+    lane-legacy)
+      # An engine older than the `timeout=` token — every line ever written
+      # before #538 put one on this record. There is no ceiling to read, so
+      # the reader must fall back to STUCK_AFTER_S and word it as it does
+      # today. This is the box that must not move at all.
+      echo "$(ago 800) duty run start"
+      echo "$(ago 790) SESSION START kind=build key=crew#77 log=/h/duty/logs/h.log"
+      ;;
+    firstrun)  # its very first session: an open START, no END anywhere yet
+      echo "$(ago 200) duty run start"
+      echo "$(ago 200) heavy-duty/rig: build duty (ready unclaimed=1, whole rounds owed=0)"
+      echo "$(ago 190) SESSION START kind=build key=heavy-duty/rig#3 timeout=7200s log=/h/duty/logs/f.log"
+      ;;
+    fresh|nothired|nocron|neverticked|unconverged|premanifest) : ;;  # hired seconds ago: no evidence yet
+    failing)
+      echo "$(ago 300) duty run start"
+      echo "$(ago 295) SESSION END kind=build key=crew#41 rc=1 dur=12s outcome=FAILED"
+      echo "$(ago 290) SESSION END kind=build key=crew#42 rc=124 dur=7200s outcome=TIMEOUT"
+      echo "$(ago 280) duty run end"
+      ;;
+    hostile)  # log content that must never be interpreted as markup
+      echo "$(ago 120) duty run start"
+      echo "$(ago 120) attention: <img src=x onerror=alert(1)>#7 — launching pickup session"
+      echo "$(ago 110) SESSION START kind=build key=<script>alert(2)</script> timeout=60s log=/h/x.log"
+      ;;
+    garbage)  # a truncated / interleaved log the parser must survive
+      echo "not a timestamped line at all"
+      echo "$(ago 100) SESSION END kind=build key=crew#9 rc=notanumber dur=xx outcome="
+      echo "$(ago 90) SESSION START kind= key="
+      printf '\x00\xff binary junk\n'
+      ;;
+    *) echo "$(now) duty run start" ;;
   esac
 }
 
@@ -286,138 +496,7 @@ emit_probe() {
   # green — the rule this file already applies to the armed/paused counts.
   printf '::vitals %s\n' "$(vitals_record_of "$sc")"
   echo '::logstart'
-  case "$sc" in
-    working|suppressed-working|paused|noauth|skew-behind|skew-ahead|invalid-tickage)
-      # a closed session, then an open one: state must read WORKING
-      echo "$(box_ago "$sc" 900) duty run start"
-      echo "$(box_ago "$sc" 900) heavy-duty/crew: build duty (ready unclaimed=2, whole rounds owed=0)"
-      echo "$(box_ago "$sc" 890) SESSION START kind=build key=heavy-duty/crew#601 timeout=7200s log=/h/duty/logs/20260726T090000Z-build-heavy-duty_crew_601.log"
-      echo "$(box_ago "$sc" 600) SESSION END kind=build key=heavy-duty/crew#601 rc=0 dur=290s outcome=ok"
-      echo "$(box_ago "$sc" 600) duty run end"
-      echo "$(box_ago "$sc" 120) duty run start"
-      echo "$(box_ago "$sc" 120) attention: heavy-duty/ceremony#12 — launching pickup session"
-      echo "$(box_ago "$sc" 110) SESSION START kind=triage key=board timeout=2400s log=/h/duty/logs/b.log"
-      ;;
-    idle)
-      # A reconciled orphan has no START in the window by construction. Keep
-      # it beside the ordinary aged-out row so the page can prove both are
-      # inert without manufacturing a transcript basename for either one.
-      echo "$(ago 210) SESSION END kind=build key=crew#orphan rc=- dur=- outcome=ORPHANED acted=unknown reply_tail= log=- left=- tier=unknown peak_rss=- started=$(ago 300) sid=unknown"
-      echo "$(ago 200) duty run start"
-      echo "$(ago 200) heavy-duty/crew: no build duty"
-      # The one scenario written with #473's field: the newest session per box
-      # is what the page renders it for, and `working` above deliberately
-      # keeps the pre-field line shape so both halves have a fixture.
-      echo "$(ago 195) SESSION END kind=review key=box#158 rc=0 dur=64s outcome=approved acted=yes reply_tail= tier=default peak_rss=3588324"
-      echo "$(ago 190) duty run end"
-      ;;
-    limited-terminal)
-      echo "$(ago 180) SESSION END kind=build key=crew#611 rc=1 dur=30s outcome=TERMINAL acted=no reply_tail=$(printf 'resets at 18:00 UTC' | base64 -w0)"
-      ;;
-    limited-breaker)
-      echo "$(ago 180) SESSION END kind=review key=crew#610 rc=0 dur=30s outcome=ok"
-      echo "$(ago 120) SESSION SKIP kind=review key=crew#611 reason=terminal-breaker count=3"
-      ;;
-    limited-budget)
-      echo "$(ago 90) SESSION SKIP kind=triage key=board reason=budget count=1"
-      ;;
-    limited-recovered)
-      echo "$(ago 180) SESSION END kind=build key=crew#610 rc=1 dur=30s outcome=TERMINAL"
-      echo "$(ago 60) SESSION END kind=build key=crew#611 rc=0 dur=30s outcome=ok"
-      ;;
-    # limited-recovered's twin, and the pair is the point: the SAME terminal
-    # evidence, retried, differing only in how the retry ended — and BOTH read
-    # healthy, because the box already let go of the limit either way.
-    # `_session_terminal_record` runs after every SESSION END and deletes the
-    # lane's breaker file on any non-TERMINAL outcome: "any success, timeout,
-    # transient failure, or unclassified failure resets the count"
-    # (shared/lib/common/breaker.sh:71-81). A floor that kept this box LIMITED
-    # would be latching a state the engine has already cleared, which is
-    # exactly what #611's fourth criterion forbids. What an ordinary failure
-    # still does NOT do is acknowledge a durable operating-limit event —
-    # nothing on the box retracts one of those — and that split is asserted
-    # directly in test/floor/units.sh (#611 round 3).
-    limited-failed)
-      echo "$(ago 180) SESSION END kind=build key=crew#610 rc=1 dur=30s outcome=TERMINAL"
-      echo "$(ago 60) SESSION END kind=build key=crew#611 rc=1 dur=12s outcome=FAILED acted=no reply_tail="
-      ;;
-    # The recovery evidence that arrives with no END at all: the gates run
-    # BEFORE the start line — budget, then terminal, then SESSION START
-    # (shared/lib/common/session.sh:624-663) — so a START newer than the
-    # terminal evidence is the engine stating that both gates admitted this
-    # lane. It is also the one shape where latching had a second, louder
-    # consequence: LIMITED sits above the open-session branch in the collector
-    # ladder, so a box with a build genuinely in flight published `idle` with
-    # a LIMITED note. This box must read WORKING.
-    limited-restarted)
-      echo "$(ago 180) SESSION END kind=build key=crew#610 rc=1 dur=30s outcome=TERMINAL"
-      echo "$(ago 60) SESSION START kind=build key=crew#611 timeout=7200s log=/h/duty/logs/c.log"
-      ;;
-    silent|suppressed-silent|disarmed)   # newest line is older than two tick boundaries
-      echo "$(ago 3000) duty run start"
-      echo "$(ago 2990) duty run end"
-      ;;
-    skew-silent-behind|skew-silent-ahead)
-      echo "$(box_ago "$sc" 4010) duty run start"
-      echo "$(box_ago "$sc" 4000) duty run end"
-      ;;
-    missing-tickage|suppressed-unknown)
-      echo "$(ago 110) duty run start"
-      ;;
-    suppressed-notimestamp)
-      echo "log exists but carries no parseable timestamp"
-      ;;
-    suppressed-old-orphan)
-      echo "$(ago 28800) SESSION START kind=build key=crew#old timeout=7200s log=/h/duty/logs/old.log"
-      ;;
-    suppressed-paired-crash)
-      echo "$(ago 7200) SESSION START kind=build key=crew#crashed timeout=7200s log=/h/duty/logs/crashed.log"
-      echo "$(ago 120) SESSION START kind=review key=crew#done timeout=2400s log=/h/duty/logs/done.log"
-      echo "$(ago 60) SESSION END kind=review key=crew#done rc=0 dur=60s outcome=ok"
-      ;;
-    lane-build|lane-edge|lane-over|lane-ping)
-      # #610 — a `build` session genuinely in flight, declaring on its own
-      # record the 3600s ceiling roles/builder.conf gives that lane. The
-      # evidence is IDENTICAL across the three scenarios; only lockheld_of
-      # differs, which is the whole point: a reader grading them alike is
-      # comparing against a fleet-wide constant rather than against this line.
-      echo "$(ago 3700) duty run start"
-      echo "$(ago 3700) heavy-duty/crew: build duty (ready unclaimed=1, whole rounds owed=0)"
-      echo "$(ago 3690) SESSION START kind=build key=crew#610 timeout=3600s log=/h/duty/logs/g.log holder=tick sid=8f1c0a2e-1d3b-4c5a-9e70-2b6d4f8a1c33"
-      ;;
-    lane-legacy)
-      # An engine older than the `timeout=` token — every line ever written
-      # before #538 put one on this record. There is no ceiling to read, so
-      # the reader must fall back to STUCK_AFTER_S and word it as it does
-      # today. This is the box that must not move at all.
-      echo "$(ago 800) duty run start"
-      echo "$(ago 790) SESSION START kind=build key=crew#77 log=/h/duty/logs/h.log"
-      ;;
-    firstrun)  # its very first session: an open START, no END anywhere yet
-      echo "$(ago 200) duty run start"
-      echo "$(ago 200) heavy-duty/rig: build duty (ready unclaimed=1, whole rounds owed=0)"
-      echo "$(ago 190) SESSION START kind=build key=heavy-duty/rig#3 timeout=7200s log=/h/duty/logs/f.log"
-      ;;
-    fresh|nothired|nocron|neverticked|unconverged|premanifest) : ;;  # hired seconds ago: no evidence yet
-    failing)
-      echo "$(ago 300) duty run start"
-      echo "$(ago 295) SESSION END kind=build key=crew#41 rc=1 dur=12s outcome=FAILED"
-      echo "$(ago 290) SESSION END kind=build key=crew#42 rc=124 dur=7200s outcome=TIMEOUT"
-      echo "$(ago 280) duty run end"
-      ;;
-    hostile)  # log content that must never be interpreted as markup
-      echo "$(ago 120) duty run start"
-      echo "$(ago 120) attention: <img src=x onerror=alert(1)>#7 — launching pickup session"
-      echo "$(ago 110) SESSION START kind=build key=<script>alert(2)</script> timeout=60s log=/h/x.log"
-      ;;
-    garbage)  # a truncated / interleaved log the parser must survive
-      echo "not a timestamped line at all"
-      echo "$(ago 100) SESSION END kind=build key=crew#9 rc=notanumber dur=xx outcome="
-      echo "$(ago 90) SESSION START kind= key="
-      printf '\x00\xff binary junk\n'
-      ;;
-    *) echo "$(now) duty run start" ;;
-  esac
+  duty_log_of "$sc"
   echo '::logend'
 }
 
@@ -581,24 +660,53 @@ case "${1:-}" in
         _armed=1; _cpaused=0
         [ "$(cron_of "$name")" = "paused" ] && { _armed=0; _cpaused=1; }
         case "$sc" in nocron|disarmed|nothired|unconverged|premanifest) _armed=0 ;; esac
-        _log=1; _active=0; _lock=-1
+        _log=1; _active=0
         case "$sc" in
           nothired|unconverged|premanifest|neverticked|suppressed-notimestamp) _log=0 ;;
-          working|suppressed-working|suppressed-paired-crash|noauth|skew-behind|skew-ahead|invalid-tickage) _active=1 ;;
-          stuck|suppressed-stuck) _lock=2820 ;;
+          working|suppressed-working|suppressed-paired-crash|noauth|skew-behind|skew-ahead|invalid-tickage|lane-build|lane-edge|lane-over|lane-ping|lane-legacy|lane-zero|lane-zero-over|lane-huge|lane-wrap) _active=1 ;;
         esac
+        # The lock age comes from lockheld_of, the same reader probe.sh's
+        # ::lockheld and the ping's `l` field use. It used to be spelled a
+        # second time here — `stuck) _lock=2820`, the one number that happened
+        # to agree — which is the shape that could have let the CLI half and
+        # the floor half report different ages for one box while the suite
+        # stayed green.
+        _lock="$(lockheld_of "$sc")"; _lock="${_lock:--1}"
+        # Since #624 the line also carries the in-flight session's own lane and
+        # ceiling, and they are SCANNED off the very lines duty_log_of hands the
+        # floor half rather than typed into a table beside them. That matters
+        # more here than anywhere else in this file: the assertion the lane
+        # boxes exist for is that `crew status` and the floor grade one lock
+        # alike, and a fixture holding two answers could satisfy it by agreeing
+        # with itself. This is the fixture's own reader — the REAL one runs for
+        # real in test/boxside.sh, over logs of its own.
+        read -r _kind _ceiling <<<"$(duty_log_of "$sc" | awk '
+          / SESSION END /   { if (d > 0) d--; next }
+          / SESSION START / { d++
+            k[d] = "-"
+            if (match($0, / kind=[^ ]+/)) k[d] = substr($0, RSTART + 6, RLENGTH - 6)
+            c[d] = -1
+            if (match($0, / timeout=[0-9]+s/) &&
+                (RSTART + RLENGTH > length($0) || substr($0, RSTART + RLENGTH, 1) == " "))
+              c[d] = substr($0, RSTART + 9, RLENGTH - 10)
+          }
+          END { if (d > 0) print k[d], c[d]; else print "-", -1 }')"
+        # One tail for every arm below. Spelling the trailing fields seven
+        # times is how a field gets added to six of them (#189 is the record of
+        # what one malformed line costs a reader).
+        _tail="$_log $_active $_lock $_kind $_ceiling"
         case "$sc" in
-          noauth)        echo "missing missing 30 $_armed $_cpaused -1 - - $_log $_active $_lock" ;;
-          nothired|unconverged|premanifest) echo "unknown unknown -1 $_armed $_cpaused -1 - - $_log $_active $_lock" ;;
+          noauth)        echo "missing missing 30 $_armed $_cpaused -1 - - $_tail" ;;
+          nothired|unconverged|premanifest) echo "unknown unknown -1 $_armed $_cpaused -1 - - $_tail" ;;
           # Hired and armed, nothing recorded against it, and no duty.log to
           # age: the box is healthy and has simply not run yet.
-          neverticked)   echo "nofail nofail -1 $_armed $_cpaused -1 - - $_log $_active $_lock" ;;
-          silent|nocron|disarmed) echo "nofail nofail 4000 $_armed $_cpaused -1 - - $_log $_active $_lock" ;;
-          suppressed-silent) echo "nofail nofail 4000 $_armed $_cpaused 780 draft heavy-duty/crew#561@abcdef123456 $_log $_active $_lock" ;;
-          suppressed-unknown) echo "nofail nofail garbage $_armed $_cpaused 780 draft heavy-duty/crew#561@abcdef123456 $_log $_active $_lock" ;;
+          neverticked)   echo "nofail nofail -1 $_armed $_cpaused -1 - - $_tail" ;;
+          silent|nocron|disarmed) echo "nofail nofail 4000 $_armed $_cpaused -1 - - $_tail" ;;
+          suppressed-silent) echo "nofail nofail 4000 $_armed $_cpaused 780 draft heavy-duty/crew#561@abcdef123456 $_tail" ;;
+          suppressed-unknown) echo "nofail nofail garbage $_armed $_cpaused 780 draft heavy-duty/crew#561@abcdef123456 $_tail" ;;
           suppressed|suppressed-working|suppressed-stuck|suppressed-notimestamp|suppressed-old-orphan|suppressed-paired-crash)
-            echo "nofail nofail 30 $_armed $_cpaused 780 draft heavy-duty/crew#561@abcdef123456 $_log $_active $_lock" ;;
-          *)             echo "nofail nofail 30 $_armed $_cpaused -1 - - $_log $_active $_lock" ;;
+            echo "nofail nofail 30 $_armed $_cpaused 780 draft heavy-duty/crew#561@abcdef123456 $_tail" ;;
+          *)             echo "nofail nofail 30 $_armed $_cpaused -1 - - $_tail" ;;
         esac ;;
       # RESUME_SH, then PAUSE_SH. Since #188 each script states what it DID and
       # a box with nothing to do says so on stdout and exits 0 — so the stub has

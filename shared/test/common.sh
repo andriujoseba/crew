@@ -7853,23 +7853,29 @@ CL_SILENT="$(sed -n 's/^SILENT_AFTER_S="${CREW_SILENT_AFTER:-\([0-9]*\)}".*/\1/p
 t silent-rule-floor-derived 600 "$FL_SILENT"
 t silent-rule-cli-matches-floor "$FL_SILENT" "$CL_SILENT"
 
-# STUCK is another shared verdict, but since #610 it is only shared in PART,
-# and this block states the part rather than over-claiming the whole. What
-# still has to agree, and is pinned here:
+# STUCK is another shared verdict, and since #624 it is shared WHOLE again.
+# The block spent one release stating only a part of the rule, because #610
+# landed the two-clause verdict on the floor alone and `crew status` still
+# fired at a fleet-wide constant; that gap was deliberately left unpinned so a
+# guard would not defend the drift it exists to detect. Both readers now carry
+# both clauses, so all of it is pinned:
 #
 #   · the override — same environment variable, same default, both readers;
-#   · the strictness — stuck at one second PAST the bound, never AT it;
-#   · the bound itself WHERE NOTHING DECLARES A CEILING — `STUCK_AFTER_S` in
-#     both, which is every case `crew status` can see and the floor's
-#     no-session and pre-#538 clauses.
+#   · the strictness — stuck at one second PAST the bound, never AT it, and
+#     both sides now compare against a BOUND rather than against a constant;
+#   · the bound WHERE NOTHING DECLARES A CEILING — `STUCK_AFTER_S` in both,
+#     which is the no-session clause and every pre-#538 `SESSION START`;
+#   · the bound WHERE ONE IS DECLARED — that ceiling plus the kill grace, and
+#     the grace is the same 60 in both (`kill-grace-cli-matches-floor` below);
+#   · the CANONICALISATION — the record carries digits and each reader turns
+#     them into a base-10 number itself, `10#` in one and `int()` in the
+#     other, so a leading zero on the wire grades the same on both sides
+#     rather than aborting one of them (`stuck-ceiling-*-canonical` below).
 #
-# What deliberately diverges, and is NOT pinned: the floor's in-flight clause
-# measures the lock against the ceiling the running session declared on its own
-# `SESSION START`, and `crew status` has no such clause (#610 is floor-only).
-# So the same box 40 minutes into a build reads healthy on the floor and STUCK
-# in the CLI until the second reader catches up. Pinning that gap would red on
-# the day somebody closes it, which is the opposite of what this block is for
-# — a guard must not defend the drift it exists to detect.
+# What these greps cannot see is whether the two then GRADE a box alike, which
+# is a question about behaviour and is answered where behaviour runs: the
+# collector's quartet in fleet-floor/test/floor/units.sh and the CLI's, box for
+# box and string for string, in fleet-floor/test/cli.sh.
 # shellcheck disable=SC2016  # matching crew's literal parameter expansion
 if grep -q '^STUCK_AFTER_S="${CREW_FLOOR_STUCK_AFTER:-$SILENT_AFTER_S}"' "$CREW_CLI"; then
   r1=shared
@@ -7883,24 +7889,182 @@ else
   r1=DRIFTED
 fi
 t stuck-rule-floor-uses-shared-override shared "$r1"
+# Both halves of one strictness claim, and both now read a BOUND. The CLI's
+# `-gt` is the stuck side; the collector's `held <= bound` is the NOT-stuck
+# return, the same boundary stated from the other side. `lock_age -gt
+# STUCK_AFTER_S` is what stood here until #624 and is exactly what must never
+# come back: it is a constant, so it cannot express the clause the floor has
+# had since #610 and the two consoles disagreed about a live box.
 # shellcheck disable=SC2016  # matching crew's literal comparison
-if grep -q '\[ "$lock_age" -gt "$STUCK_AFTER_S" \]' "$CREW_CLI"; then r1=strict; else r1=DRIFTED; fi
+if grep -q '\[ "$lock_age" -gt "$lock_bound" \]' "$CREW_CLI"; then r1=strict; else r1=DRIFTED; fi
 t stuck-rule-cli-boundary strict "$r1"
-# The collector's half of the same strictness. `held <= bound` is the NOT-stuck
-# return, so this is `held > bound` stated from the other side — the boundary
-# the CLI writes as `-gt`. It reads `bound` and not `STUCK_AFTER_S` because
-# after #610 the number compared against depends on the clause; that the two
-# agree on which number it is where no ceiling was declared is the assertion
-# below this one, and the two together are what the deleted single grep used
-# to say.
 if grep -q 'if held <= lock\["bound"\]:' <<<"$FLOOR_CODE"; then r1=strict; else r1=DRIFTED; fi
 t stuck-rule-floor-boundary strict "$r1"
-# ...and that bound IS `STUCK_AFTER_S` in the case both readers can see: no
-# session in flight, or one whose `SESSION START` declared no ceiling. Delete
-# this fallback and the floor stops grading un-upgraded boxes the way the CLI
-# still does, which is a drift no end-to-end fixture on either side would name.
+# ...and the bound is `STUCK_AFTER_S` in the clause neither reader can get a
+# ceiling for: no session in flight, or one whose `SESSION START` declared
+# none. Delete this fallback on either side and that reader stops grading
+# un-upgraded boxes the way the other still does — a drift no end-to-end
+# fixture on either side would name, because every fixture it moves is one
+# nobody writes for an engine two releases old.
 if grep -q 'lock\["bound"\] = STUCK_AFTER_S' <<<"$FLOOR_CODE"; then r1=shared; else r1=DRIFTED; fi
 t stuck-rule-floor-fallback-bound shared "$r1"
+# shellcheck disable=SC2016  # matching crew's literal fallback assignment
+if grep -q '^    lock_bound="\$STUCK_AFTER_S"$' "$CREW_CLI"; then r1=shared; else r1=DRIFTED; fi
+t stuck-rule-cli-fallback-bound shared "$r1"
+# The other clause, and the number that makes it: a declared ceiling plus the
+# engine's kill grace. Spelled in both readers because they are Python and
+# shell and share no file either can source — `operating-limits.sh`'s own
+# header says nothing sources it directly — so the established mechanism is
+# the cross-reader pin, exactly as `session-active-cli-matches-floor` holds
+# the six-hour bound. EXTRACTED rather than grepped for, so moving the number
+# in one reader fails HERE rather than silently (#624 D4).
+FL_KILL_GRACE="$(sed -n 's/^SESSION_KILL_GRACE_S = \([0-9]*\).*/\1/p' <<<"$FLOOR_CODE" | head -1)"
+CL_KILL_GRACE="$(sed -n 's/^SESSION_KILL_GRACE_S=\([0-9]*\).*/\1/p' "$CREW_CLI" | head -1)"
+t kill-grace-floor-boundary 60 "$FL_KILL_GRACE"
+t kill-grace-cli-matches-floor "$FL_KILL_GRACE" "$CL_KILL_GRACE"
+# ...and it must be the number each reader actually ADDS, not one parked in a
+# constant beside a hard-coded 60. Both sites are pinned because a stale
+# constant is precisely what an extraction pin cannot see.
+if grep -q 'lock\["bound"\] = ceiling + SESSION_KILL_GRACE_S' <<<"$FLOOR_CODE"; then
+  r1=consumed
+else
+  r1=DRIFTED
+fi
+t kill-grace-floor-consumed consumed "$r1"
+# shellcheck disable=SC2016  # matching crew's literal arithmetic expansion
+if grep -q 'lock_bound=\$(( lock_ceiling + SESSION_KILL_GRACE_S ))' "$CREW_CLI"; then
+  r1=consumed
+else
+  r1=DRIFTED
+fi
+t kill-grace-cli-consumed consumed "$r1"
+# ...and the ceiling it is added to comes off the WIRE (#624 D1). This one has
+# to be pinned at the source rather than left to a fixture, and the reason is
+# worth stating because it is counter-intuitive: NO end-to-end case can catch a
+# host-side conf read. `crew status` already has `$ROLES_DIR` open, every lane
+# fixture in this tree declares the very number that lane's conf gives it —
+# `TIMEOUT_BUILD=3600` and `timeout=3600s` are the same 3600 on purpose, so the
+# fixture looks like a real box — and a CLI reading the table instead of the
+# record therefore agrees with every one of them. It would ship green and drift
+# on the first role edit, which is exactly what D1 refuses and what #610's own
+# test plan carries as a must-fail. So: the clause assigns from the field
+# auth_from_flow carried out, and the whole region names no conf at all.
+#
+# The subject is the WHOLE of `cmd_status` with its comments stripped, not the
+# clause alone, and driving the mutation is what proved it has to be. A conf
+# read placed INSIDE the clause reds a clause-scoped grep — but the likelier
+# patch is the well-meaning one that fills the gap a line ABOVE it, leaving the
+# clause verbatim and assigning `session_ceiling` itself from the host's table,
+# and that shipped GREEN against the clause-scoped grep. The stripped view is
+# for the two prose mentions of `conf/roles` in this function, which are
+# comments about the box loading its OWN conf inside the exec `cmd_status`
+# already makes — a different thing from the host reading its copy, and the
+# distinction this pin exists to keep.
+cli_status_code="$(sed -n '/^cmd_status()/,/^}$/p' "$CREW_CLI" | grep -v '^[[:space:]]*#')"
+stuck_clause="$(sed -n '/^    lock_ceiling=-1$/,/^    fi$/p' "$CREW_CLI")"
+# shellcheck disable=SC2016  # matching crew's literal assignment
+if grep -q 'lock_ceiling=\$(( 10#\$session_ceiling ))' <<<"$stuck_clause" \
+   && ! grep -qE 'ROLES_DIR|conf/roles' <<<"$stuck_clause" \
+   && ! grep -qE 'ROLES_DIR|conf/roles' <<<"$cli_status_code"; then
+  r1=wire
+else
+  r1=DRIFTED
+fi
+t stuck-ceiling-cli-off-the-wire wire "$r1"
+# ...and the same claim from the side no pattern list can be out-spelled on:
+# the ceiling is not RE-DERIVED anywhere in this function. `session_ceiling`
+# reaches `cmd_status` through the `read` and is assigned exactly once after
+# it — the `:--1` default that makes an un-upgraded box's row bit-identical to
+# today's. Any second assignment is a host-side source of truth whatever file
+# it came out of, including ones spelled without `ROLES_DIR` at all.
+#
+# OCCURRENCES, not lines, and the distinction is not academic here: `grep -c`
+# counts matching LINES, and the very assignment this counts shares its line
+# with another — `session_kind="${session_kind:--}"; session_ceiling=…`. So a
+# second assignment appended to an existing line would have walked straight
+# past a line count, in a file that demonstrably writes that shape (round 1,
+# claude-bot).
+t stuck-ceiling-cli-not-rederived 1 \
+  "$(grep -o 'session_ceiling=' <<<"$cli_status_code" | wc -l | tr -d ' ')"
+# ...and the digits it carries become a NUMBER in the reader, not in the log.
+# Both readers canonicalise to base 10 at the point they grade — `10#` here,
+# `int()` there — and neither rewrites the box's record, which is D1 again:
+# `timeout=0900s` is what a role conf saying `TIMEOUT_BUILD=0900` puts on the
+# wire, nothing between the two canonicalises, and GNU `timeout 0900` runs it.
+# Python reads those digits as 900. Bash reads a leading zero as OCTAL, so
+# without `10#` the CLI's `$(( ))` takes an invalid octal literal and dies —
+# fatally, under this file's own `set -euo pipefail`, out of the middle of the
+# roster loop. Pinned in the source as well as in the behaviour cases because
+# it is one token, and a token is what gets tidied away.
+# shellcheck disable=SC2016  # matching crew's literal arithmetic expansion
+if grep -q 'lock_ceiling=\$(( 10#\$session_ceiling ))' "$CREW_CLI"; then
+  r1=base10
+else
+  r1=DRIFTED
+fi
+t stuck-ceiling-cli-canonical base10 "$r1"
+if grep -q '"timeout": int(m.group(' <<<"$FLOOR_CODE"; then r1=base10; else r1=DRIFTED; fi
+t stuck-ceiling-floor-canonical base10 "$r1"
+# ...and the canonicalisation must survive a record BASH CANNOT HOLD, which is
+# the one place the two readers are not symmetrical and therefore the one that
+# needs pinning rather than mirroring. Python's int is unbounded; bash's is a
+# fixed-width signed 64, and BOTH of bash's ways of touching a wider value are
+# wrong — `test` exits 2 with `integer expression expected` on the operator's
+# stderr, and `$(( ))` wraps silently. The wire can carry it: a role conf is
+# operator-editable, nothing between it and `timeout=${tmo}s` range-checks, and
+# GNU `timeout 999999999999999999999999 true` exits 0. With a `test` in front
+# of the arithmetic the clause was SKIPPED on such a box and a 700s lock read
+# STUCK against STUCK_AFTER_S while the floor read it healthy — #624's own
+# defect inside #624's own fix (round 2, codex-bot).
+#
+# So: the clause validates with a REGEX, which has no width, and puts
+# `session_ceiling` through no `test` at all. The negative half is the pin that
+# matters — `[ "$session_ceiling" -gt 0 ]` is the exact expression that stood
+# here, it looks harmless, and it is the one thing that must never come back.
+# shellcheck disable=SC2016  # matching crew's literal regex and comparisons
+if grep -q '=~ \^0\*(\[1-9\]\[0-9\]\*)\$' <<<"$stuck_clause" \
+   && ! grep -qE '\$session_ceiling"? +-(gt|ge|lt|le|eq|ne)' <<<"$stuck_clause"; then
+  r1=unbounded
+else
+  r1=DRIFTED
+fi
+t stuck-ceiling-cli-range-safe unbounded "$r1"
+# ...and past the width it can hold, the CLI SATURATES rather than computing.
+# Wrapping would fabricate a ceiling that is nobody's record — the second
+# source of truth D1 refuses, arrived at by arithmetic instead of by a conf
+# read. Saturating grades identically to the floor's unbounded `int()` for
+# every lock age that can exist, because 10^18 seconds is 31.7 billion years.
+# The gate is taken on the capture's LENGTH against the CONSTANT'S OWN length,
+# so a raised constant cannot leave a stale `18` behind it.
+# shellcheck disable=SC2016  # matching crew's literal length comparison
+if grep -q '\[ "${#BASH_REMATCH\[1\]}" -gt "${#SESSION_CEILING_MAX_S}" \]' <<<"$stuck_clause" \
+   && grep -q 'lock_ceiling=\$SESSION_CEILING_MAX_S' <<<"$stuck_clause"; then
+  r1=saturated
+else
+  r1=DRIFTED
+fi
+t stuck-ceiling-cli-saturates saturated "$r1"
+# ...and the saturation must not itself be the thing that wraps. COMPUTED, not
+# grepped: the bound the clause reaches for a saturated ceiling is that
+# constant plus the kill grace, and if a later edit raises the constant past
+# what bash can add 60 to, this reds here rather than in a fixture nobody
+# writes at 10^19.
+CL_CEILING_MAX="$(sed -n 's/^SESSION_CEILING_MAX_S=\([0-9]*\).*/\1/p' "$CREW_CLI" | head -1)"
+if [ -n "$CL_CEILING_MAX" ] \
+   && [ "$(( CL_CEILING_MAX + CL_KILL_GRACE ))" -gt "$CL_CEILING_MAX" ]; then
+  r1=positive
+else
+  r1=WRAPPED
+fi
+t stuck-ceiling-cli-bound-in-range positive "$r1"
+# D1's other half, and it is invisible to every fixture here for the same
+# reason: the stub answers a second round trip as readily as the first. The
+# datum comes out of the tail auth_from_flow already takes, so its body stays
+# the ONE `bxn` its own comment claims — no `box exec` was added beside it, and
+# none inside it.
+cli_flow_source="$(sed -n '/^auth_from_flow()/,/^}/p' "$CREW_CLI")"
+t stuck-ceiling-cli-one-exec 1 \
+  "$(grep -cE '^ *(bxn|box exec) ' <<<"$cli_flow_source")"
 
 # Session activity is derived from the same bounded evidence and crash rule.
 # The floor receives probe.sh's 600-line tail; auth_from_flow must not scan a
