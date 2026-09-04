@@ -224,6 +224,22 @@ rm -f "$OOM_SOURCE_ROOT/cgroup/unit/memory.events"
 t oom-source-falls-back-to-vmstat "$OOM_SOURCE_ROOT/proc/vmstat" \
   "$(SESSION_PROC_ROOT="$OOM_SOURCE_ROOT/proc" _SESSION_CGROUP_ROOT="$OOM_SOURCE_ROOT/cgroup" \
     _session_oom_source)"
+oom_unreadable_run() (
+  local odir="$TMP/oom-unreadable"
+  mkdir -p "$odir/logs" "$odir/work" "$odir/proc/self" "$odir/cgroup"
+  printf '0::/missing\n' >"$odir/proc/self/cgroup"
+  DUTY_DIR="$odir"; LOG_DIR="$odir/logs"; DUTY_TICK_ID=tick_oom_unreadable
+  SESSION_PROC_ROOT="$odir/proc"; _SESSION_CGROUP_ROOT="$odir/cgroup"
+  BOT_CLI_CMD=(bash -c 'printf "ordinary failure\n"; exit 3')
+  # shellcheck disable=SC2317  # invoked indirectly by session_acted
+  bot_session_acted() { return 0; }
+  _session_peak_rss_start() { :; }
+  _session_peak_rss_stop() { :; }
+  run_session build fixture/unreadable "$odir/work" 5 prompt
+)
+t oom-unreadable-counter-is-numeric-unknown '3|FAILED|-' \
+  "$(sed -n 's/.*SESSION END .* rc=\([^ ]*\).* outcome=\([^ ]*\).* oom=\([^ ]*\).*/\1|\2|\3/p' \
+    <<<"$(oom_unreadable_run 2>&1)")"
 oom_run_source="$(awk '/^run_session\(\) \{/{on=1} on{print} on && /^}/{exit}' \
   "$SHARED/lib/common/session.sh")"
 # shellcheck disable=SC2016  # grep matches the subject's literal variable
@@ -263,6 +279,12 @@ case "${SID_SHAPE:-reply}" in
       >"$SID_OOM_EVENTS"
     exit 124
     ;;
+  oom-terminal)
+    printf "%s\n" "You've hit your weekly limit · resets 9am (UTC)"
+    printf 'oom_kill %s\n' "$(( $(awk '$1 == "oom_kill" { print $2 }' "$SID_OOM_EVENTS") + 1 ))" \
+      >"$SID_OOM_EVENTS"
+    exit 137
+    ;;
   mute-hang) exec sleep 30 ;;
   talk-hang) printf 'partial work\n'; exec sleep 30 ;;
   escape-hang)
@@ -296,6 +318,7 @@ sid_commit() {
 # profile hooks D2 lets a CLI carry independently.
 #
 #   both      a profile that can pin and resume — `claude`'s shape
+#   claude    the shipped claude profile, including both classifiers
 #   pin-only  a CLI that can pin an id and cannot continue one (D6.6)
 #   none      a profile with neither hook — the pre-#538 lane, unchanged
 #   refusing  hooks that are defined and render nothing, the contract
@@ -308,6 +331,11 @@ sid_run() (
   local box="$1" key="$2" tmo="$3" shape="$4" hooks="${5:-both}" work="${6:-}"
   local sdir; sdir="$(sid_box "$box")"
   DUTY_DIR="$sdir"; LOG_DIR="$sdir/logs"; DUTY_TICK_ID="tick-sid"
+  unset -f bot_session_acted bot_session_terminal
+  if [ "$hooks" = claude ]; then
+    # shellcheck disable=SC1091  # production profile under test
+    source "$SHARED/conf/agents/claude.conf"
+  fi
   BOT_CLI_CMD=(bash "$SID_CLI" -p)
   export SID_ARGV="$sdir/argv" SID_SHAPE="$shape" SID_ESCAPEE="$sdir/escapee"
   [ -e "$sdir/memory.events" ] || printf 'oom_kill 0\n' >"$sdir/memory.events"
@@ -316,7 +344,11 @@ sid_run() (
   # shellcheck disable=SC1090  # test-selected mutated copy of the subject
   [ -z "${SID_SESSION_MUTANT:-}" ] || source "$SID_SESSION_MUTANT"
   alert() { :; }
-  bot_session_terminal() { grep -qx 'Execution error' "$1"; }
+  if [ "$hooks" != claude ]; then
+    # shellcheck disable=SC2317  # invoked indirectly by session_acted
+    bot_session_acted() { grep -qx 'partial work' "$1"; }
+    bot_session_terminal() { grep -qx 'Execution error' "$1"; }
+  fi
   case "$hooks" in
     both)
       bot_cli_session_id_args() { BOT_CLI_SESSION_ID_ARGS=(--session-id "$1"); }
@@ -326,7 +358,7 @@ sid_run() (
     refusing)
       bot_cli_session_id_args() { BOT_CLI_SESSION_ID_ARGS=(); return 1; }
       bot_cli_resume_args() { BOT_CLI_RESUME_ARGS=(); return 1; } ;;
-    none) : ;;
+    claude | none) : ;;
   esac
   rm -f "$sdir/argv"
   # `log` writes to stdout, so the box's own record file is where the two lines
@@ -562,18 +594,29 @@ t sid-refuses-when-the-head-is-unknown ordinary \
 
 # 3 — the killed session's log must classify as productive. The real incident
 # body is 15 bytes and non-empty, so the old byte-floor resumed it; the shipped
-# profile classifier names it as error output and refuses it on that fact.
-sid_run errorlog fixture/errorlog 5 oom-error both >/dev/null
+# profile action classifier names it as unknown and refuses it on that fact.
+sid_run errorlog fixture/errorlog 5 oom-error claude >/dev/null
 sid_error_killed="$(sid_of errorlog START)"
 t sid-error-output-stub-records-the-classifier no \
   "$(sid_stub_field "$(sid_stub errorlog fixture_errorlog)" productive)"
 t sid-error-output-fixture-is-the-real-15-byte-body 15 \
   "$(sid_stub_field "$(sid_stub errorlog fixture_errorlog)" log)"
-t sid-memory-kill-feeds-no-vendor-breaker 0 \
-  "$(find "$TMP/sid-errorlog" -maxdepth 1 -name '.session-terminal.*' | wc -l)"
 t sid-refuses-the-real-execution-error-body ordinary \
-  "$(sid_refusal "$(sid_run errorlog fixture/errorlog 5 reply both)" \
+  "$(sid_refusal "$(sid_run errorlog fixture/errorlog 5 reply claude)" \
     errorlog "$sid_error_killed")"
+
+# A dirty non-124 kill carrying a vendor-terminal tail would feed the breaker
+# if kernel OOM promotion did not outrank terminal classification.
+sid_run membreaker fixture/membreaker 5 oom-terminal claude >/dev/null
+t sid-memory-kill-feeds-no-vendor-breaker 0 \
+  "$(find "$TMP/sid-membreaker" -maxdepth 1 -name '.session-terminal.*' | wc -l)"
+# shellcheck disable=SC2016  # sed matches the subject's literal variables
+sid_mutant no-oom-promotion \
+  '/^  elif \[ "$oom_hit" = yes \] \&\& \[ "$verdict" != ok \]; then$/,+1d'
+SID_SESSION_MUTANT="$TMP/session-sid-mutant-no-oom-promotion.sh" \
+  sid_run membreaker-mut fixture/membreaker-mut 5 oom-terminal claude >/dev/null
+t sid-mutation-dropping-oom-promotion-feeds-the-breaker 1 \
+  "$(find "$TMP/sid-membreaker-mut" -maxdepth 1 -name '.session-terminal.*' | wc -l)"
 
 # 4 — something of that session is still alive. THE LOAD-BEARING ONE: resuming
 # a lane while a process of the previous session still runs puts two live
@@ -717,7 +760,7 @@ sid_record_says() ( # sid_record_says RC VERDICT [STALE] — WROTE | deleted
   slog="$TMP/sid-record.log"
   printf 'partial work\n' >"$slog"
   bot_session_terminal() { return 1; }
-  _session_resume_record build fixture/rec "$TMP" "$1" 5 100 0 "$2" "$slog"
+  _session_resume_record build fixture/rec "$TMP" "$1" 5 100 0 "$2" yes "$slog"
   [ -s "$state" ] && printf WROTE || printf deleted
   return 0
 )

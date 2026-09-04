@@ -579,8 +579,8 @@ _session_resume_admitted() { # _session_resume_admitted RC VERDICT
   esac
 }
 
-# _session_resume_record KIND KEY DIR RC WALL LOG_BYTES LEFT VERDICT LOG — the
-# stub, D5.
+# _session_resume_record KIND KEY DIR RC WALL LOG_BYTES LEFT VERDICT ACTED LOG
+# — the stub, D5.
 #
 # Written on a TIMEOUT or MEMORY end and on nothing else; ANY other end deletes
 # it, which keeps a stub from outliving the episode that produced it. It
@@ -604,9 +604,10 @@ _session_resume_admitted() { # _session_resume_admitted RC VERDICT
 # key carrying a newline would write a stub its own reader then refuses, which
 # is the same failure direction; no key this engine dispatches has one (`$R`,
 # `$R#$N`, `fleet`). `log` preserves the old byte evidence while `productive`
-# replaces it as the gate; that value comes from the shipped terminal
-# classifier while the killed log still exists. `outcome` supplies the informed
-# prompt, and `left` is the survivor count only the ending dispatch can see.
+# replaces it as the gate; that value comes from the shipped action classifier,
+# with the terminal classifier as an additional refusal, while the killed log
+# still exists. `outcome` supplies the informed prompt, and `left` is the
+# survivor count only the ending dispatch can see.
 #
 # The write is not atomic, deliberately. A box that dies mid-write leaves a
 # stub missing fields, and `_session_resume_read` requires all ten — so the
@@ -614,7 +615,7 @@ _session_resume_admitted() { # _session_resume_admitted RC VERDICT
 # dance would buy the same outcome through a second mechanism.
 _session_resume_record() {
   local kind="$1" key="$2" dir="$3" rc="$4" wall="$5" logb="$6" survivor_count="$7"
-  local verdict="$8" slog="$9" productive=yes state
+  local verdict="$8" acted="$9" slog="${10}" productive=no state
   state="$(_session_resume_state "$kind" "$key")"
   # TIMEOUT keeps its 124 invariant. MEMORY instead requires only a dirty end:
   # its raw status varies with which kernel/timeout signal reached reap first.
@@ -626,7 +627,14 @@ _session_resume_record() {
   # could never satisfy D6 anyway. Refuse to write one rather than leave a file
   # whose only possible future is being discarded.
   [ "$_SESSION_SID" != unknown ] || { rm -f "$state" 2>/dev/null || true; return 0; }
-  session_terminal "$slog" && productive=no
+  # `acted` is resolved through the active shipped profile before this call.
+  # Only a positive classification earns a resume: `no` did no durable work,
+  # and `unknown` includes the incident's real 15-byte `Execution error` body.
+  # Keep terminal as a second refusal so vendor endings never become resumable
+  # if a profile's action vocabulary later recognizes text around the banner.
+  if [ "$acted" = yes ] && ! session_terminal "$slog"; then
+    productive=yes
+  fi
   case "$wall" in '' | *[!0-9]*) wall=0 ;; esac
   printf 'kind=%s\nkey=%s\nsid=%s\nhead=%s\nwall=%s\ntry=%s\nlog=%s\noutcome=%s\nproductive=%s\nleft=%s\n' \
     "$kind" "$key" "$_SESSION_SID" "$(_session_head "$dir")" "$wall" \
@@ -653,8 +661,7 @@ _session_oom_source() {
       break
     fi
   done <"$proc_root/self/cgroup" 2>/dev/null
-  [ -r "${_SESSION_OOM_VMSTAT_FILE:-$proc_root/vmstat}" ] \
-    && printf '%s' "${_SESSION_OOM_VMSTAT_FILE:-$proc_root/vmstat}"
+  [ -r "$proc_root/vmstat" ] && printf '%s' "$proc_root/vmstat"
   return 0
 }
 
@@ -683,7 +690,7 @@ _session_resume_preamble() {
 run_session() {
   local kind="$1" key="$2" dir="$3" tmo="$4" prompt="$5"
   local slog session_stamp cli_log structured_log="" cli_stderr_fd=1 rc=0 start terminal=no
-  local oom_source="" oom_before="" oom_after="" oom_delta=0 resume_preamble=""
+  local oom_source="" oom_before="" oom_after="" oom_delta=- oom_hit=no resume_preamble=""
   # Budget BEFORE the terminal gate, and the order is load-bearing (#464): the
   # terminal gate's recovery path makes a live vendor probe, and a lane that
   # has spent its window must not be able to buy one.
@@ -796,8 +803,13 @@ $prompt"
   wait "$_SESSION_DISPATCH_PID" || rc=$?
   [ -z "$oom_source" ] || oom_after="$(_session_oom_count "$oom_source")"
   case "$oom_before:$oom_after" in
-    *[!0-9:]* | :* | *:) oom_delta=0 ;;
-    *) [ "$oom_after" -ge "$oom_before" ] && oom_delta=$((oom_after - oom_before)) ;;
+    *[!0-9:]* | :* | *:) ;;
+    *)
+      if [ "$oom_after" -ge "$oom_before" ]; then
+        oom_delta=$((oom_after - oom_before))
+        [ "$oom_delta" -gt 0 ] && oom_hit=yes
+      fi
+      ;;
   esac
   local survivor_count
   printf -v survivor_count '%s' "$(_session_left "$session_stamp")"
@@ -824,7 +836,7 @@ $prompt"
   # vendor had nothing to do with.
   if [ -n "$mem_hit" ]; then
     verdict="$SESSION_MEM_OUTCOME"
-  elif [ "$oom_delta" -gt 0 ] && [ "$verdict" != ok ]; then
+  elif [ "$oom_hit" = yes ] && [ "$verdict" != ok ]; then
     verdict="$SESSION_MEM_OUTCOME"
   elif [ "$verdict" = FAILED ] && session_terminal "$slog"; then
     verdict=TERMINAL
@@ -878,9 +890,9 @@ $prompt"
   # convention that file states for a numeric it cannot recover — #553's
   # parity guard is what makes that a rule rather than a habit.
   #
-  # oom= follows peak_rss= and is always numeric: zero is the measured or
-  # safely unavailable baseline, while a positive delta records kernel kills
-  # during this dispatch. sid= remains LAST, past oom, usage and pool suffixes.
+  # oom= follows peak_rss=. Zero is a measured zero delta, a positive number
+  # records kernel kills during this dispatch, and `-` says neither kernel
+  # counter was readable. sid= remains LAST, past oom, usage and pool suffixes.
   # The id on this line and the id on the SESSION START above are the same by
   # construction — `_session_identity` resolved it once, before the dispatch —
   # so the two records of one session point at one transcript (#538 D3).
@@ -896,7 +908,7 @@ $prompt"
   # that bill it, reading the two figures that line just published: this stub
   # and that record can never disagree about what the session left behind.
   _session_resume_record "$kind" "$key" "$dir" "$rc" "$tmo" \
-    "$log_bytes" "$survivor_count" "$verdict" "$slog"
+    "$log_bytes" "$survivor_count" "$verdict" "$acted" "$slog"
   _session_terminal_record "$kind" "$terminal" "$acted" "$slog"
   # The rolling counter is written alongside the line that carries the same
   # duration, so the budget and the log can never disagree about what a
