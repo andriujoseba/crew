@@ -423,7 +423,7 @@ unset LIFE_DOWN_FAIL
 HOST_CRONTAB="$ROOT/shared/host-crontab.example"
 host_cron_lines="$(grep -vE '^[[:space:]]*(#|$)' "$HOST_CRONTAB" || true)"
 t hostcron-example-exists yes "$([ -f "$HOST_CRONTAB" ] && echo yes || echo no)"
-t hostcron-has-exactly-two-job-lines 2 \
+t hostcron-schedules-the-daily-restart-alone 1 \
   "$(printf '%s\n' "$host_cron_lines" | grep -c '[^[:space:]]' || true)"
 t hostcron-no-flock-in-any-line 0 \
   "$(printf '%s\n' "$host_cron_lines" | grep -c 'flock' || true)"
@@ -431,12 +431,40 @@ t hostcron-no-redirect-in-any-line 0 \
   "$(printf '%s\n' "$host_cron_lines" | grep -c '[>|]' || true)"
 t hostcron-daily-line-is-restart-all 1 \
   "$(printf '%s\n' "$host_cron_lines" | grep -cE '^[0-9]+ [0-9]+ \* \* \* .*crew restart --all$' || true)"
-t hostcron-weekly-line-is-reset-all 1 \
-  "$(printf '%s\n' "$host_cron_lines" | grep -cE '^[0-9]+ [0-9]+ \* \* [0-6] .*crew reset --all$' || true)"
-# The weekly line inherits #589's refusal and must never be handed a way past
-# it: --force on the scheduled reset is the silent fleet-wide downgrade D4
-# exists to prevent, and it would arrive here as a one-word edit.
-t hostcron-weekly-line-carries-no-force 0 \
+# #678 — THE WEEKLY RESET IS DEFERRED TO 0.1.4, AND THE ABSENCE IS THE
+# ASSERTION. `crew reset --all` restores each box to its `armed` checkpoint,
+# and that restore has no carve-out for $DUTY_DIR: it takes duty.log, and it
+# clears the resume breaker with no push, against #314's invariant that only a
+# push clears it. The count above cannot carry this on its own — a file that
+# lost the DAILY line instead would also hold one job line — so the shape is
+# asserted from both ends, the right line present and the wrong one absent.
+t hostcron-schedules-no-reset-job-line 0 \
+  "$(printf '%s\n' "$host_cron_lines" | grep -cE '^[0-9]+ [0-9]+ .*crew reset' || true)"
+# AND IT MUST NOT BE REINSTATABLE BY UNCOMMENTING. This is the one assertion
+# here that reads the whole file rather than the job lines, because a
+# commented-out job line is invisible to every assertion above it and a
+# crontab is the one file nobody diffs. It reads the SHAPE and not the verb:
+# comments that NAME `crew reset` are wanted — the deferral is argued in them,
+# and the verb is still available on demand — so what is banned is a comment
+# whose text is a cron ENTRY, five schedule fields and the reset behind them.
+t hostcron-has-no-commented-out-reset-job-line 0 \
+  "$(sed -E 's/^[[:space:]]*#+[[:space:]]*//' "$HOST_CRONTAB" \
+     | grep -cE '^[0-9*][0-9,*/-]* +[0-9*][0-9,*/-]* +[0-9*][0-9,*/-]* +[0-9*][0-9,*/-]* +[0-9*][0-9,*/-]* +.*crew reset' || true)"
+# The deferral is only reversible on purpose if the file says where the
+# argument lives. D2 requires the comment block to name this issue and the
+# collector that returns the line.
+# Presence, not a count: the prose is entitled to cite either number more than
+# once, and pinning a tally would make a second mention a red check.
+t hostcron-deferral-names-its-issue yes \
+  "$(grep -q '#678' "$HOST_CRONTAB" && echo yes || echo no)"
+t hostcron-deferral-names-what-returns-it yes \
+  "$(grep -q '#328' "$HOST_CRONTAB" && echo yes || echo no)"
+# #589's refusal must never be handed a way past it: --force on a scheduled
+# reset is the silent fleet-wide downgrade the interlock exists to prevent,
+# and it would arrive as a one-word edit. The guard outlives the line it was
+# written for — a reinstated reset carrying --force is exactly the edit it has
+# to catch — so it is renamed to the job lines it actually reads.
+t hostcron-no-job-line-carries-force 0 \
   "$(printf '%s\n' "$host_cron_lines" | grep -c -- '--force' || true)"
 
 capture help
