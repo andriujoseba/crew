@@ -507,6 +507,17 @@ t sid-mutation-dropping-preamble-hides-the-cause 0 \
   "$(grep -c 'previous attempt was terminated because this box ran out of memory' \
     <<<"$sid_prompt_mut" || true)"
 
+# The landed #538 guard admitted only rc=124 + TIMEOUT. Restoring it must drop
+# the memory stub even though the kernel evidence resolved the outcome.
+# shellcheck disable=SC2016  # sed matches the subject's literal variables
+sid_mutant timeout-only \
+  's/^  if ! _session_resume_admitted "$rc" "$verdict"; then$/  if [ "$rc" -ne 124 ] || [ "$verdict" != TIMEOUT ]; then/'
+SID_SESSION_MUTANT="$TMP/session-sid-mutant-timeout-only.sh" \
+  sid_run memguard-mut fixture/memguard-mut 5 oom-progress both >/dev/null
+t sid-mutation-timeout-only-drops-the-memory-stub MISSING \
+  "$([ -s "$(sid_stub memguard-mut fixture_memguard-mut)" ] \
+    && printf present || printf MISSING)"
+
 # --- the six refusals, one case each (D6) --------------------------------
 #
 # Each drives a real timeout, changes exactly one of the six facts, and then
@@ -644,7 +655,7 @@ sid_forge_shifted_dash() {
   sed -i 's/^sid=.*/sid=-d7d876b-ae67-47d5-ba46-ce4a32081d20/' "$1"
 }
 sid_remove() { rm -f "$1"; }
-# A stub whose six fields are all present and all valid, carrying one field
+# A stub whose required fields are all present and valid, carrying one field
 # this reader does not know. It is the only corrupt shape here that reaches the
 # END of the parse with everything D6 asks for in hand, so it is the only one
 # the unknown-field arm alone decides: with that arm removed the stub parses

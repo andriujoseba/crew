@@ -571,6 +571,14 @@ _session_identity() {
   return 0
 }
 
+_session_resume_admitted() { # _session_resume_admitted RC VERDICT
+  case "$2" in
+    TIMEOUT) [ "$1" -eq 124 ] ;;
+    MEMORY) [ "$1" -ne 0 ] ;;
+    *) return 1 ;;
+  esac
+}
+
 # _session_resume_record KIND KEY DIR RC WALL LOG_BYTES LEFT VERDICT LOG — the
 # stub, D5.
 #
@@ -610,8 +618,7 @@ _session_resume_record() {
   state="$(_session_resume_state "$kind" "$key")"
   # TIMEOUT keeps its 124 invariant. MEMORY instead requires only a dirty end:
   # its raw status varies with which kernel/timeout signal reached reap first.
-  if { [ "$verdict" != TIMEOUT ] || [ "$rc" -ne 124 ]; } \
-      && { [ "$verdict" != MEMORY ] || [ "$rc" -eq 0 ]; }; then
+  if ! _session_resume_admitted "$rc" "$verdict"; then
     rm -f "$state" 2>/dev/null || true
     return 0
   fi
