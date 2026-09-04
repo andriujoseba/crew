@@ -466,7 +466,7 @@ t orphan-breaker-trip-is-marked-non-vendor yes \
   "$(cut -f4 <"$ORPH5/.session-terminal.build" 2>/dev/null || echo NONE)"
 orph5_probe_holds="$(
   (
-    DUTY_DIR="$ORPH5"; DUTY_TICK_ID=orphan-probe-tick
+    DUTY_DIR="$ORPH5"; DUTY_TICK_ID="orphan-probe-tick"
     bot_cli_probe() { return 0; }
     if _session_terminal_gate build o/r#9 >/dev/null 2>&1; then
       printf CLEARED

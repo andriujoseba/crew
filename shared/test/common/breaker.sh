@@ -256,7 +256,7 @@ nonvendor_hold_walk() (
   warn() { :; }
   alert() { printf '%s\n' "$*" >>"$bdir/alerts"; }
   {
-    DUTY_TICK_ID=tick-1
+    DUTY_TICK_ID="tick-1"
     for i in 1 2 3; do
       _session_terminal_record review yes unknown "$bdir/logs/kill.log" non-vendor
     done
@@ -306,12 +306,12 @@ vendor_trip_still_recovers() (
   warn() { :; }
   alert() { printf '%s\n' "$*" >>"$bdir/alerts"; }
   {
-    DUTY_TICK_ID=tick-1
+    DUTY_TICK_ID="tick-1"
     for i in 1 2 3; do
       _session_terminal_record review yes unknown "$bdir/logs/vendor.log"
     done
-    DUTY_TICK_ID=tick-2
-    _session_terminal_gate review fixture/repo && released=tick-2
+    DUTY_TICK_ID="tick-2"
+    _session_terminal_gate review fixture/repo && released="tick-2"
   } >>"$bdir/output"
   printf '%s|%s|%s|%s' "$released" \
     "$([ -e "$bdir/probes" ] && wc -c <"$bdir/probes" || echo 0)" \
@@ -341,7 +341,7 @@ observed_end_clears_hold() (
   bot_cli_probe() { printf probe >>"$bdir/probes"; return 0; }
   warn() { :; }
   alert() { printf '%s\n' "$*" >>"$bdir/alerts"; }
-  DUTY_TICK_ID=tick-1
+  DUTY_TICK_ID="tick-1"
   for i in 1 2 3; do
     _session_terminal_record review yes unknown "$bdir/logs/kill.log" non-vendor
   done
@@ -375,11 +375,11 @@ nonvendor_hold_vocabulary() (
   warn() { :; }
   alert() { printf '%s\n' "$*" >>"$bdir/alerts"; }
   {
-    DUTY_TICK_ID=tick-1
+    DUTY_TICK_ID="tick-1"
     for i in 1 2 3; do
       _session_terminal_record review yes unknown "$bdir/logs/kill.log" non-vendor
     done
-    DUTY_TICK_ID=tick-2
+    DUTY_TICK_ID="tick-2"
     _session_terminal_gate review fixture/repo || true
   } >>"$bdir/output"
   # `log` stamps every line, so the assertion is on the line it wrote: strip
