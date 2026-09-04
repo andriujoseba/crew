@@ -258,9 +258,15 @@ DUTY_DIR="$D671_COUNT" _review_owed_clear fx/repo 7
 t review-owed-settle-clears-all-heads empty \
   "$([ ! -s "$D671_COUNT/.review-owed" ] && printf empty || printf PRESENT)"
 
-d671_drive() ( # root post-mode ticks [capture] [invalid] [multi] [mutation] [ready]
+printf 'fx/repo#7@%s 2\nfx/repo#8@%s 1\n' "$D671_HEAD_A" "$D671_HEAD_B" \
+  >"$D671_COUNT/.review-owed"
+DUTY_DIR="$D671_COUNT" _review_owed_prune_inactive 'fx/repo#8'
+t review-owed-complete-sweep-prunes-ended-request "fx/repo#8@$D671_HEAD_B 1" \
+  "$(cat "$D671_COUNT/.review-owed")"
+
+d671_drive() ( # root post-mode ticks [capture] [invalid] [multi] [mutation] [ready] [lifecycle]
   local root="$1" post_mode="$2" ticks="$3" capture="${4:-}" invalid="${5:-0}" multi="${6:-0}"
-  local mutation="${7:-none}" ready="${8:-0}"
+  local mutation="${7:-none}" ready="${8:-0}" lifecycle="${9:-0}"
   # shellcheck disable=SC2030  # fixture globals are intentionally isolated
   local DUTY_DIR="$root" WORK_DIR="$root/work" TREES_DIR="$root/trees"
   local LOG_DIR="$root/logs" CONF_DIR="$root/conf" PROMPTS_DIR="$SHARED/prompts"
@@ -272,10 +278,15 @@ d671_drive() ( # root post-mode ticks [capture] [invalid] [multi] [mutation] [re
   printf 'fx/repo\n' >"$REPOS_FILE"
   : >"$root/calls"; : >"$root/warn"; : >"$root/session-log"
   if [ "$ready" -eq 1 ]; then : >"$root/park-ready"; fi
+  if [ "$post_mode" = skip ]; then
+    printf 'fx/repo#7@%s 2\n' "$D671_HEAD_A" >"$root/.review-owed"
+  fi
   gh() {
     printf '%s\n' "$*" >>"$root/calls"
     if [ "$1" = api ] && [[ "$2" == repos/fx/repo/pulls\?* ]]; then
-      if [ "$multi" -eq 1 ]; then
+      if [ "$lifecycle" -eq 1 ] && [ "$tick" -eq 2 ]; then
+        printf '[]\n'
+      elif [ "$multi" -eq 1 ]; then
         jq -cn --arg me "$ME" '[7,8] | map({draft:false,requested_reviewers:[{login:$me}],
           created_at:"2026-09-04T10:00:00Z",updated_at:"2026-09-04T11:00:00Z",
           number:.,user:{login:"author"}})'
@@ -289,10 +300,21 @@ d671_drive() ( # root post-mode ticks [capture] [invalid] [multi] [mutation] [re
     if [ "$1" = search ]; then return 0; fi
     if [ "$1" = api ] && [ "$2" = graphql ]; then
       if [[ "$*" == *'timelineItems(itemTypes:'* ]]; then
-        printf '%s - - - 2026-09-04T10:30:00Z\n' "$D671_HEAD_A"
+        if [ "$post_mode" = skip ]; then
+          printf '%s %s 2026-09-04T10:31:00Z APPROVED 2026-09-04T10:30:00Z\n' \
+            "$D671_HEAD_A" "$D671_HEAD_A"
+        elif [ "$lifecycle" -eq 1 ] && [ "$tick" -ge 3 ]; then
+          printf '%s %s 2026-09-04T10:31:00Z DISMISSED 2026-09-04T10:32:00Z\n' \
+            "$D671_HEAD_A" "$D671_HEAD_A"
+        else
+          printf '%s - - - 2026-09-04T10:30:00Z\n' "$D671_HEAD_A"
+        fi
       elif [[ "$*" == *'reviews(author:'* ]]; then
         [[ "$*" == *'-f me=fixture-reviewer'* ]] && printf 'POST-SCOPED-TO-ME\n' >>"$root/calls"
         case "$post_mode" in
+          lifecycle)
+            if [ "$tick" -eq 1 ]; then return 1; else jq -cn '{data:{repository:{pullRequest:{reviews:{nodes:[]}}}}}'; fi
+            ;;
           verdict) jq -cn --arg h "$D671_HEAD_A" '{data:{repository:{pullRequest:{reviews:{nodes:[{commit:{oid:$h},state:"APPROVED"}]}}}}}' ;;
           mixed)
             if [[ "$*" == *'num=7'* ]]; then
@@ -347,8 +369,16 @@ d671_drive() ( # root post-mode ticks [capture] [invalid] [multi] [mutation] [re
   case "$mutation" in
     accept-nonverdict) _review_verdict_at_head() { REVIEW_VERDICT_POSTCONDITION=mutated; return 0; } ;;
     unbounded) _review_owed_exhausted() { return 1; } ;;
+    no-prune) _review_owed_prune_inactive() { :; } ;;
   esac
-  for ((tick=1; tick<=ticks; tick++)); do duty_review; done
+  for ((tick=1; tick<=ticks; tick++)); do
+    duty_review
+    if [ -s "$root/.review-owed" ]; then
+      cp "$root/.review-owed" "$root/owed-after-$tick"
+    else
+      : >"$root/owed-after-$tick"
+    fi
+  done
 )
 
 D671_NONE="$TMP/review-post-none"
@@ -373,6 +403,34 @@ t review-post-lookup-error-remains-owed "fx/repo#7@$D671_HEAD_A 1" \
   "$(cat "$D671_ERROR/.review-owed")"
 t review-post-lookup-error-warns 1 \
   "$(grep -c 'post-session verdict lookup failed; request remains owed' "$D671_ERROR/warn")"
+
+D671_SKIP="$TMP/review-covered-request-skip"
+d671_drive "$D671_SKIP" skip 1
+t review-pre-dispatch-covered-request-clears-spent-attempt empty \
+  "$([ ! -s "$D671_SKIP/owed-after-1" ] && printf empty || printf PRESENT)"
+t review-pre-dispatch-covered-request-dispatches-no-session 0 \
+  "$(grep -c '^SESSION ' "$D671_SKIP/session-log" || true)"
+
+# A verdict can really land while its post-session lookup fails. Once GitHub
+# self-clears that request, a complete sweep removes its spent attempt. A later
+# unchanged-head re-request over the now-dismissed verdict gets a fresh three.
+D671_LIFECYCLE="$TMP/review-settle-gap-rerequest"
+d671_drive "$D671_LIFECYCLE" lifecycle 6 '' 0 0 none 0 1
+t review-landed-verdict-lookup-failure-spends-first-request-attempt \
+  "fx/repo#7@$D671_HEAD_A 1" "$(cat "$D671_LIFECYCLE/owed-after-1")"
+t review-disappeared-request-clears-spent-attempt empty \
+  "$([ ! -s "$D671_LIFECYCLE/owed-after-2" ] && printf empty || printf PRESENT)"
+t review-unchanged-head-rerequest-starts-fresh-attempt-budget \
+  "fx/repo#7@$D671_HEAD_A 1" "$(cat "$D671_LIFECYCLE/owed-after-3")"
+t review-unchanged-head-rerequest-receives-three-attempts 4 \
+  "$(grep -c '^SESSION ' "$D671_LIFECYCLE/session-log")"
+t review-unchanged-head-rerequest-warns-on-its-third-attempt 1 \
+  "$(grep -c "fx/repo#7 at $D671_HEAD_A still has no exact-head verdict after 3 attempts" "$D671_LIFECYCLE/warn")"
+
+D671_LIFECYCLE_MUT="$TMP/review-settle-gap-rerequest-no-prune"
+d671_drive "$D671_LIFECYCLE_MUT" lifecycle 2 '' 0 0 no-prune 0 1
+t review-disappeared-request-prune-mutation-reds red \
+  "$([ -s "$D671_LIFECYCLE_MUT/owed-after-2" ] && printf red || printf FALSE-PASS)"
 
 D671_READY_ONCE="$TMP/review-post-ready-once"
 d671_drive "$D671_READY_ONCE" none 1 '' 0 0 none 1

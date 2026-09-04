@@ -385,6 +385,24 @@ _review_owed_clear() { # $1=repo $2=num
   mv -f "$tmp" "$ledger"
 }
 
+# A complete authoritative pulls sweep proves which review requests remain
+# live. Drop retry state for every request absent from that set; under a
+# partial sweep absence proves nothing, so the caller never invokes this.
+_review_owed_prune_inactive() { # $1="REPO#PR ..."
+  local active=" $1 " ledger="$DUTY_DIR/.review-owed" tmp input
+  [ -e "$ledger" ] || return 0
+  input="$ledger"
+  tmp="$(mktemp "${ledger}.XXXXXX")" || return 1
+  awk -v active="$active" '
+    NF >= 2 {
+      subject=$1
+      sub(/@[^@]*$/, "", subject)
+      if (index(active, " " subject " ")) print
+    }
+  ' "$input" >"$tmp"
+  mv -f "$tmp" "$ledger"
+}
+
 _review_owed_attempt() { # $1=repo $2=num $3=head; prints new attempt count
   local repo="$1" num="$2" head="$3" ledger="$DUTY_DIR/.review-owed" tmp prefix key input count
   prefix="$repo#$num@"; key="$prefix$head"
@@ -567,8 +585,12 @@ $(printf '%s' "$page" | jq -r --arg me "$ME" --arg sr "$SR" \
   # request disappeared. Under a partial sweep absence proves nothing, so the
   # process and record are preserved until a complete read can judge them.
   if [ "$sweep_complete" -eq 1 ]; then
-    review_park_prune_inactive "$(printf '%s\n' "$candidates" \
+    local active_requests
+    active_requests="$(printf '%s\n' "$candidates" \
       | awk 'NF == 4 && !seen[$3 "#" $4]++ { out=out (out ? " " : "") $3 "#" $4 } END { print out }')"
+    review_park_prune_inactive "$active_requests"
+    _review_owed_prune_inactive "$active_requests" \
+      || warn "review: could not prune missing-verdict attempts for ended requests"
   fi
 
   # One candidate per (repo, PR) — first mention wins (the authoritative
@@ -628,6 +650,8 @@ $(printf '%s' "$page" | jq -r --arg me "$ME" --arg sr "$SR" \
         # (ceremony#94). Head re-verified live immediately before submitting;
         # the submit goes through the one-shot gate like any verdict. This path
         # never enters the queue-side ledger.
+        _review_owed_clear "$SR" "$N" \
+          || warn "review: $SR#$N could not clear settled missing-verdict attempts"
         head_now="$(gh api "repos/$SR/pulls/$N" --jq .head.sha 2>/dev/null || echo err)"
         if [ "$head_now" = "$head" ]; then
           body="$(mktemp)"
@@ -659,14 +683,24 @@ $(printf '%s' "$page" | jq -r --arg me "$ME" --arg sr "$SR" \
         # The queued session's verdict is admitted at this same head by
         # submit-verdict.sh's (me, PR, head, round) coverage key.
         if [ "$mine_oid" = "$head" ]; then
+          case "$mine_state" in
+            APPROVED|CHANGES_REQUESTED)
+              _review_owed_clear "$SR" "$N" \
+                || warn "review: $SR#$N could not clear settled missing-verdict attempts"
+              ;;
+          esac
           log "review: $SR#$N re-requested at unchanged head ${head:0:12} over a standing ${mine_state} — queuing a real review, not auto-approving (#114)"
         fi
         queue=1
         ;;
       parked)
+        _review_owed_clear "$SR" "$N" \
+          || warn "review: $SR#$N could not clear parked missing-verdict attempts"
         log "review: $SR#$N parked at head ${head:0:12} (${REVIEW_PARK_REASON:-detached verification still running}) — dispatch suppressed"
         ;;
       skip)
+        _review_owed_clear "$SR" "$N" \
+          || warn "review: $SR#$N could not clear settled missing-verdict attempts"
         log "review: $SR#$N my latest review already covers head ${head:0:12}; skipping (request mid-clear or stale search)"
         ;;
     esac
