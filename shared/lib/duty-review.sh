@@ -27,9 +27,9 @@
 #  - ONE candidate set, merged and deduped by (repo, PR) BEFORE acting —
 #    sequential source passes double-announced on ceremony#32 (grok + kimi).
 #  - requested_reviewers self-clears on submit, but only when a verdict lands.
-#    A completed session may correctly decline or fail its one-shot submit, so
-#    unchanged requests also pass through a seen-ledger (#61). A changed PR
-#    advances updated_at and wakes again.
+#    A completed session is therefore settled only by its exact-head verdict
+#    or a recognized park. Missing verdicts retry three times before the local
+#    seen-ledger bounds spending; the live GitHub request remains untouched.
 #
 # shellcheck shell=bash
 # shellcheck disable=SC2016  # single-quoted GraphQL/jq programs with $vars are intended
@@ -333,6 +333,119 @@ rereq_decision() {
   fi
 }
 
+# _review_verdict_at_head REPO NUM HEAD — positive postcondition for a
+# completed review session. The captured candidate head is deliberate: a
+# verdict on a head that moved during the session belongs to the next round.
+# DISMISSED stays in the query so last:1 sees the latest opinionated review;
+# the positive state check below rejects it instead of exposing an older verdict.
+# REVIEW_VERDICT_POSTCONDITION distinguishes an ordinary miss from an
+# unreadable lookup without weakening either one into a verdict.
+_review_verdict_at_head() {
+  local repo="$1" num="$2" head="$3" owner name payload row oid state extra
+  owner="${repo%%/*}"; name="${repo##*/}"
+  REVIEW_VERDICT_POSTCONDITION=lookup-error
+  if ! payload="$(gh api graphql -f query='query($owner:String!,$name:String!,$num:Int!,$me:String!){
+    repository(owner:$owner,name:$name){ pullRequest(number:$num){
+      reviews(author:$me,last:1,states:[APPROVED,CHANGES_REQUESTED,DISMISSED]){nodes{commit{oid} submittedAt state}}
+    } } }' -f owner="$owner" -f name="$name" -F num="$num" -f me="$ME" 2>/dev/null)"; then
+    return 1
+  fi
+  if ! printf '%s' "$payload" | jq -e '
+      ((.errors // []) | length == 0) and
+      (.data.repository.pullRequest | type == "object") and
+      (.data.repository.pullRequest.reviews.nodes | type == "array")' >/dev/null 2>&1; then
+    return 1
+  fi
+  row="$(printf '%s' "$payload" | jq -r '
+    .data.repository.pullRequest.reviews.nodes[0] // {}
+    | "\(.commit.oid // "-") \(.state // "-")"' 2>/dev/null)" || return 1
+  read -r oid state extra <<<"$row"
+  if [ -n "${extra:-}" ] || [ -z "${oid:-}" ] || [ -z "${state:-}" ]; then
+    return 1
+  fi
+  REVIEW_VERDICT_POSTCONDITION=none
+  if [ "$oid" = "$head" ]; then
+    case "$state" in
+      APPROVED|CHANGES_REQUESTED)
+        REVIEW_VERDICT_POSTCONDITION="$state"
+        return 0
+        ;;
+    esac
+  fi
+  return 1
+}
+
+# The retry budget is local spending state, not GitHub state. One entry per
+# PR/head keeps a moved head fresh; clearing by PR removes every stale-head
+# remainder when a durable verdict or park settles the request.
+_review_owed_clear() { # $1=repo $2=num
+  local repo="$1" num="$2" ledger="$DUTY_DIR/.review-owed" tmp prefix
+  prefix="$repo#$num@"
+  [ -e "$ledger" ] || return 0
+  tmp="$(mktemp "${ledger}.XXXXXX")" || return 1
+  if ! awk -v p="$prefix" 'index($1,p) != 1 { print }' "$ledger" >"$tmp"; then
+    rm -f "$tmp"
+    return 1
+  fi
+  if ! mv -f "$tmp" "$ledger"; then
+    rm -f "$tmp"
+    return 1
+  fi
+}
+
+# A complete authoritative pulls sweep proves which review requests remain
+# live. Drop retry state for every request absent from that set; under a
+# partial sweep absence proves nothing, so the caller never invokes this.
+_review_owed_prune_inactive() { # $1="REPO#PR ..."
+  local active=" $1 " ledger="$DUTY_DIR/.review-owed" tmp input
+  [ -e "$ledger" ] || return 0
+  input="$ledger"
+  tmp="$(mktemp "${ledger}.XXXXXX")" || return 1
+  if ! awk -v active="$active" '
+    NF >= 2 {
+      subject=$1
+      sub(/@[^@]*$/, "", subject)
+      if (index(active, " " subject " ")) print
+    }
+  ' "$input" >"$tmp"; then
+    rm -f "$tmp"
+    return 1
+  fi
+  if ! mv -f "$tmp" "$ledger"; then
+    rm -f "$tmp"
+    return 1
+  fi
+}
+
+_review_owed_attempt() { # $1=repo $2=num $3=head; prints new attempt count
+  local repo="$1" num="$2" head="$3" ledger="$DUTY_DIR/.review-owed" tmp prefix key input count
+  prefix="$repo#$num@"; key="$prefix$head"
+  input="$ledger"; [ -e "$input" ] || input=/dev/null
+  if ! count="$(awk -v k="$key" '$1 == k { print $2+0; found=1; exit } END { if (!found) print 0 }' "$input")"; then
+    return 1
+  fi
+  count=$((count + 1))
+  tmp="$(mktemp "${ledger}.XXXXXX")" || return 1
+  if ! awk -v p="$prefix" '
+    index($1,p) == 1 { next }
+    NF >= 2 { print }
+  ' "$input" >"$tmp"; then
+    rm -f "$tmp"
+    return 1
+  fi
+  if ! printf '%s %s\n' "$key" "$count" >>"$tmp"; then
+    rm -f "$tmp"
+    return 1
+  fi
+  if ! mv -f "$tmp" "$ledger"; then
+    rm -f "$tmp"
+    return 1
+  fi
+  printf '%s\n' "$count"
+}
+
+_review_owed_exhausted() { [ "$1" -ge 3 ]; }
+
 # _review_check_evidence_from_payload REPO NUM SNAPSHOT CURRENT_HEAD — render
 # the check evidence handed to a reviewer. SNAPSHOT is one `gh pr view` object:
 # its headRefOid and statusCheckRollup are one atomic view, so every conclusion
@@ -497,8 +610,12 @@ $(printf '%s' "$page" | jq -r --arg me "$ME" --arg sr "$SR" \
   # request disappeared. Under a partial sweep absence proves nothing, so the
   # process and record are preserved until a complete read can judge them.
   if [ "$sweep_complete" -eq 1 ]; then
-    review_park_prune_inactive "$(printf '%s\n' "$candidates" \
+    local active_requests
+    active_requests="$(printf '%s\n' "$candidates" \
       | awk 'NF == 4 && !seen[$3 "#" $4]++ { out=out (out ? " " : "") $3 "#" $4 } END { print out }')"
+    review_park_prune_inactive "$active_requests"
+    _review_owed_prune_inactive "$active_requests" \
+      || warn "review: could not prune missing-verdict attempts for ended requests"
   fi
 
   # One candidate per (repo, PR) — first mention wins (the authoritative
@@ -558,6 +675,8 @@ $(printf '%s' "$page" | jq -r --arg me "$ME" --arg sr "$SR" \
         # (ceremony#94). Head re-verified live immediately before submitting;
         # the submit goes through the one-shot gate like any verdict. This path
         # never enters the queue-side ledger.
+        _review_owed_clear "$SR" "$N" \
+          || warn "review: $SR#$N could not clear settled missing-verdict attempts"
         head_now="$(gh api "repos/$SR/pulls/$N" --jq .head.sha 2>/dev/null || echo err)"
         if [ "$head_now" = "$head" ]; then
           body="$(mktemp)"
@@ -594,9 +713,13 @@ $(printf '%s' "$page" | jq -r --arg me "$ME" --arg sr "$SR" \
         queue=1
         ;;
       parked)
+        _review_owed_clear "$SR" "$N" \
+          || warn "review: $SR#$N could not clear parked missing-verdict attempts"
         log "review: $SR#$N parked at head ${head:0:12} (${REVIEW_PARK_REASON:-detached verification still running}) — dispatch suppressed"
         ;;
       skip)
+        _review_owed_clear "$SR" "$N" \
+          || warn "review: $SR#$N could not clear settled missing-verdict attempts"
         log "review: $SR#$N my latest review already covers head ${head:0:12}; skipping (request mid-clear or stale search)"
         ;;
     esac
@@ -639,7 +762,7 @@ $key $updated"
   # One session per repo covering all its pending PRs, oldest first —
   # amortizes checkout and session cost (grok/kimi pattern).
   local dir slug prompt prs check_evidence expected_heads park_evidence ready_prs
-  local commit_items captured_prs key_pr updated
+  local commit_items captured_prs key_pr updated attempt
   for SR in "${repo_order[@]}"; do
     prs="${repo_prs[$SR]% }"
     slug="${SR//\//__}"
@@ -667,8 +790,10 @@ $key $updated"
     run_session review "$SR" "$dir" "$TIMEOUT_REVIEW" "$prompt"
     review_cleanup_mutation_copies "$TREES_DIR/$slug" "$SR"
     # Commit exactly the PRs named in this repo's prompt, and only when the
-    # session completed. A crash or timeout must retry; a completed session
-    # that declined or could not submit must settle until the PR changes.
+    # session completed. A crash or timeout retries without spending the
+    # bounded budget. A completed session settles only on an exact-head verdict
+    # or a park it captured; otherwise its third missing-verdict attempt bounds
+    # local spending while the live GitHub request remains untouched.
     if [ "${RUN_SESSION_RC:-1}" -eq 0 ]; then
       review_park_capture "${RUN_SESSION_LOG:-}" "$SR" "$expected_heads"
       if [ "$REVIEW_PARK_CAPTURE_INVALID" -eq 1 ]; then
@@ -679,9 +804,31 @@ $key $updated"
         while read -r key updated; do
           [ -n "${updated:-}" ] || continue
           key_pr="${key##*#}"
-          if [[ "$captured_prs" != *" $key_pr "* ]]; then
+          if [[ "$captured_prs" == *" $key_pr "* ]]; then
+            _review_owed_clear "$SR" "$key_pr" \
+              || warn "review: $SR#$key_pr could not clear parked missing-verdict attempts"
+          elif _review_verdict_at_head "$SR" "$key_pr" "${candidate_heads["$SR#$key_pr"]}"; then
             commit_items="$commit_items
 $key $updated"
+            _review_owed_clear "$SR" "$key_pr" \
+              || warn "review: $SR#$key_pr could not clear settled missing-verdict attempts"
+          else
+            # A lookup failure is still one completed reviewer attempt without
+            # a durable verdict, so it warns and spends the same bounded budget.
+            if [ "$REVIEW_VERDICT_POSTCONDITION" = lookup-error ]; then
+              warn "review: $SR#$key_pr post-session verdict lookup failed; request remains owed"
+            fi
+            if ! attempt="$(_review_owed_attempt "$SR" "$key_pr" "${candidate_heads["$SR#$key_pr"]}")"; then
+              warn "review: $SR#$key_pr could not update its missing-verdict attempt counter; request remains owed"
+              continue
+            fi
+            if _review_owed_exhausted "$attempt"; then
+              warn "review: $SR#$key_pr at ${candidate_heads["$SR#$key_pr"]} still has no exact-head verdict after $attempt attempts — settling local spend; GitHub request remains live"
+              commit_items="$commit_items
+$key $updated"
+              _review_owed_clear "$SR" "$key_pr" \
+                || warn "review: $SR#$key_pr could not clear exhausted missing-verdict attempts"
+            fi
           fi
         done <<<"${repo_items[$SR]}"
         printf '%s\n' "$commit_items" | ledger_commit "$DUTY_DIR/.seen-review"

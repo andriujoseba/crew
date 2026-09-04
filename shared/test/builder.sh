@@ -4004,7 +4004,12 @@ d533_tick() (
     fi
     if [ "$1" = search ]; then return 0; fi
     if [ "$1" = api ] && [ "$2" = graphql ]; then
-      printf '%s - - - 2026-08-30T06:30:00Z\n' "$D533_HEAD"
+      if [ -e "$D533/verdict-landed-$D533_NUM" ]; then
+        printf '%s %s 2026-08-30T07:01:00Z APPROVED 2026-08-30T06:30:00Z\n' \
+          "$D533_HEAD" "$D533_HEAD"
+      else
+        printf '%s - - - 2026-08-30T06:30:00Z\n' "$D533_HEAD"
+      fi
       return 0
     fi
     return 3
@@ -4027,6 +4032,7 @@ d533_tick() (
     elif [ -n "${D533_PARK_LINE:-}" ]; then
       printf '%s\n' "$D533_PARK_LINE" >"$RUN_SESSION_LOG"
     fi
+    : >"$D533/verdict-landed-$D533_NUM"
     RUN_SESSION_RC=0
   }
   duty_review
@@ -4065,6 +4071,8 @@ if [ -f "$(_review_park_path fx/repo "$D533_NUM" "$D533_HEAD")" ]; then r1=kept;
 DUTY_DIR="$old_duty"
 t d533-complete-session-clears-park cleared "$r1"
 d533_tick
+# The landed verdict makes the next tick's pre-dispatch dedup guard skip the
+# request; post-session settlement is covered directly in review.sh.
 t d533-settled-result-does-not-redispatch 1 "$(wc -l <"$D533_DISPATCHES")"
 old_duty="$DUTY_DIR"; DUTY_DIR="$D533"
 if [ -f "$(_detached_run_stamp fx/repo 7 "$D533_HEAD" "$D533_DONE")" ] \
