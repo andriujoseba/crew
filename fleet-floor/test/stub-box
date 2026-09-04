@@ -13,9 +13,12 @@
 # wedged" or "this box was hired 30 seconds ago and has no sessions yet"
 # without owning a box in that state.
 #
-# Every invocation is appended to $FLOOR_CALLS, and lifecycle verbs mutate
-# per-box state under $FLOOR_STATE, so a test can assert what the host
-# actually DID — not merely that a request returned 200.
+# Every invocation is appended as ONE line to $FLOOR_CALLS, and lifecycle
+# verbs mutate per-box state under $FLOOR_STATE, so a test can assert what the
+# host actually DID — not merely that a request returned 200. Arguments may
+# contain whole shell programs; encode them as a stream under the append lock
+# so large programs do not pay bash's whole-string substitution cost and
+# concurrent invocations cannot interleave one record inside another.
 set -u
 
 FIXTURE="${FLOOR_FIXTURE:?stub-box needs FLOOR_FIXTURE}"
@@ -23,7 +26,11 @@ CALLS="${FLOOR_CALLS:-/dev/null}"
 STATEDIR="${FLOOR_STATE:-${TMPDIR:-/tmp}/floor-stub-state}"
 mkdir -p "$STATEDIR"
 
-printf '%s\n' "$*" >> "$CALLS"
+{
+  flock -x 9
+  printf '%s' "$*" | sed -z 's/\n/\\n/g' >&9
+  printf '\n' >&9
+} 9>> "$CALLS"
 
 now() { date -u '+%Y-%m-%dT%H:%M:%SZ'; }
 box_now() {
