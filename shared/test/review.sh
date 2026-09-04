@@ -276,11 +276,89 @@ DUTY_DIR="$D671_COUNT" _review_owed_prune_inactive 'fx/repo#8'
 t review-owed-complete-sweep-prunes-ended-request "fx/repo#8@$D671_HEAD_B 1" \
   "$(cat "$D671_COUNT/.review-owed")"
 
-d671_drive() ( # root post-mode ticks [capture] [invalid] [multi] [mutation] [ready] [lifecycle] [rerequest] [clear-failure]
+# The retry ledger is replaced only after every producer and the rename
+# succeeds. A partial producer must leave the original multi-PR state intact,
+# and a failed rename must remove only its unpublished temporary file.
+D671_TXN="$TMP/review-owed-transactional-writes"
+mkdir -p "$D671_TXN"
+D671_TXN_ORIGINAL="fx/repo#7@$D671_HEAD_A 2
+fx/repo#8@$D671_HEAD_B 1"
+
+printf '%s\n' "$D671_TXN_ORIGINAL" >"$D671_TXN/.review-owed"
+(
+  DUTY_DIR="$D671_TXN"
+  awk() { printf 'partial-row\n'; return 1; }
+  if _review_owed_clear fx/repo 7; then printf success; else printf failed; fi
+) >"$D671_TXN/clear-result"
+t review-owed-clear-writer-failure-returns-nonzero failed \
+  "$(cat "$D671_TXN/clear-result")"
+t review-owed-clear-writer-failure-preserves-ledger "$D671_TXN_ORIGINAL" \
+  "$(cat "$D671_TXN/.review-owed")"
+t review-owed-clear-writer-failure-removes-temp empty \
+  "$([ -z "$(find "$D671_TXN" -maxdepth 1 -name '.review-owed.*' -print -quit)" ] && printf empty || printf PRESENT)"
+
+printf '%s\n' "$D671_TXN_ORIGINAL" >"$D671_TXN/.review-owed"
+(
+  DUTY_DIR="$D671_TXN"
+  awk() { printf 'partial-row\n'; return 1; }
+  if _review_owed_prune_inactive 'fx/repo#8'; then printf success; else printf failed; fi
+) >"$D671_TXN/prune-result"
+t review-owed-prune-writer-failure-returns-nonzero failed \
+  "$(cat "$D671_TXN/prune-result")"
+t review-owed-prune-writer-failure-preserves-ledger "$D671_TXN_ORIGINAL" \
+  "$(cat "$D671_TXN/.review-owed")"
+t review-owed-prune-writer-failure-removes-temp empty \
+  "$([ -z "$(find "$D671_TXN" -maxdepth 1 -name '.review-owed.*' -print -quit)" ] && printf empty || printf PRESENT)"
+
+printf '%s\n' "$D671_TXN_ORIGINAL" >"$D671_TXN/.review-owed"
+(
+  DUTY_DIR="$D671_TXN"
+  awk() {
+    if [[ "$*" == *'-v p='* ]]; then printf 'partial-row\n'; return 1; fi
+    command awk "$@"
+  }
+  if _review_owed_attempt fx/repo 7 "$D671_HEAD_A"; then printf success; else printf failed; fi
+) >"$D671_TXN/attempt-write-result"
+t review-owed-attempt-writer-failure-returns-nonzero failed \
+  "$(cat "$D671_TXN/attempt-write-result")"
+t review-owed-attempt-writer-failure-preserves-ledger "$D671_TXN_ORIGINAL" \
+  "$(cat "$D671_TXN/.review-owed")"
+t review-owed-attempt-writer-failure-removes-temp empty \
+  "$([ -z "$(find "$D671_TXN" -maxdepth 1 -name '.review-owed.*' -print -quit)" ] && printf empty || printf PRESENT)"
+
+printf '%s\n' "$D671_TXN_ORIGINAL" >"$D671_TXN/.review-owed"
+(
+  DUTY_DIR="$D671_TXN"
+  awk() {
+    if [[ "$*" == *'-v k='* ]]; then return 1; fi
+    command awk "$@"
+  }
+  if _review_owed_attempt fx/repo 7 "$D671_HEAD_A"; then printf success; else printf failed; fi
+) >"$D671_TXN/attempt-read-result"
+t review-owed-attempt-count-failure-returns-nonzero failed \
+  "$(cat "$D671_TXN/attempt-read-result")"
+t review-owed-attempt-count-failure-preserves-ledger "$D671_TXN_ORIGINAL" \
+  "$(cat "$D671_TXN/.review-owed")"
+
+printf '%s\n' "$D671_TXN_ORIGINAL" >"$D671_TXN/.review-owed"
+(
+  DUTY_DIR="$D671_TXN"
+  mv() { return 1; }
+  if _review_owed_clear fx/repo 7; then printf success; else printf failed; fi
+) >"$D671_TXN/mv-result"
+t review-owed-rename-failure-returns-nonzero failed \
+  "$(cat "$D671_TXN/mv-result")"
+t review-owed-rename-failure-preserves-ledger "$D671_TXN_ORIGINAL" \
+  "$(cat "$D671_TXN/.review-owed")"
+t review-owed-rename-failure-removes-temp empty \
+  "$([ -z "$(find "$D671_TXN" -maxdepth 1 -name '.review-owed.*' -print -quit)" ] && printf empty || printf PRESENT)"
+
+d671_drive() ( # root post-mode ticks [capture] [invalid] [multi] [mutation] [ready] [lifecycle] [rerequest] [clear-failure] [writer-failure]
   local root="$1" post_mode="$2" ticks="$3" capture="${4:-}" invalid="${5:-0}" multi="${6:-0}"
   local mutation="${7:-none}" ready="${8:-0}" lifecycle="${9:-0}"
   local rerequest="${10:-0}"
   local clear_failure="${11:-0}"
+  local writer_failure="${12:-0}"
   # shellcheck disable=SC2030  # fixture globals are intentionally isolated
   local DUTY_DIR="$root" WORK_DIR="$root/work" TREES_DIR="$root/trees"
   local LOG_DIR="$root/logs" CONF_DIR="$root/conf" PROMPTS_DIR="$SHARED/prompts"
@@ -390,6 +468,15 @@ d671_drive() ( # root post-mode ticks [capture] [invalid] [multi] [mutation] [re
   esac
   if [ "$clear_failure" -eq 1 ]; then
     _review_owed_clear() { return 1; }
+  fi
+  if [ "$writer_failure" -eq 1 ]; then
+    awk() {
+      if [[ "$*" == *'-v p=fx/repo#7@'* ]]; then
+        printf 'partial-row\n'
+        return 1
+      fi
+      command awk "$@"
+    }
   fi
   for ((tick=1; tick<=ticks; tick++)); do
     duty_review
@@ -530,6 +617,26 @@ t review-owed-clear-failure-keeps-missing-sibling-owed \
 t review-owed-clear-failure-warns 1 \
   "$(grep -c 'fx/repo#7 could not clear settled missing-verdict attempts' \
       "$D671_CLEAR_FAILURE/warn")"
+
+# Exercise the same warning path through the real helper: its underlying
+# writer fails after producing partial output, while the sibling attempt still
+# updates from the intact ledger under the production set-e calling context.
+D671_WRITER_FAILURE="$TMP/review-owed-writer-failure"
+mkdir -p "$D671_WRITER_FAILURE"
+printf 'fx/repo#7@%s 2\nfx/repo#8@%s 1\n' "$D671_HEAD_A" "$D671_HEAD_A" \
+  >"$D671_WRITER_FAILURE/.review-owed"
+( set -e; d671_drive "$D671_WRITER_FAILURE" mixed 1 '' 0 1 none 0 0 0 0 1 )
+D671_WRITER_FAILURE_RC=$?
+t review-owed-real-writer-failure-is-best-effort 0 "$D671_WRITER_FAILURE_RC"
+t review-owed-real-writer-failure-preserves-settled-pr-attempt \
+  "fx/repo#7@$D671_HEAD_A 2" \
+  "$(grep '^fx/repo#7@' "$D671_WRITER_FAILURE/.review-owed")"
+t review-owed-real-writer-failure-updates-missing-sibling \
+  "fx/repo#8@$D671_HEAD_A 2" \
+  "$(grep '^fx/repo#8@' "$D671_WRITER_FAILURE/.review-owed")"
+t review-owed-real-writer-failure-warns 1 \
+  "$(grep -c 'fx/repo#7 could not clear settled missing-verdict attempts' \
+      "$D671_WRITER_FAILURE/warn")"
 
 # Required mutations: each deliberately weakens one failure direction. The
 # fixture reports `red` only when that weakening violates its safety property.

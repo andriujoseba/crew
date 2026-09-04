@@ -383,8 +383,14 @@ _review_owed_clear() { # $1=repo $2=num
   prefix="$repo#$num@"
   [ -e "$ledger" ] || return 0
   tmp="$(mktemp "${ledger}.XXXXXX")" || return 1
-  awk -v p="$prefix" 'index($1,p) != 1 { print }' "$ledger" >"$tmp"
-  mv -f "$tmp" "$ledger"
+  if ! awk -v p="$prefix" 'index($1,p) != 1 { print }' "$ledger" >"$tmp"; then
+    rm -f "$tmp"
+    return 1
+  fi
+  if ! mv -f "$tmp" "$ledger"; then
+    rm -f "$tmp"
+    return 1
+  fi
 }
 
 # A complete authoritative pulls sweep proves which review requests remain
@@ -395,29 +401,46 @@ _review_owed_prune_inactive() { # $1="REPO#PR ..."
   [ -e "$ledger" ] || return 0
   input="$ledger"
   tmp="$(mktemp "${ledger}.XXXXXX")" || return 1
-  awk -v active="$active" '
+  if ! awk -v active="$active" '
     NF >= 2 {
       subject=$1
       sub(/@[^@]*$/, "", subject)
       if (index(active, " " subject " ")) print
     }
-  ' "$input" >"$tmp"
-  mv -f "$tmp" "$ledger"
+  ' "$input" >"$tmp"; then
+    rm -f "$tmp"
+    return 1
+  fi
+  if ! mv -f "$tmp" "$ledger"; then
+    rm -f "$tmp"
+    return 1
+  fi
 }
 
 _review_owed_attempt() { # $1=repo $2=num $3=head; prints new attempt count
   local repo="$1" num="$2" head="$3" ledger="$DUTY_DIR/.review-owed" tmp prefix key input count
   prefix="$repo#$num@"; key="$prefix$head"
   input="$ledger"; [ -e "$input" ] || input=/dev/null
-  count="$(awk -v k="$key" '$1 == k { print $2+0; found=1; exit } END { if (!found) print 0 }' "$input")"
+  if ! count="$(awk -v k="$key" '$1 == k { print $2+0; found=1; exit } END { if (!found) print 0 }' "$input")"; then
+    return 1
+  fi
   count=$((count + 1))
   tmp="$(mktemp "${ledger}.XXXXXX")" || return 1
-  awk -v p="$prefix" '
+  if ! awk -v p="$prefix" '
     index($1,p) == 1 { next }
     NF >= 2 { print }
-  ' "$input" >"$tmp"
-  printf '%s %s\n' "$key" "$count" >>"$tmp"
-  mv -f "$tmp" "$ledger"
+  ' "$input" >"$tmp"; then
+    rm -f "$tmp"
+    return 1
+  fi
+  if ! printf '%s %s\n' "$key" "$count" >>"$tmp"; then
+    rm -f "$tmp"
+    return 1
+  fi
+  if ! mv -f "$tmp" "$ledger"; then
+    rm -f "$tmp"
+    return 1
+  fi
   printf '%s\n' "$count"
 }
 
