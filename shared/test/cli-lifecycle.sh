@@ -438,27 +438,54 @@ t hostcron-daily-line-is-restart-all 1 \
 # push clears it. The count above cannot carry this on its own — a file that
 # lost the DAILY line instead would also hold one job line — so the shape is
 # asserted from both ends, the right line present and the wrong one absent.
+#
+# One pattern serves both reset assertions, because they ask the same question
+# of two different inputs and must not drift apart. It matches the SCHEDULE
+# PREFIX a cron entry starts with, in both forms cron accepts: five fields, or
+# one of the @-special strings. `@weekly $HOME/.local/bin/crew reset --all` is
+# a job line, and a five-field pattern alone reads it as prose
+# (@claude-bot-andresmgsl, #683).
+#
+# Fields 1-3 stay numeric-and-star deliberately, and that is load-bearing
+# rather than lazy: the commented-out assertion below runs this same pattern
+# over the file's PROSE with the comment marker stripped, and admitting names
+# in the leading fields would make an ordinary English sentence of five words
+# followed by `crew reset` — which this file's own deferral block very nearly
+# is — match as a cron entry. Fields 4 and 5 admit names because cron does
+# (`0 5 * * SUN`), and no sentence opens with two numbers and a star.
+cron_num='[0-9*][0-9,*/-]*'
+cron_named='[0-9A-Za-z*][0-9A-Za-z,*/-]*'
+cron_at='@(reboot|yearly|annually|monthly|weekly|daily|midnight|hourly)'
+cron_entry="^($cron_num +$cron_num +$cron_num +$cron_named +$cron_named +|$cron_at +).*crew reset"
+# Read over the job lines, by the shape of a cron entry rather than by two
+# leading integers: `*/10 5 * * 0 … crew reset --all` is a reset job line, and
+# an `^[0-9]+ [0-9]+` pattern let it through while the assertion's NAME claimed
+# otherwise (@claude-bot-andresmgsl, #683). The count above would have caught
+# it; a guard that leans on a neighbour is one edit from catching nothing.
 t hostcron-schedules-no-reset-job-line 0 \
-  "$(printf '%s\n' "$host_cron_lines" | grep -cE '^[0-9]+ [0-9]+ .*crew reset' || true)"
+  "$(printf '%s\n' "$host_cron_lines" | grep -cE "$cron_entry" || true)"
 # AND IT MUST NOT BE REINSTATABLE BY UNCOMMENTING. This is the one assertion
 # here that reads the whole file rather than the job lines, because a
 # commented-out job line is invisible to every assertion above it and a
 # crontab is the one file nobody diffs. It reads the SHAPE and not the verb:
 # comments that NAME `crew reset` are wanted — the deferral is argued in them,
 # and the verb is still available on demand — so what is banned is a comment
-# whose text is a cron ENTRY, five schedule fields and the reset behind them.
+# whose text is a cron ENTRY — a schedule prefix and the reset behind it, in
+# either of the forms cron accepts.
 t hostcron-has-no-commented-out-reset-job-line 0 \
   "$(sed -E 's/^[[:space:]]*#+[[:space:]]*//' "$HOST_CRONTAB" \
-     | grep -cE '^[0-9*][0-9,*/-]* +[0-9*][0-9,*/-]* +[0-9*][0-9,*/-]* +[0-9*][0-9,*/-]* +[0-9*][0-9,*/-]* +.*crew reset' || true)"
+     | grep -cE "$cron_entry" || true)"
 # The deferral is only reversible on purpose if the file says where the
 # argument lives. D2 requires the comment block to name this issue and the
 # collector that returns the line.
 # Presence, not a count: the prose is entitled to cite either number more than
-# once, and pinning a tally would make a second mention a red check.
+# once, and pinning a tally would make a second mention a red check. Bounded on
+# the right, though — a bare `#678` is a prefix of `#6789`, so an unrelated
+# citation would satisfy a substring read (@claude-bot-andresmgsl, #683).
 t hostcron-deferral-names-its-issue yes \
-  "$(grep -q '#678' "$HOST_CRONTAB" && echo yes || echo no)"
+  "$(grep -qE '#678([^0-9]|$)' "$HOST_CRONTAB" && echo yes || echo no)"
 t hostcron-deferral-names-what-returns-it yes \
-  "$(grep -q '#328' "$HOST_CRONTAB" && echo yes || echo no)"
+  "$(grep -qE '#328([^0-9]|$)' "$HOST_CRONTAB" && echo yes || echo no)"
 # #589's refusal must never be handed a way past it: --force on a scheduled
 # reset is the silent fleet-wide downgrade the interlock exists to prevent,
 # and it would arrive as a one-word edit. The guard outlives the line it was
