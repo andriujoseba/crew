@@ -22,6 +22,8 @@ t operating-limit-table-session-grace 60 \
   "$(operating_limit session_kill_grace_seconds)"
 t operating-limit-table-terminal-failures 3 \
   "$(operating_limit session_terminal_failures)"
+t operating-limit-table-terminal-hold-max 12 \
+  "$(operating_limit session_terminal_hold_max_ticks)"
 t operating-limit-table-graphql-window 100 \
   "$(operating_limit github_connection_nodes)"
 t operating-limit-table-vitals-disk 90 \
@@ -47,6 +49,17 @@ t terminal-threshold-default-follows-table 7 "$(_session_terminal_threshold)"
 t terminal-threshold-preserves-operator-override 9 \
   "$(SESSION_TERMINAL_THRESHOLD=9 _session_terminal_threshold)"
 OPERATING_LIMITS[session_terminal_failures]=3
+
+# The non-vendor hold's bound resolves through the same two steps, so the two
+# terminal-breaker numbers cannot drift into different conventions (#551). It
+# ships ARMED — the conf key is empty and the table answers — which is the
+# opposite of the budget's default-off and is the point of the difference.
+t terminal-hold-max-conf-defers-to-table '' "$SESSION_TERMINAL_HOLD_MAX_TICKS"
+OPERATING_LIMITS[session_terminal_hold_max_ticks]=6
+t terminal-hold-max-default-follows-table 6 "$(_session_terminal_hold_max)"
+t terminal-hold-max-preserves-operator-override 20 \
+  "$(SESSION_TERMINAL_HOLD_MAX_TICKS=20 _session_terminal_hold_max)"
+OPERATING_LIMITS[session_terminal_hold_max_ticks]=12
 
 table_breaker_dir="$TMP/table-breaker"
 table_breaker_state="$(

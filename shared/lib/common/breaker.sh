@@ -1,8 +1,10 @@
 # common/breaker.sh — the per-lane dispatch breakers and what feeds them.
 #
 # TWO reasons stop a lane, and they answer different questions:
-#   - TERMINAL (_session_terminal_*, session_terminal) — the vendor is dead.
-#     Consecutive terminal failures, cleared by a probe.
+#   - TERMINAL (_session_terminal_*, session_terminal) — the lane cannot
+#     succeed. Consecutive terminal failures, cleared by whatever falsifies
+#     the cause: a vendor probe where the vendor is what died, an observed
+#     session end where it was not (#551).
 #   - BUDGET (_session_budget_*) — the lane has spent enough. Volume in a
 #     rolling window, cleared by the window rolling (#464).
 # They share the skip, the log-line shape, the per-kind state file convention
@@ -29,30 +31,146 @@ _session_terminal_state() {
   printf '%s/.session-terminal.%s' "$DUTY_DIR" "$kind"
 }
 
+# THE TRIP HAS TWO CLEARS, because it has two causes (#551).
+#
+# #388 built this breaker for a dead vendor, and a successful `bot_cli_probe`
+# is the right clear for that: the probe falsifies the failure being counted.
+# This window lands terminals the vendor did not cause — #478's reconstructed
+# terminal, written when a session dies with its box — and they inherited that
+# clear, so the probe cleared a trip it had falsified nothing about. A lane
+# whose box kills every session therefore ran the cycle trip → probe → clear →
+# dispatch → die, forever: three dispatches per four ticks and an alert pair
+# per cycle, which is a throttle and not a stop.
+#
+# So the state carries WHICH KIND OF TERMINAL contributed, and each cause keeps
+# the clear that falsifies it:
+#
+#   vendor-caused    → `bot_cli_probe` succeeds, exactly as it does today.
+#   non-vendor       → an OBSERVED session end on the lane: a session that
+#                      started, ran and wrote its own SESSION END. Finishing is
+#                      the proof the box survived it, which is the thing a
+#                      probe cannot say. Held lanes are retried on a widening
+#                      bounded interval so that evidence can arrive at all.
+#
+# One breaker and not two (D4, and #464's D3 before it): the skip line, the
+# state-file convention, the log-line shape and the alert channel are the ones
+# that already exist. Only the clear condition differs, which is the whole of
+# what this adds.
+
+# The state file is ONE tab-separated line, and it GREW rather than changed
+# shape:
+#
+#   count <TAB> status <TAB> last_tick <TAB> nonvendor <TAB> trials <TAB> waits
+#
+# _session_terminal_read STATE — read it into `_TERMINAL_*`, returning 1 when
+# there is no state to read. Every field this added degrades to the value that
+# reproduces the pre-#551 behaviour exactly: no non-vendor contribution, no
+# trial spent, no wait outstanding. That is what lets an engine upgrade land
+# under a lane that is already tripped without resetting it, and it is the same
+# obligation the conf keys carry — degrade, never abort the tick under `set -u`.
+_session_terminal_read() {
+  local state="$1"
+  _TERMINAL_COUNT=0 _TERMINAL_STATUS=closed _TERMINAL_TICK=""
+  _TERMINAL_NONVENDOR=no _TERMINAL_TRIALS=0 _TERMINAL_WAITS=0
+  [ -s "$state" ] || return 1
+  IFS=$'\t' read -r _TERMINAL_COUNT _TERMINAL_STATUS _TERMINAL_TICK \
+    _TERMINAL_NONVENDOR _TERMINAL_TRIALS _TERMINAL_WAITS <"$state" || return 1
+  case "$_TERMINAL_COUNT" in '' | *[!0-9]*) _TERMINAL_COUNT=0 ;; esac
+  case "$_TERMINAL_STATUS" in tripped) ;; *) _TERMINAL_STATUS=closed ;; esac
+  [ "$_TERMINAL_NONVENDOR" = yes ] || _TERMINAL_NONVENDOR=no
+  case "$_TERMINAL_TRIALS" in '' | *[!0-9]*) _TERMINAL_TRIALS=0 ;; esac
+  case "$_TERMINAL_WAITS" in '' | *[!0-9]*) _TERMINAL_WAITS=0 ;; esac
+}
+
+# _session_terminal_write STATE COUNT STATUS TICK NONVENDOR TRIALS WAITS — the
+# one writer, tmp+mv as before. One writer because six fields written from
+# three call sites is how two of them come to disagree about the line's shape.
+_session_terminal_write() {
+  local state="$1" tmp
+  tmp="$state.tmp.$$"
+  printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$2" "$3" "$4" "$5" "$6" "$7" >"$tmp"
+  mv -f "$tmp" "$state"
+}
+
+# _session_terminal_hold_max — the widening's bound, in ticks. Resolved exactly
+# as the threshold below is, and for the same reason: the conf may override,
+# and an empty or malformed value falls back to the declared table, so the
+# engine keeps ONE source for the limit and a conf that predates this key
+# degrades rather than aborting the tick under `set -u`.
+_session_terminal_hold_max() {
+  local max="${SESSION_TERMINAL_HOLD_MAX_TICKS:-}"
+  case "$max" in
+    '' | *[!0-9]* | 0) max="$(operating_limit session_terminal_hold_max_ticks)" ;;
+  esac
+  printf '%s' "$max"
+}
+
+# _session_terminal_hold_wait TRIALS — ticks to skip before trial TRIALS+1.
+# Doubling from two and then flat at the bound: 2, 4, 8, … which is what makes
+# D3's two halves true at once — never every tick, and never abandoned. The
+# bound is a floor on the retry rate as much as a ceiling on the interval: a
+# lane that keeps dying keeps a trial scheduled forever, at a declining rate.
+_session_terminal_hold_wait() {
+  local trials="$1" max wait=2 n=0
+  case "$trials" in '' | *[!0-9]*) trials=0 ;; esac
+  max="$(_session_terminal_hold_max)"
+  while [ "$n" -lt "$trials" ] && [ "$wait" -lt "$max" ]; do
+    wait=$((wait * 2))
+    n=$((n + 1))
+  done
+  [ "$wait" -le "$max" ] || wait="$max"
+  printf '%s' "$wait"
+}
+
 # _session_terminal_gate KIND KEY — refuse an open lane before the CLI starts.
 # A later duty tick gets one cheap vendor probe: success clears the breaker and
 # dispatch resumes immediately; failure keeps every remaining item in that tick
 # suppressed. DUTY_TICK_ID is set by duty.sh, with $$ as a test/direct-call
 # fallback so repeated run_session calls in one process still form one tick.
+#
+# A lane a non-vendor terminal contributed to takes the other branch and NEVER
+# BUYS A PROBE (D1): a live vendor falsifies nothing about a box that killed
+# its own session, so spending a vendor call to ask is both the wrong question
+# and a cost. It waits out a widening interval instead and then lets ONE trial
+# dispatch through — the only thing that can produce the observed end that
+# clears it (D2, D3).
 _session_terminal_gate() {
-  local kind="$1" key="$2" state count status last_tick tick tmp
+  local kind="$1" key="$2" state tick
   state="$(_session_terminal_state "$kind")"
-  [ -s "$state" ] || return 0
-  IFS=$'\t' read -r count status last_tick <"$state" || return 0
-  [ "$status" = tripped ] || return 0
+  _session_terminal_read "$state" || return 0
+  [ "$_TERMINAL_STATUS" = tripped ] || return 0
   tick="${DUTY_TICK_ID:-$$}"
-  if [ "$last_tick" != "$tick" ]; then
-    if bot_cli_probe; then
+  if [ "$_TERMINAL_TICK" != "$tick" ]; then
+    if [ "$_TERMINAL_NONVENDOR" = yes ]; then
+      if [ "$_TERMINAL_WAITS" -le 0 ]; then
+        # The wait is re-armed HERE and not only where the trial's death is
+        # recorded, so a trial that leaves no record at all — a box that dies
+        # before any later tick reconciles it — still widens. Otherwise the
+        # widening would depend on the reconciler having run, which is exactly
+        # the thing a dying box cannot promise.
+        _TERMINAL_TRIALS=$((_TERMINAL_TRIALS + 1))
+        _TERMINAL_WAITS="$(_session_terminal_hold_wait "$_TERMINAL_TRIALS")"
+        _session_terminal_write "$state" "$_TERMINAL_COUNT" tripped "$tick" \
+          yes "$_TERMINAL_TRIALS" "$_TERMINAL_WAITS"
+        log "session breaker: kind=$kind held after $_TERMINAL_COUNT terminal failures the vendor did not cause; trial dispatch $_TERMINAL_TRIALS"
+        return 0
+      fi
+      # No alert on the way down. An operator has already had the 🚨 for this
+      # trip, and a line per skipped tick is the noise this issue is about.
+      _TERMINAL_WAITS=$((_TERMINAL_WAITS - 1))
+      _session_terminal_write "$state" "$_TERMINAL_COUNT" tripped "$tick" \
+        yes "$_TERMINAL_TRIALS" "$_TERMINAL_WAITS"
+    elif bot_cli_probe; then
       rm -f "$state"
       log "session breaker: kind=$kind recovered; dispatch resumed"
       alert "✅ $(hostname): $kind session dispatch resumed after the vendor probe succeeded"
       return 0
+    else
+      _session_terminal_write "$state" "$_TERMINAL_COUNT" tripped "$tick" \
+        no "$_TERMINAL_TRIALS" "$_TERMINAL_WAITS"
     fi
-    tmp="$state.tmp.$$"
-    printf '%s\ttripped\t%s\n' "$count" "$tick" >"$tmp"
-    mv -f "$tmp" "$state"
   fi
-  log "SESSION SKIP kind=$kind key=$key reason=terminal-breaker count=$count"
+  log "SESSION SKIP kind=$kind key=$key reason=terminal-breaker count=$_TERMINAL_COUNT"
   RUN_SESSION_RC=75
   RUN_SESSION_LOG=""
   return 1
@@ -68,31 +186,74 @@ _session_terminal_threshold() {
   printf '%s' "$threshold"
 }
 
-# _session_terminal_record KIND TERMINAL ACTED LOG — count consecutive terminal
-# dispatches and alert exactly once, on the transition to the open breaker.
-# Any success, timeout, transient failure, or unclassified failure resets the
-# count: absent/uncertain hooks are deliberately fail-safe and keep working.
+# _session_terminal_record KIND TERMINAL ACTED LOG [CAUSE] — count consecutive
+# terminal dispatches and alert exactly once, on the transition to the open
+# breaker. Any success, timeout, transient failure, or unclassified failure
+# resets the count: absent/uncertain hooks are deliberately fail-safe and keep
+# working.
+#
+# CAUSE says what produced this terminal, and defaults to `vendor` because that
+# is what run_session's call means: the session wrote its own SESSION END and
+# the profile's classifier read the vendor saying so on that log. `non-vendor`
+# is common/ledger.sh's reconstructed terminal — a session that never wrote an
+# end because its box died under it — and any later source of a terminal the
+# vendor did not cause passes it too.
 _session_terminal_record() {
-  local kind="$1" terminal="$2" acted="$3" slog="$4"
-  local state count=0 status=closed last_tick="" tick tmp threshold
+  local kind="$1" terminal="$2" acted="$3" slog="$4" cause="${5:-vendor}"
+  local state tick threshold count status nonvendor trials waits was
   state="$(_session_terminal_state "$kind")"
+  _session_terminal_read "$state" || :
+  was="$_TERMINAL_STATUS"
+  count="$_TERMINAL_COUNT" nonvendor="$_TERMINAL_NONVENDOR"
+  trials="$_TERMINAL_TRIALS" waits="$_TERMINAL_WAITS"
+  # D2 — AN OBSERVED END DISCHARGES A NON-VENDOR HOLD, whatever this session's
+  # own outcome, INCLUDING a failure and including a terminal one. The engine
+  # only reaches this line after the session wrote its own SESSION END, so
+  # getting here at all is the proof the box survived the session and the
+  # ceiling did not take it — which is the entire content of the failure being
+  # counted, and the one thing a vendor probe cannot establish.
+  #
+  # The accumulated count goes with the flag rather than surviving it. That
+  # count is evidence about a box that could not carry a session to its end,
+  # and a session that reached its end falsifies the lot; keeping a residue
+  # would let a lane that has demonstrably recovered re-trip on one later
+  # failure. A vendor terminal arriving here is then counted from zero as this
+  # session's own first, which is #388's mechanism reading only the evidence
+  # this box has not already contradicted.
+  if [ "$cause" != non-vendor ] && [ "$nonvendor" = yes ]; then
+    if [ "$was" = tripped ]; then
+      log "session breaker: kind=$kind recovered; dispatch resumed"
+      alert "✅ $(hostname): $kind session dispatch resumed after a session ran to its own end"
+    fi
+    count=0 nonvendor=no trials=0 waits=0 was=closed
+    rm -f "$state"
+  fi
   if [ "$terminal" != yes ]; then
     rm -f "$state"
     return 0
   fi
-  if [ -s "$state" ]; then
-    IFS=$'\t' read -r count status last_tick <"$state" || count=0
-  fi
-  case "$count" in ''|*[!0-9]*) count=0 ;; esac
+  [ "$cause" != non-vendor ] || nonvendor=yes
   count=$((count + 1))
   threshold="$(_session_terminal_threshold)"
   tick="${DUTY_TICK_ID:-$$}"
   status=closed
   [ "$count" -lt "$threshold" ] || status=tripped
-  tmp="$state.tmp.$$"
-  printf '%s\t%s\t%s\n' "$count" "$status" "$tick" >"$tmp"
-  mv -f "$tmp" "$state"
-  if [ "$status" = tripped ]; then
+  # Re-armed from the CURRENT trial count, which the gate owns and this never
+  # resets: a trial that died is a trial spent, and the interval after it must
+  # be the next one out rather than the first one again. The gate computes the
+  # same number when it releases the trial, so the two writers cannot disagree
+  # about how long this lane waits.
+  if [ "$status" = tripped ] && [ "$nonvendor" = yes ]; then
+    waits="$(_session_terminal_hold_wait "$trials")"
+  fi
+  _session_terminal_write "$state" "$count" "$status" "$tick" \
+    "$nonvendor" "$trials" "$waits"
+  # ON THE TRANSITION, which now has to be said rather than arranged. It used
+  # to be true incidentally: once tripped, the vendor branch dispatched nothing
+  # more, so nothing more was recorded. A held lane's trial dispatches DO get
+  # recorded when they die, and alerting on each of them would rebuild the
+  # alert-pair-per-cycle this issue exists to end.
+  if [ "$status" = tripped ] && [ "$was" != tripped ]; then
     warn "session breaker: kind=$kind tripped after $count consecutive terminal failures; log=$slog"
     alert "🚨 $(hostname): $kind session dispatch stopped after $count terminal failures (acted=$acted) — $slog"
   fi
