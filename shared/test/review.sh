@@ -258,9 +258,9 @@ DUTY_DIR="$D671_COUNT" _review_owed_clear fx/repo 7
 t review-owed-settle-clears-all-heads empty \
   "$([ ! -s "$D671_COUNT/.review-owed" ] && printf empty || printf PRESENT)"
 
-d671_drive() ( # root post-mode ticks [capture] [invalid] [multi] [mutation]
+d671_drive() ( # root post-mode ticks [capture] [invalid] [multi] [mutation] [ready]
   local root="$1" post_mode="$2" ticks="$3" capture="${4:-}" invalid="${5:-0}" multi="${6:-0}"
-  local mutation="${7:-none}"
+  local mutation="${7:-none}" ready="${8:-0}"
   # shellcheck disable=SC2030  # fixture globals are intentionally isolated
   local DUTY_DIR="$root" WORK_DIR="$root/work" TREES_DIR="$root/trees"
   local LOG_DIR="$root/logs" CONF_DIR="$root/conf" PROMPTS_DIR="$SHARED/prompts"
@@ -271,6 +271,7 @@ d671_drive() ( # root post-mode ticks [capture] [invalid] [multi] [mutation]
   mkdir -p "$WORK_DIR" "$TREES_DIR" "$LOG_DIR"
   printf 'fx/repo\n' >"$REPOS_FILE"
   : >"$root/calls"; : >"$root/warn"; : >"$root/session-log"
+  if [ "$ready" -eq 1 ]; then : >"$root/park-ready"; fi
   gh() {
     printf '%s\n' "$*" >>"$root/calls"
     if [ "$1" = api ] && [[ "$2" == repos/fx/repo/pulls\?* ]]; then
@@ -317,13 +318,20 @@ d671_drive() ( # root post-mode ticks [capture] [invalid] [multi] [mutation]
   _review_detached_run_blocks_dispatch() { return 1; }
   review_park_prune_inactive() { :; }
   review_park_inspect() {
-    REVIEW_PARK_STATE=none REVIEW_PARK_RESULTS="" REVIEW_PARK_REASON="" REVIEW_PARK_DIGESTS=""
+    if [ -e "$root/park-ready" ]; then
+      REVIEW_PARK_STATE=ready
+      REVIEW_PARK_RESULTS='detached review completed'
+      REVIEW_PARK_REASON='consuming completed detached review'
+      REVIEW_PARK_DIGESTS=fixture-digest
+    else
+      REVIEW_PARK_STATE=none REVIEW_PARK_RESULTS="" REVIEW_PARK_REASON="" REVIEW_PARK_DIGESTS=""
+    fi
   }
   review_park_capture() {
     REVIEW_PARK_CAPTURE_INVALID="$invalid"
     REVIEW_PARK_CAPTURED="$capture"
   }
-  review_park_clear() { :; }
+  review_park_clear() { rm -f "$root/park-ready"; }
   _review_park_cleanup_runs() { :; }
   review_cleanup_mutation_copies() { :; }
   _mark_addressing() { :; }
@@ -365,6 +373,22 @@ t review-post-lookup-error-remains-owed "fx/repo#7@$D671_HEAD_A 1" \
   "$(cat "$D671_ERROR/.review-owed")"
 t review-post-lookup-error-warns 1 \
   "$(grep -c 'post-session verdict lookup failed; request remains owed' "$D671_ERROR/warn")"
+
+D671_READY_ONCE="$TMP/review-post-ready-once"
+d671_drive "$D671_READY_ONCE" none 1 '' 0 0 none 1
+t review-consumed-ready-park-without-verdict-leaves-seen-empty empty \
+  "$([ ! -s "$D671_READY_ONCE/.seen-review" ] && printf empty || printf PRESENT)"
+t review-consumed-ready-park-without-verdict-spends-one-attempt \
+  "fx/repo#7@$D671_HEAD_A 1" "$(cat "$D671_READY_ONCE/.review-owed")"
+
+D671_READY="$TMP/review-post-ready"
+d671_drive "$D671_READY" none 4 '' 0 0 none 1
+t review-consumed-ready-park-bounds-dispatch-at-three 3 \
+  "$(grep -c '^SESSION ' "$D671_READY/session-log")"
+t review-consumed-ready-park-third-attempt-settles 'fx/repo#7 2026-09-04T11:00:00Z' \
+  "$(cat "$D671_READY/.seen-review")"
+t review-consumed-ready-park-warns-once 1 \
+  "$(grep -c "fx/repo#7 at $D671_HEAD_A still has no exact-head verdict after 3 attempts" "$D671_READY/warn")"
 
 D671_VERDICT="$TMP/review-post-verdict"
 d671_drive "$D671_VERDICT" verdict 2

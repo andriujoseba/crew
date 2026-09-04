@@ -737,8 +737,10 @@ $key $updated"
     run_session review "$SR" "$dir" "$TIMEOUT_REVIEW" "$prompt"
     review_cleanup_mutation_copies "$TREES_DIR/$slug" "$SR"
     # Commit exactly the PRs named in this repo's prompt, and only when the
-    # session completed. A crash or timeout must retry; a completed session
-    # that declined or could not submit must settle until the PR changes.
+    # session completed. A crash or timeout retries without spending the
+    # bounded budget. A completed session settles only on an exact-head verdict
+    # or a park it captured; otherwise its third missing-verdict attempt bounds
+    # local spending while the live GitHub request remains untouched.
     if [ "${RUN_SESSION_RC:-1}" -eq 0 ]; then
       review_park_capture "${RUN_SESSION_LOG:-}" "$SR" "$expected_heads"
       if [ "$REVIEW_PARK_CAPTURE_INVALID" -eq 1 ]; then
@@ -751,15 +753,13 @@ $key $updated"
           key_pr="${key##*#}"
           if [[ "$captured_prs" == *" $key_pr "* ]]; then
             _review_owed_clear "$SR" "$key_pr"
-          elif [[ " $ready_prs " == *" $key_pr "* ]]; then
-            commit_items="$commit_items
-$key $updated"
-            _review_owed_clear "$SR" "$key_pr"
           elif _review_verdict_at_head "$SR" "$key_pr" "${candidate_heads["$SR#$key_pr"]}"; then
             commit_items="$commit_items
 $key $updated"
             _review_owed_clear "$SR" "$key_pr"
           else
+            # A lookup failure is still one completed reviewer attempt without
+            # a durable verdict, so it warns and spends the same bounded budget.
             if [ "$REVIEW_VERDICT_POSTCONDITION" = lookup-error ]; then
               warn "review: $SR#$key_pr post-session verdict lookup failed; request remains owed"
             fi
