@@ -258,8 +258,8 @@ DUTY_DIR="$D671_COUNT" _review_owed_clear fx/repo 7
 t review-owed-settle-clears-all-heads empty \
   "$([ ! -s "$D671_COUNT/.review-owed" ] && printf empty || printf PRESENT)"
 
-d671_drive() ( # root post-mode ticks [capture] [invalid]
-  local root="$1" post_mode="$2" ticks="$3" capture="${4:-}" invalid="${5:-0}"
+d671_drive() ( # root post-mode ticks [capture] [invalid] [multi]
+  local root="$1" post_mode="$2" ticks="$3" capture="${4:-}" invalid="${5:-0}" multi="${6:-0}"
   local DUTY_DIR="$root" WORK_DIR="$root/work" TREES_DIR="$root/trees"
   local LOG_DIR="$root/logs" CONF_DIR="$root/conf" PROMPTS_DIR="$SHARED/prompts"
   local BIN_DIR="$root/bin" REPOS_FILE="$root/repos.txt"
@@ -272,9 +272,15 @@ d671_drive() ( # root post-mode ticks [capture] [invalid]
   gh() {
     printf '%s\n' "$*" >>"$root/calls"
     if [ "$1" = api ] && [[ "$2" == repos/fx/repo/pulls\?* ]]; then
-      jq -cn --arg me "$ME" '[{draft:false,requested_reviewers:[{login:$me}],
-        created_at:"2026-09-04T10:00:00Z",updated_at:"2026-09-04T11:00:00Z",
-        number:7,user:{login:"author"}}]'
+      if [ "$multi" -eq 1 ]; then
+        jq -cn --arg me "$ME" '[7,8] | map({draft:false,requested_reviewers:[{login:$me}],
+          created_at:"2026-09-04T10:00:00Z",updated_at:"2026-09-04T11:00:00Z",
+          number:.,user:{login:"author"}})'
+      else
+        jq -cn --arg me "$ME" '[{draft:false,requested_reviewers:[{login:$me}],
+          created_at:"2026-09-04T10:00:00Z",updated_at:"2026-09-04T11:00:00Z",
+          number:7,user:{login:"author"}}]'
+      fi
       return 0
     fi
     if [ "$1" = search ]; then return 0; fi
@@ -282,8 +288,16 @@ d671_drive() ( # root post-mode ticks [capture] [invalid]
       if [[ "$*" == *'timelineItems(itemTypes:'* ]]; then
         printf '%s - - - 2026-09-04T10:30:00Z\n' "$D671_HEAD_A"
       elif [[ "$*" == *'reviews(author:'* ]]; then
+        [[ "$*" == *'-f me=fixture-reviewer'* ]] && printf 'POST-SCOPED-TO-ME\n' >>"$root/calls"
         case "$post_mode" in
           verdict) jq -cn --arg h "$D671_HEAD_A" '{data:{repository:{pullRequest:{reviews:{nodes:[{commit:{oid:$h},state:"APPROVED"}]}}}}}' ;;
+          mixed)
+            if [[ "$*" == *'num=7'* ]]; then
+              jq -cn --arg h "$D671_HEAD_A" '{data:{repository:{pullRequest:{reviews:{nodes:[{commit:{oid:$h},state:"APPROVED"}]}}}}}'
+            else
+              jq -cn '{data:{repository:{pullRequest:{reviews:{nodes:[]}}}}}'
+            fi
+            ;;
           none) jq -cn '{data:{repository:{pullRequest:{reviews:{nodes:[]}}}}}' ;;
           error) return 1 ;;
         esac
@@ -364,6 +378,19 @@ t review-invalid-park-withholds-seen empty \
   "$([ ! -s "$D671_INVALID/.seen-review" ] && printf empty || printf PRESENT)"
 t review-invalid-park-does-not-spend-budget empty \
   "$([ ! -s "$D671_INVALID/.review-owed" ] && printf empty || printf PRESENT)"
+
+D671_MIXED="$TMP/review-post-mixed"
+d671_drive "$D671_MIXED" mixed 2 '' 0 1
+t review-mixed-session-settles-only-verdict-pr 'fx/repo#7 2026-09-04T11:00:00Z' \
+  "$(cat "$D671_MIXED/.seen-review")"
+t review-mixed-session-keeps-failed-pr-owed "fx/repo#8@$D671_HEAD_A 2" \
+  "$(cat "$D671_MIXED/.review-owed")"
+t review-mixed-session-first-dispatch-covers-both 1 \
+  "$(grep -c 'oldest first: 7 8\.' "$D671_MIXED/session-log")"
+t review-mixed-session-retry-excludes-settled-sibling 1 \
+  "$(grep -c 'oldest first: 8\.' "$D671_MIXED/session-log")"
+t review-postcondition-query-is-scoped-to-me 3 \
+  "$(grep -c '^POST-SCOPED-TO-ME$' "$D671_MIXED/calls")"
 
 # #605: repo commands run in the detached checkout, never its worktree parent.
 # Drive the real prompt render above so the engine-to-prompt contract is pinned,

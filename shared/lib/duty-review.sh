@@ -759,7 +759,10 @@ $key $updated"
             if [ "$REVIEW_VERDICT_POSTCONDITION" = lookup-error ]; then
               warn "review: $SR#$key_pr post-session verdict lookup failed; request remains owed"
             fi
-            attempt="$(_review_owed_attempt "$SR" "$key_pr" "${candidate_heads["$SR#$key_pr"]}")"
+            if ! attempt="$(_review_owed_attempt "$SR" "$key_pr" "${candidate_heads["$SR#$key_pr"]}")"; then
+              warn "review: $SR#$key_pr could not update its missing-verdict attempt counter; request remains owed"
+              continue
+            fi
             if [ "$attempt" -ge 3 ]; then
               warn "review: $SR#$key_pr at ${candidate_heads["$SR#$key_pr"]} still has no exact-head verdict after $attempt attempts — settling local spend; GitHub request remains live"
               commit_items="$commit_items
