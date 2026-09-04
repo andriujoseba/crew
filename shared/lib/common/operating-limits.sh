@@ -18,6 +18,7 @@ declare -Ag OPERATING_LIMITS=(
   [github_rest_page]=100
   [session_kill_grace_seconds]=60
   [session_terminal_failures]=3
+  [session_terminal_hold_max_ticks]=12
   [vitals_disk_used_pct]=90
   [vitals_memory_available_pct]=10
 )

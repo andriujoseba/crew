@@ -334,7 +334,15 @@ session_reconcile_orphans() {
     # D3: the same per-kind counter an observed TERMINAL feeds, and no second
     # mechanism. A box that kills itself on every review session has a dead
     # review lane, whether the vendor said so or the kernel did.
-    _session_terminal_record "$kind" yes unknown "$slog"
+    #
+    # `non-vendor` is what the counter is told about this one, and it changes
+    # nothing about D3's count (#551). It changes what CLEARS the trip the
+    # count produces: a box-kill does not falsify the vendor, so a successful
+    # `bot_cli_probe` used to clear a trip it had established nothing about and
+    # the lane resumed straight into the next kill. This is the only caller
+    # that passes it, because this is the only terminal here that the vendor
+    # did not cause.
+    _session_terminal_record "$kind" yes unknown "$slog" non-vendor
     closed=$((closed + 1))
   done <<<"$records"
   [ "$closed" -eq 0 ] \
