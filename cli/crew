@@ -273,6 +273,18 @@ STUCK_AFTER_S="${CREW_FLOOR_STUCK_AFTER:-$SILENT_AFTER_S}"
 # moves alone. A knob on one side would leave that pin comparing two defaults
 # while the two consoles disagreed in front of the operator (#624 D4).
 SESSION_KILL_GRACE_S=60
+# The widest ceiling this reader GRADES arithmetically, and the reason it needs
+# naming is that the floor has no equivalent: Python's int is unbounded, bash's
+# is a fixed-width signed 64. A role conf is operator-editable and nothing
+# between it and `session.sh`'s `timeout=${tmo}s` range-checks — GNU `timeout
+# 999999999999999999999999 true` exits 0 — so the wire can genuinely carry more
+# digits than bash can hold, and both of bash's ways of touching them are
+# wrong: `test` fails with `integer expression expected` on stderr, and `$(( ))`
+# WRAPS SILENTLY (`10#999999999999999999999999` is 2003764205206896639). Past
+# this width the ceiling is not computed with, it is saturated at it — which
+# grades identically to the floor's unbounded arithmetic, because 10^18 seconds
+# is 31.7 billion years and no lock age off `date +%s` reaches it (#624 D3).
+SESSION_CEILING_MAX_S=999999999999999999
 # Twice the longest shipped role-session ceiling (builder: 3600s). A normal
 # session gets its whole governed budget; a lock held through another whole
 # budget is maintenance-wedge evidence rather than ordinary work (#588 D4).
@@ -4027,11 +4039,38 @@ cmd_status() {
     # floor renders it fine — the disagreement this whole change removes,
     # wearing its worst hat. It is also what `lock_ceiling` is RENDERED from
     # three screens down, so the canonical value has to be the stored one.
+    #
+    # THE VALIDATION IS ONE REGEX AND NOT A `test`, because `test` is the other
+    # fixed-width reader in this clause and it fails the same way `$(( ))` does.
+    # `^0*([1-9][0-9]*)$` does all three jobs at no width at all: digits only,
+    # POSITIVE (at least one non-zero digit, so `0` and `0000` fall through to
+    # the fallback exactly as `-gt 0` made them), and it captures the ceiling
+    # with leading zeros stripped — as a STRING, which is the only form of it
+    # bash can hold for a wire value of arbitrary length. `[ "$session_ceiling"
+    # -gt 0 ]` stood here until this was found and must not come back: on
+    # twenty-four digits it exits 2 with `integer expression expected` on the
+    # operator's stderr, mid-roster, and the clause is then SKIPPED — so a live
+    # session with an enormous declared ceiling was graded against
+    # STUCK_AFTER_S and a 700s lock read STUCK here while the floor, whose
+    # `int()` has no range, read it healthy. #624's own defect, inside #624's
+    # own fix.
+    #
+    # Past SESSION_CEILING_MAX_S the ceiling is SATURATED rather than computed
+    # with. `$(( ))` would wrap silently and fabricate a number that is nobody's
+    # record; saturating grades identically to the floor's unbounded arithmetic
+    # for every lock age that can exist, which is the agreement being defended
+    # rather than the arithmetic. The gate is taken on the capture's LENGTH
+    # against the constant's own length, so the two cannot drift apart. The
+    # saturated value is never rendered: `lock_ceiling` is read in exactly one
+    # place, the STUCK note, and reaching it needs a lock age past 10^18.
     lock_ceiling=-1
     lock_bound="$STUCK_AFTER_S"
-    if [ "$session_active" = 1 ] && [[ "$session_ceiling" =~ ^[0-9]+$ ]] \
-       && [ "$session_ceiling" -gt 0 ]; then
-      lock_ceiling=$(( 10#$session_ceiling ))
+    if [ "$session_active" = 1 ] && [[ "$session_ceiling" =~ ^0*([1-9][0-9]*)$ ]]; then
+      if [ "${#BASH_REMATCH[1]}" -gt "${#SESSION_CEILING_MAX_S}" ]; then
+        lock_ceiling=$SESSION_CEILING_MAX_S
+      else
+        lock_ceiling=$(( 10#$session_ceiling ))
+      fi
       lock_bound=$(( lock_ceiling + SESSION_KILL_GRACE_S ))
     fi
     # `nofail` aged into a verdict HERE, on the host, with the same rule the
