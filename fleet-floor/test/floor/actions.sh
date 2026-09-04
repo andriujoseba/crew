@@ -90,10 +90,10 @@ FS_STATE_ACTUAL="$FLOOR_STATE"
 FLOOR_CALLS="$TMP/atomic-calls.log"
 FLOOR_STATE="$TMP/atomic-state"
 : > "$FLOOR_CALLS"
-# stub-box's exec arm drains stdin because the real transport forwards it.
-# Keep recorder-only probes detached from the suite's terminal stdin or this
-# direct exec waits for EOF when the documented command is run interactively.
 FS_RECORD_M=$(fs_mark)
+# stub-box's exec arm drains stdin because the real transport forwards it.
+# Keep this recorder-only probe detached from the suite's terminal stdin or it
+# waits for EOF when the documented command is run interactively.
 "$HERE/stub-box" exec ff-working -- bash -lc \
   $'\ntail -n 1 ~/duty/duty.log\nprintf done\n' </dev/null >/dev/null
 t "calls: a multi-line argv advances the mark once" 1 \
@@ -284,26 +284,47 @@ else ok "mode: the harmless direction fires nothing either"; fi
 # loaded runner. Wait for a fresh wedged publication: otherwise this request
 # may legitimately see the heartbeat become unmeasured, take the graceful
 # path, and spend the action timeout proving a race instead of this contract.
-FS_PING_STALE_AFTER="$(
-  CREW_FLOOR_PING_INTERVAL="${FLOOR_TEST_PING_INTERVAL:-2}" \
-  CREW_FLOOR_PING_FAILS="${FLOOR_TEST_PING_FAILS:-2}" \
+read -r FS_PING_INTERVAL FS_PING_STALE_AFTER <<EOF
+$(
+  CREW_FLOOR_PING_INTERVAL="$FLOOR_TEST_PING_INTERVAL" \
+  CREW_FLOOR_PING_TIMEOUT="$FLOOR_TEST_PING_TIMEOUT" \
+  CREW_FLOOR_PING_FAILS="$FLOOR_TEST_PING_FAILS" \
   FF_SERVER="$FLOOR/server" python3 - <<'PY'
 import os
 import sys
 sys.path.insert(0, os.environ["FF_SERVER"])
-from floor.ping import PING_STALE_AFTER_S
-print(PING_STALE_AFTER_S)
+from floor.ping import PING_INTERVAL_S, PING_STALE_AFTER_S
+print(PING_INTERVAL_S, PING_STALE_AFTER_S)
 PY
-)"
-FS_PING_FRESH_MAX=$(( FS_PING_STALE_AFTER - 1 ))
+)
+EOF
+# A local POST normally takes milliseconds. Leave at least one complete ping
+# scheduler interval plus one second, so an observation near an integer-second
+# boundary cannot become stale before the command handler reads it.
+FS_PING_REQUEST_MARGIN=$(( (FS_PING_INTERVAL > 2 ? FS_PING_INTERVAL : 2) + 1 ))
+FS_PING_FRESH_MAX=$(( FS_PING_STALE_AFTER - FS_PING_REQUEST_MARGIN ))
+if [ "$(( FS_PING_STALE_AFTER - FS_PING_FRESH_MAX ))" -ge 3 ]; then
+  ok "mode: the freshness guard leaves time for the request"
+else
+  fail "mode: the freshness guard leaves time for the request" \
+       "margin=$(( FS_PING_STALE_AFTER - FS_PING_FRESH_MAX ))"
+fi
 FS_DL=$(( $(date +%s) + 60 ))
-while [ "$(uf ff-wedged "u[\"ping\"][\"wedged\"] and u[\"ping\"][\"age\"] <= $FS_PING_FRESH_MAX")" != "True" ] \
-      && [ "$(date +%s)" -lt "$FS_DL" ]; do sleep 1; done
-t "mode: the no-mode check starts from a fresh wedged verdict" True \
-  "$(uf ff-wedged "u[\"ping\"][\"wedged\"] and u[\"ping\"][\"age\"] <= $FS_PING_FRESH_MAX")"
+FS_PING_FRESH=False
+FS_NO_MODE_STATUS=
 FS_M=$(fs_mark)
+while [ "$(date +%s)" -lt "$FS_DL" ]; do
+  FS_PING_FRESH="$(uf ff-wedged "u[\"ping\"][\"wedged\"] and u[\"ping\"][\"age\"] <= $FS_PING_FRESH_MAX")"
+  if [ "$FS_PING_FRESH" = "True" ]; then
+    FS_M=$(fs_mark)
+    FS_NO_MODE_STATUS="$(status POST /api/command '{"action":"restart","box":"ff-wedged"}')"
+    break
+  fi
+  sleep 0.25
+done
+t "mode: the no-mode check starts from a fresh wedged verdict" True "$FS_PING_FRESH"
 t "mode: a restart naming no mode never escalates" 409 \
-  "$(status POST /api/command '{"action":"restart","box":"ff-wedged"}')"
+  "$FS_NO_MODE_STATUS"
 FS_SEEN="$(fs_calls_since "$FS_M")"
 if grep -q '^incus ff-wedged ' <<<"$FS_SEEN"; then
   fail "mode: ...and did not kill the guest on the way" "$FS_SEEN"

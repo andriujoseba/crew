@@ -60,6 +60,13 @@ PORT="${FLOOR_TEST_PORT:-8791}"
 USER=operator
 PASSWD="test-$$"
 
+# Resolve the ping fixture knobs once. The collector and any suite that imports
+# its effective production constants must describe the same running server.
+FLOOR_TEST_PING_INTERVAL="${FLOOR_TEST_PING_INTERVAL:-2}"
+FLOOR_TEST_PING_TIMEOUT="${FLOOR_TEST_PING_TIMEOUT:-4}"
+FLOOR_TEST_PING_FAILS="${FLOOR_TEST_PING_FAILS:-2}"
+export FLOOR_TEST_PING_INTERVAL FLOOR_TEST_PING_TIMEOUT FLOOR_TEST_PING_FAILS
+
 export FLOOR_FIXTURE="$HERE/fixtures/fleet.txt"
 # The fleet under the page is the fixture, so the walk may demand the states
 # only the fixture guarantees: a hostile-log box, a first-session box, several
@@ -163,9 +170,9 @@ CREW_FLOOR_PASS="$PASSWD" CREW_FLOOR_USER="$USER" CREW_FLOOR_PORT="$PORT" \
 CREW_FLOOR_BIND=127.0.0.1 CREW_FLOOR_INTERVAL=3600 \
 CREW_FLOOR_PROBE_TIMEOUT="${FLOOR_TEST_PROBE_TIMEOUT:-6}" \
 CREW_FLOOR_ACTION_TIMEOUT="${FLOOR_TEST_ACTION_TIMEOUT:-8}" \
-CREW_FLOOR_PING_INTERVAL="${FLOOR_TEST_PING_INTERVAL:-2}" \
-CREW_FLOOR_PING_TIMEOUT="${FLOOR_TEST_PING_TIMEOUT:-4}" \
-CREW_FLOOR_PING_FAILS="${FLOOR_TEST_PING_FAILS:-2}" \
+CREW_FLOOR_PING_INTERVAL="$FLOOR_TEST_PING_INTERVAL" \
+CREW_FLOOR_PING_TIMEOUT="$FLOOR_TEST_PING_TIMEOUT" \
+CREW_FLOOR_PING_FAILS="$FLOOR_TEST_PING_FAILS" \
 CREW_FLOOR_VERSION="$FLOOR_TEST_VERSION" \
   python3 "$FLOOR/server/floor.py" >"$TMP/server.log" 2>&1 &
 SRV=$!
