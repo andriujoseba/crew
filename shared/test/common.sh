@@ -7934,6 +7934,34 @@ else
   r1=DRIFTED
 fi
 t kill-grace-cli-consumed consumed "$r1"
+# ...and the ceiling it is added to comes off the WIRE (#624 D1). This one has
+# to be pinned at the source rather than left to a fixture, and the reason is
+# worth stating because it is counter-intuitive: NO end-to-end case can catch a
+# host-side conf read. `crew status` already has `$ROLES_DIR` open, every lane
+# fixture in this tree declares the very number that lane's conf gives it —
+# `TIMEOUT_BUILD=3600` and `timeout=3600s` are the same 3600 on purpose, so the
+# fixture looks like a real box — and a CLI reading the table instead of the
+# record therefore agrees with every one of them. It would ship green and drift
+# on the first role edit, which is exactly what D1 refuses and what #610's own
+# test plan carries as a must-fail. So: the clause assigns from the field
+# auth_from_flow carried out, and the whole region names no conf at all.
+stuck_clause="$(sed -n '/^    lock_ceiling=-1$/,/^    fi$/p' "$CREW_CLI")"
+# shellcheck disable=SC2016  # matching crew's literal assignment
+if grep -q 'lock_ceiling="\$session_ceiling"' <<<"$stuck_clause" \
+   && ! grep -qE 'ROLES_DIR|conf/roles' <<<"$stuck_clause"; then
+  r1=wire
+else
+  r1=DRIFTED
+fi
+t stuck-ceiling-cli-off-the-wire wire "$r1"
+# D1's other half, and it is invisible to every fixture here for the same
+# reason: the stub answers a second round trip as readily as the first. The
+# datum comes out of the tail auth_from_flow already takes, so its body stays
+# the ONE `bxn` its own comment claims — no `box exec` was added beside it, and
+# none inside it.
+cli_flow_source="$(sed -n '/^auth_from_flow()/,/^}/p' "$CREW_CLI")"
+t stuck-ceiling-cli-one-exec 1 \
+  "$(grep -cE '^ *(bxn|box exec) ' <<<"$cli_flow_source")"
 
 # Session activity is derived from the same bounded evidence and crash rule.
 # The floor receives probe.sh's 600-line tail; auth_from_flow must not scan a
