@@ -1177,6 +1177,52 @@ t "stuck: ...worded exactly as it is today" \
 t "stuck: ...and names no ceiling it was never told" None \
   "$(uf ff-lane-legacy "u['lock']['ceiling']")"
 
+# The ceiling whose SPELLING the two readers' languages disagree about, and
+# this is the floor's half of that agreement (round 1, codex-bot).
+# `TIMEOUT_BUILD=0900` is a role conf a host may legitimately hold: nothing
+# between it and `session.sh`'s `timeout=${tmo}s` canonicalises, and GNU
+# `timeout 0900` runs that session, so `timeout=0900s` is a record the engine
+# can write. Python reads those digits as decimal; bash reads a leading zero
+# as OCTAL and `0900` is not octal at all, which is why the CLI needs `10#`
+# and why that side aborted its whole roster loop without it.
+#
+# Driven through the PARSE and the VERDICT together rather than through
+# `ff_stuck_case` below: that helper does its own `int()` on the argument, so
+# it would be asserting the harness's conversion. Here the 900 is the
+# collector's. cli.sh and boxside.sh assert the CLI against these same
+# numbers.
+FF_ZERO="$(FF_SERVER="$FLOOR/server" python3 - <<'PY'
+import json
+import os
+import sys
+
+sys.path.insert(0, os.environ["FF_SERVER"])
+from floor.units import derive_sessions, stuck_verdict
+
+_, cur = derive_sessions([
+    "2026-08-27T15:00:00Z SESSION START kind=build key=crew#624 timeout=0900s log=/h/z.log holder=tick sid=0a1b2c3d",
+], 1787843160)
+inside, _ = stuck_verdict(800, cur)
+over, note = stuck_verdict(961, cur)
+print(json.dumps({"timeout": cur["timeout"], "bound": over["bound"],
+                  "inside": inside["stuck"], "over": over["stuck"],
+                  "ceiling": over["ceiling"], "note": note}, sort_keys=True))
+PY
+)"
+ffz() { python3 -c "import json,sys;print(json.load(sys.stdin)['$1'])" <<<"$FF_ZERO"; }
+t "stuck: a leading-zero ceiling parses to a decimal number" 900 "$(ffz timeout)"
+t "stuck: ...so the bound is those digits plus the grace" 960 "$(ffz bound)"
+# 800s is the discriminating age rather than merely a passing one: it is
+# INSIDE the 960s bound and PAST the 600s fleet-wide constant, so a reader
+# still grading against the constant reaches the opposite verdict here.
+t "stuck: ...and 800s, past the constant but inside the bound, is not stuck" \
+  False "$(ffz inside)"
+t "stuck: ...while one second past the bound is" True "$(ffz over)"
+t "stuck: ...and the ceiling it names is the decimal one" 900 "$(ffz ceiling)"
+t "stuck: ...worded as the CLI words it, to the byte" \
+  "STUCK — duty run has held the lock for 16m, past the build session's 15m ceiling" \
+  "$(ffz note)"
+
 # BOTH ENTRY POINTS, one decision. ff-lane-ping's probe reports no lock at all
 # — the evidence poll had nothing to grade — and only the 10s heartbeat carries
 # an age, so this verdict can only have come through fleet.py's overlay. The
