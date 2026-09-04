@@ -748,6 +748,8 @@ $key $updated"
           [ -n "${updated:-}" ] || continue
           key_pr="${key##*#}"
           if [[ "$captured_prs" == *" $key_pr "* ]]; then
+            _review_owed_clear "$SR" "$key_pr"
+          elif [[ " $ready_prs " == *" $key_pr "* ]]; then
             commit_items="$commit_items
 $key $updated"
             _review_owed_clear "$SR" "$key_pr"

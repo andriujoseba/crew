@@ -366,9 +366,9 @@ t review-exact-head-verdict-clears-counter empty \
   "$([ ! -s "$D671_VERDICT/.review-owed" ] && printf empty || printf PRESENT)"
 
 D671_PARK="$TMP/review-post-park"
-d671_drive "$D671_PARK" none 2 7 0
-t review-valid-park-settles-without-verdict 1 \
-  "$(grep -c '^SESSION ' "$D671_PARK/session-log")"
+d671_drive "$D671_PARK" none 1 7 0
+t review-valid-park-withholds-seen-ledger empty \
+  "$([ ! -s "$D671_PARK/.seen-review" ] && printf empty || printf PRESENT)"
 t review-valid-park-clears-counter empty \
   "$([ ! -s "$D671_PARK/.review-owed" ] && printf empty || printf PRESENT)"
 
