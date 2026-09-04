@@ -451,6 +451,38 @@ else
        "table ends at: $(tail -1 "$CL_TMP/crew-out")"
 fi
 
+# --- ...and where bash cannot HOLD the record at all ------------------------
+#
+# `timeout=999999999999999999999999s`, reachable by the same argument the pair
+# above rests on and refused for a different reason: this is not a spelling the
+# two languages read differently, it is a value one of them has no room for.
+# `[ "$session_ceiling" -gt 0 ]` exits 2 on it, so the ceiling clause was
+# SKIPPED and `cli-lane-huge` was graded against STUCK_AFTER_S — 700s past a
+# 600s constant, STUCK — while the floor's unbounded `int()` graded it against
+# 10^24 + 60 and called it healthy. #624's own defect, inside #624's own fix.
+# `$(( ))` is no repair either: it wraps silently, so letting the value through
+# the guard would have traded a wrong verdict for a fabricated ceiling
+# (round 2, codex-bot).
+if grep -qE '^cli-lane-huge .*session active' "$CL_TMP/crew-out" \
+   && ! grep -qE '^cli-lane-huge .*STUCK' "$CL_TMP/crew-out"; then
+  ok "crew status: a ceiling past bash's range is not STUCK at 700s"
+else
+  fail "crew status: a ceiling past bash's range is not STUCK at 700s" \
+       "$(grep '^cli-lane-huge ' "$CL_TMP/crew-out")"
+fi
+# The NOISE, asserted as absent. `crew status` merges stderr into this capture,
+# and a `[` that fails on its operand writes a line of its own between two
+# roster rows — not fatal, since an `if` condition is exempt from `set -e`, and
+# therefore not caught by the row count or by any verdict assertion. It is
+# still a diagnostic the operator cannot attribute to anything on their screen,
+# and it is the visible half of the defect above.
+if ! grep -q 'integer expression expected' "$CL_TMP/crew-out"; then
+  ok "crew status: no integer expression expected lands between the rows"
+else
+  fail "crew status: no integer expression expected lands between the rows" \
+       "$(grep -n 'integer expression expected' "$CL_TMP/crew-out" | head -3)"
+fi
+
 # The knob keeps its one meaning and gains no second one. Raising it must
 # release the no-session clause and must NOT silently re-cap a declared
 # ceiling — which would re-introduce the false alarm this replaces, on exactly

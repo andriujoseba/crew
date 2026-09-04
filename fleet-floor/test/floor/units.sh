@@ -1223,6 +1223,44 @@ t "stuck: ...worded as the CLI words it, to the byte" \
   "STUCK — duty run has held the lock for 16m, past the build session's 15m ceiling" \
   "$(ffz note)"
 
+# ...and the ceiling one of the two readers has no ROOM for, which is the only
+# place they are not symmetrical and therefore the one worth stating from this
+# side (round 2, codex-bot). Reachable by the same argument as `0900`: the
+# conf is operator-editable, nothing between it and `timeout=${tmo}s`
+# range-checks, and `timeout 999999999999999999999999 true` exits 0.
+#
+# THIS SIDE NEEDS NO CODE, and that is the assertion. Python's int is
+# unbounded, so the parse, the bound and the verdict are the ordinary ones at
+# an extraordinary value — recorded here so "both readers" is asserted on both
+# readers rather than inferred from the one that had to change. 700s is the
+# discriminating age: past the 600s fleet-wide constant, so a reader that fell
+# back to the constant reaches STUCK here, which is exactly what `crew status`
+# did before it stopped putting this value through a fixed-width `test`.
+FF_HUGE="$(FF_SERVER="$FLOOR/server" python3 - <<'PY'
+import json
+import os
+import sys
+
+sys.path.insert(0, os.environ["FF_SERVER"])
+from floor.units import derive_sessions, stuck_verdict
+
+_, cur = derive_sessions([
+    "2026-08-27T15:00:00Z SESSION START kind=build key=crew#624 timeout=999999999999999999999999s log=/h/h.log holder=tick sid=1f2e3d4c",
+], 1787843160)
+short, _ = stuck_verdict(700, cur)
+day, _ = stuck_verdict(86400, cur)
+print(json.dumps({"timeout": str(cur["timeout"]), "bound": str(short["bound"]),
+                  "short": short["stuck"], "day": day["stuck"]}, sort_keys=True))
+PY
+)"
+ffh() { python3 -c "import json,sys;print(json.load(sys.stdin)['$1'])" <<<"$FF_HUGE"; }
+t "stuck: a ceiling past bash's range parses whole on this side" \
+  999999999999999999999999 "$(ffh timeout)"
+t "stuck: ...so the bound is those digits plus the grace" \
+  1000000000000000000000059 "$(ffh bound)"
+t "stuck: ...and 700s, past the constant, is not stuck" False "$(ffh short)"
+t "stuck: ...nor is a whole day" False "$(ffh day)"
+
 # BOTH ENTRY POINTS, one decision. ff-lane-ping's probe reports no lock at all
 # — the evidence poll had nothing to grade — and only the 10s heartbeat carries
 # an age, so this verdict can only have come through fleet.py's overlay. The

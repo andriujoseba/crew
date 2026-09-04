@@ -126,6 +126,13 @@ lockheld_of() {
     # above states at 3600.
     lane-zero)              printf 800 ;;
     lane-zero-over)         printf 961 ;;
+    # Round 2's box, and 700 is discriminating in the one direction that
+    # matters: PAST the 600s fleet-wide constant, and inside a bound of
+    # 10^24 + 60 by every order of magnitude there is. A reader that cannot
+    # hold the declared ceiling falls back to the constant and calls this box
+    # STUCK; the floor, whose `int()` has no range, calls it healthy. There is
+    # no over-the-bound twin because no lock age can be past that bound.
+    lane-huge)              printf 700 ;;
     *)                      printf '' ;;
   esac
 }
@@ -301,6 +308,23 @@ duty_log_of() {
       echo "$(ago 1000) duty run start"
       echo "$(ago 1000) heavy-duty/crew: build duty (ready unclaimed=1, whole rounds owed=0)"
       echo "$(ago 990) SESSION START kind=build key=crew#624 timeout=0900s log=/h/duty/logs/z.log holder=tick sid=0a1b2c3d-4e5f-6071-8293-a4b5c6d7e8f9"
+      ;;
+    lane-huge)
+      # The same question asked of a record BASH CANNOT HOLD (round 2,
+      # codex-bot). Reachable by the same argument the pair above rests on: a
+      # role conf is operator-editable, nothing between it and
+      # `timeout=${tmo}s` range-checks, and `timeout 999999999999999999999999
+      # true` exits 0 — so the engine will write this line as readily as it
+      # writes `0900`. Python's int holds every digit; bash's is a fixed-width
+      # signed 64, and BOTH of its ways of touching the value are wrong. `[
+      # "$session_ceiling" -gt 0 ]` exits 2 with `integer expression expected`
+      # and skips the clause, so this box was graded against the fleet-wide
+      # constant and called STUCK while the floor called it healthy — and
+      # `$(( ))` would have wrapped SILENTLY to 2003764205206896639, a ceiling
+      # that is nobody's record.
+      echo "$(ago 800) duty run start"
+      echo "$(ago 800) heavy-duty/crew: build duty (ready unclaimed=1, whole rounds owed=0)"
+      echo "$(ago 790) SESSION START kind=build key=crew#624 timeout=999999999999999999999999s log=/h/duty/logs/h.log holder=tick sid=1f2e3d4c-5b6a-7988-9a0b-1c2d3e4f5a6b"
       ;;
     lane-legacy)
       # An engine older than the `timeout=` token — every line ever written
@@ -621,7 +645,7 @@ case "${1:-}" in
         _log=1; _active=0
         case "$sc" in
           nothired|unconverged|premanifest|neverticked|suppressed-notimestamp) _log=0 ;;
-          working|suppressed-working|suppressed-paired-crash|noauth|skew-behind|skew-ahead|invalid-tickage|lane-build|lane-edge|lane-over|lane-ping|lane-legacy|lane-zero|lane-zero-over) _active=1 ;;
+          working|suppressed-working|suppressed-paired-crash|noauth|skew-behind|skew-ahead|invalid-tickage|lane-build|lane-edge|lane-over|lane-ping|lane-legacy|lane-zero|lane-zero-over|lane-huge) _active=1 ;;
         esac
         # The lock age comes from lockheld_of, the same reader probe.sh's
         # ::lockheld and the ping's `l` field use. It used to be spelled a

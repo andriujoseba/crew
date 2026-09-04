@@ -66,3 +66,9 @@ cli-lane-legacy running  lane-legacy
 # `cli-unconverged` and `cli-premanifest` rather than at the end of the file.
 cli-lane-zero  running  lane-zero
 cli-lane-zero-over running lane-zero-over
+# ...and asked of a ceiling bash cannot HOLD, not merely one it spells wrong:
+# `timeout=999999999999999999999999s`. `test` fails on it, the clause is
+# skipped, and the box is graded against the 600s constant while the floor's
+# unbounded `int()` grades it against 10^24 + 60. Same file position, same
+# reason: it sits above the two rows that must still print.
+cli-lane-huge  running  lane-huge

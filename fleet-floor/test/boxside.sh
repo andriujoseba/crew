@@ -1020,6 +1020,36 @@ t "flow-cli: the floor reads those digits as nine hundred" "build 900" \
 t "flow-cli: ...and the CLI's own canonicalisation reaches the same number" 900 \
   "$(( 10#$(bs_flow_field 13 "$BS_FLOW_LINE") ))"
 
+# ...and the same claim where one reader has no ROOM for the record rather
+# than a different reading of it (round 2, codex-bot). Reachable by the same
+# argument as `0900`: the conf is operator-editable, nothing between it and
+# `timeout=${tmo}s` range-checks, and `timeout 999999999999999999999999 true`
+# exits 0. The producer's job is unchanged and that is the point — the wire
+# carries the record's own digits whatever either reader can hold, which is D1.
+bs_flow_log "$BS_FH" \
+  "800 duty run start" \
+  "790 SESSION START kind=build key=crew#624 timeout=999999999999999999999999s log=/h/h.log holder=tick sid=1f2e3d4c"
+BS_FLOW_LINE="$(bs_flow "$BS_FH")"
+t "flow-cli: a ceiling past bash's range goes out as the record spells it" \
+  "build 999999999999999999999999" "$(awk '{print $12, $13}' <<<"$BS_FLOW_LINE")"
+t "flow-cli: the floor holds every one of those digits" \
+  "build 999999999999999999999999" "$(bs_flow_cur "$BS_FH/duty/duty.log")"
+# The DIVERGENCE, pinned rather than left to be re-derived. This is the one
+# place the two readers cannot be made to reach the same number, and stating
+# it here is what keeps a later "simplification" back to plain arithmetic from
+# looking harmless: `$(( 10# ))` does not fail on these digits, it WRAPS, and
+# a wrapped ceiling is a number that is nobody's record. `cmd_status` saturates
+# instead, which reaches the same VERDICT as the floor for every lock age that
+# can exist — asserted where verdicts run, in cli.sh and floor/units.sh.
+BS_FLOW_WIRE="$(bs_flow_field 13 "$BS_FLOW_LINE")"
+if [ "$(( 10#$BS_FLOW_WIRE ))" = "$BS_FLOW_WIRE" ]; then
+  BS_FLOW_HOLD=held
+else
+  BS_FLOW_HOLD=wraps
+fi
+t "flow-cli: ...which bash's own arithmetic cannot, hence the saturation" \
+  wraps "$BS_FLOW_HOLD"
+
 if [ -n "${BS_STANDALONE:-}" ]; then
   echo
   echo "== box-side summary: $PASS ok, $SKIP skipped, ${#FAILS[@]} failed"
