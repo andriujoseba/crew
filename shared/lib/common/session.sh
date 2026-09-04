@@ -256,6 +256,11 @@ _session_log_bytes() {
 # a deliberate change with its own evidence — not a config edit.
 SESSION_RESUME_MAX_TRIES=1
 
+# Set by `_session_resume_plan` when the next dispatch continues a session.
+# The outcome is carried in the stub rather than rediscovered from duty.log,
+# so the resumed prompt can say why the predecessor stopped.
+_SESSION_RESUME_OUTCOME=""
+
 # _session_sid_valid SID — a v4-shaped UUID and nothing else. The shape is
 # checked with a glob and the alphabet with a substitution, so no `[[ =~ ]]`
 # and no fork. Two guards rather than one, and THE SECOND READS ONLY THE
@@ -382,7 +387,8 @@ _session_resume_state() {
 # what `run_session` already calls this quantity where it emits it.
 _session_resume_read() {
   local file="$1" want_kind="${2-}" want_key="${3-}" line field value lines=0
-  local kind="" key="" sid="" head="" wall="" try="" logb="" survivor_count=""
+  local kind="" key="" sid="" head="" wall="" try="" outcome="" productive=""
+  local survivor_count=""
   local seen=""
   [ -s "$file" ] || return 0
   while IFS= read -r line || [ -n "$line" ]; do
@@ -418,7 +424,8 @@ _session_resume_read() {
       head) head="$value" ;;
       wall) wall="$value" ;;
       try) try="$value" ;;
-      log) logb="$value" ;;
+      outcome) outcome="$value" ;;
+      productive) productive="$value" ;;
       left) survivor_count="$value" ;;
       *) return 0 ;;
     esac
@@ -427,8 +434,8 @@ _session_resume_read() {
   # half-written when the box died, and the two figures D6 reads are exactly
   # the ones that only exist at the moment of the kill.
   [ -n "$kind" ] && [ -n "$key" ] && [ -n "$sid" ] && [ -n "$head" ] \
-    && [ -n "$wall" ] && [ -n "$try" ] && [ -n "$logb" ] \
-    && [ -n "$survivor_count" ] || return 0
+    && [ -n "$wall" ] && [ -n "$try" ] && [ -n "$outcome" ] \
+    && [ -n "$productive" ] && [ -n "$survivor_count" ] || return 0
   # The identity the path could not carry. A stub reached through a colliding
   # fold names the OTHER lane's pair, and a lane that is not this one is not a
   # session this dispatch may continue.
@@ -437,10 +444,11 @@ _session_resume_read() {
   { _session_head_valid "$head" || [ "$head" = unknown ]; } || return 0
   case "$wall" in '' | *[!0-9]*) return 0 ;; esac
   case "$try" in '' | *[!0-9]*) return 0 ;; esac
-  case "$logb" in unknown) ;; '' | *[!0-9]*) return 0 ;; esac
+  case "$outcome" in TIMEOUT | MEMORY) ;; *) return 0 ;; esac
+  case "$productive" in yes | no) ;; *) return 0 ;; esac
   case "$survivor_count" in unknown) ;; '' | *[!0-9]*) return 0 ;; esac
-  printf 'sid=%s\nhead=%s\nwall=%s\ntry=%s\nlog=%s\nleft=%s\n' \
-    "$sid" "$head" "$wall" "$try" "$logb" "$survivor_count"
+  printf 'sid=%s\nhead=%s\nwall=%s\ntry=%s\noutcome=%s\nproductive=%s\nleft=%s\n' \
+    "$sid" "$head" "$wall" "$try" "$outcome" "$productive" "$survivor_count"
 }
 
 # _session_resume_plan KIND KEY DIR — decide whether this dispatch continues
@@ -472,10 +480,11 @@ _session_resume_read() {
 # would be the second resume D7 exists to forbid.
 _session_resume_plan() {
   local kind="$1" key="$2" dir="$3" state fields
-  local sid="" head="" try="" logb="" survivor_count=""
+  local sid="" head="" try="" outcome="" productive="" survivor_count=""
   _SESSION_SID=""
   _SESSION_RESUMED=no
   _SESSION_TRY=0
+  _SESSION_RESUME_OUTCOME=""
   state="$(_session_resume_state "$kind" "$key")"
   fields="$(_session_resume_read "$state" "$kind" "$key")"
   rm -f "$state" 2>/dev/null || true
@@ -483,18 +492,20 @@ _session_resume_plan() {
   while IFS='=' read -r field value; do
     case "$field" in
       sid) sid="$value" ;; head) head="$value" ;; try) try="$value" ;;
-      log) logb="$value" ;; left) survivor_count="$value" ;;
+      outcome) outcome="$value" ;; productive) productive="$value" ;;
+      left) survivor_count="$value" ;;
     esac
   done <<<"$fields"
   [ "$head" != unknown ] || return 0
   [ "$head" = "$(_session_head "$dir")" ] || return 0
-  [ "$logb" != unknown ] && [ "$logb" -gt 0 ] || return 0
+  [ "$productive" = yes ] || return 0
   [ "$survivor_count" != unknown ] && [ "$survivor_count" -eq 0 ] || return 0
   [ "$try" -lt "$SESSION_RESUME_MAX_TRIES" ] || return 0
   declare -F bot_cli_resume_args >/dev/null 2>&1 || return 0
   _SESSION_SID="$sid"
   _SESSION_RESUMED=yes
   _SESSION_TRY=$((try + 1))
+  _SESSION_RESUME_OUTCOME="$outcome"
   return 0
 }
 
@@ -536,6 +547,7 @@ _session_identity() {
     _SESSION_SID=""
     _SESSION_RESUMED=no
     _SESSION_TRY=0
+    _SESSION_RESUME_OUTCOME=""
   fi
   _SESSION_SID="$(_session_mint_sid)"
   [ "$_SESSION_SID" != unknown ] || return 0
@@ -558,7 +570,7 @@ _session_identity() {
   return 0
 }
 
-# _session_resume_record KIND KEY DIR RC WALL LOG_BYTES LEFT VERDICT — the
+# _session_resume_record KIND KEY DIR RC WALL LEFT VERDICT LOG — the
 # stub, D5.
 #
 # Written on a TIMEOUT and on nothing else; ANY other end deletes it, which is
@@ -608,15 +620,15 @@ _session_identity() {
 # truncated stub reads as absent, which is the answer it should get. A rename
 # dance would buy the same outcome through a second mechanism.
 _session_resume_record() {
-  local kind="$1" key="$2" dir="$3" rc="$4" wall="$5" logb="$6" survivor_count="$7"
-  local verdict="$8"
-  local state
+  local kind="$1" key="$2" dir="$3" rc="$4" wall="$5" survivor_count="$6"
+  local verdict="$7" slog="$8" productive=yes state
   state="$(_session_resume_state "$kind" "$key")"
   # Both halves are asserted rather than one: the verdict is what decides, and
   # the `rc` check is redundant by construction — `verdict=TIMEOUT` is set only
   # under `rc=124` — so it costs nothing and states the episode this stub is
   # about on the face of the code.
-  if [ "$rc" -ne 124 ] || [ "$verdict" != TIMEOUT ]; then
+  if { [ "$verdict" != TIMEOUT ] || [ "$rc" -ne 124 ]; } \
+      && { [ "$verdict" != MEMORY ] || [ "$rc" -eq 0 ]; }; then
     rm -f "$state" 2>/dev/null || true
     return 0
   fi
@@ -624,11 +636,53 @@ _session_resume_record() {
   # could never satisfy D6 anyway. Refuse to write one rather than leave a file
   # whose only possible future is being discarded.
   [ "$_SESSION_SID" != unknown ] || { rm -f "$state" 2>/dev/null || true; return 0; }
+  session_terminal "$slog" && productive=no
   case "$wall" in '' | *[!0-9]*) wall=0 ;; esac
-  printf 'kind=%s\nkey=%s\nsid=%s\nhead=%s\nwall=%s\ntry=%s\nlog=%s\nleft=%s\n' \
+  printf 'kind=%s\nkey=%s\nsid=%s\nhead=%s\nwall=%s\ntry=%s\noutcome=%s\nproductive=%s\nleft=%s\n' \
     "$kind" "$key" "$_SESSION_SID" "$(_session_head "$dir")" "$wall" \
-    "$_SESSION_TRY" "$logb" "$survivor_count" >"$state" 2>/dev/null || true
+    "$_SESSION_TRY" "$verdict" "$productive" "$survivor_count" \
+    >"$state" 2>/dev/null || true
   return 0
+}
+
+# _session_oom_source — the narrowest kernel counter available to this engine.
+# cgroup v2's memory.events counts kills in this service's own cgroup; the
+# node-wide vmstat counter is the fallback on older or differently mounted
+# systems. The private override is a test seam, not operator configuration.
+_session_oom_source() {
+  local proc_root="${SESSION_PROC_ROOT:-/proc}" cgroup_root="${_SESSION_CGROUP_ROOT:-/sys/fs/cgroup}"
+  local hierarchy controllers path candidate
+  if [ -n "${_SESSION_OOM_EVENTS_FILE:-}" ] && [ -r "$_SESSION_OOM_EVENTS_FILE" ]; then
+    printf '%s' "$_SESSION_OOM_EVENTS_FILE"
+    return 0
+  fi
+  while IFS=: read -r hierarchy controllers path; do
+    if [ "$hierarchy" = 0 ] && [ -z "$controllers" ]; then
+      candidate="${cgroup_root%/}${path%/}/memory.events"
+      [ -r "$candidate" ] && { printf '%s' "$candidate"; return 0; }
+      break
+    fi
+  done <"$proc_root/self/cgroup" 2>/dev/null
+  [ -r "${_SESSION_OOM_VMSTAT_FILE:-$proc_root/vmstat}" ] \
+    && printf '%s' "${_SESSION_OOM_VMSTAT_FILE:-$proc_root/vmstat}"
+  return 0
+}
+
+# _session_oom_count FILE — oom_kill from either memory.events or vmstat.
+# Anything unreadable or malformed is no measurement and prints nothing.
+_session_oom_count() {
+  awk '$1 == "oom_kill" && $2 ~ /^[0-9]+$/ { print $2; exit }' "$1" 2>/dev/null
+}
+
+_session_resume_preamble() {
+  case "$1" in
+    MEMORY)
+      printf '%s' 'The previous attempt was terminated because this box ran out of memory. The last command in its log is suspect: do not run it again. Record it as unverified, name the tool and the out-of-memory reason, and continue.'
+      ;;
+    TIMEOUT)
+      printf '%s' 'The previous attempt reached its wall-clock limit. Continue from its existing transcript without repeating completed work.'
+      ;;
+  esac
 }
 
 # run_session KIND KEY DIR TIMEOUT PROMPT — the only way a duty launches the
@@ -639,6 +693,7 @@ _session_resume_record() {
 run_session() {
   local kind="$1" key="$2" dir="$3" tmo="$4" prompt="$5"
   local slog session_stamp cli_log structured_log="" cli_stderr_fd=1 rc=0 start terminal=no
+  local oom_source="" oom_before="" oom_after="" oom_delta=0 resume_preamble=""
   # Budget BEFORE the terminal gate, and the order is load-bearing (#464): the
   # terminal gate's recovery path makes a live vendor probe, and a lane that
   # has spent its window must not be able to buy one.
@@ -655,6 +710,12 @@ run_session() {
   # `duty-review.sh`, the two most contended files on this board, are not
   # touched at all.
   _session_identity "$kind" "$key" "$dir"
+  if [ "$_SESSION_RESUMED" = yes ]; then
+    resume_preamble="$(_session_resume_preamble "$_SESSION_RESUME_OUTCOME")"
+    [ -z "$resume_preamble" ] || prompt="$resume_preamble
+
+$prompt"
+  fi
   mkdir -p "$LOG_DIR"
   slog="$LOG_DIR/$(date -u '+%Y%m%dT%H%M%SZ')-$kind-${key//[\/#]/_}.log"
   session_stamp="${slog##*/}"
@@ -682,6 +743,8 @@ run_session() {
   # tier=, log=, left= and peak_rss= on SESSION END below.
   log "SESSION START kind=$kind key=$key timeout=${tmo}s log=$slog holder=$(_session_holder) sid=$_SESSION_SID"
   start=$SECONDS
+  oom_source="$(_session_oom_source)"
+  [ -z "$oom_source" ] || oom_before="$(_session_oom_count "$oom_source")"
   # </dev/null: the CLI reads piped stdin to EOF as context, and stdin here
   # is the caller's while-read work list — without this, the first session
   # of a sweep swallowed every remaining repo (one-iteration loops).
@@ -741,6 +804,11 @@ run_session() {
   # separate actor reading the same figure off the same file.
   _session_mem_watch_start "$slog.peak" "$slog.mem" "$_SESSION_DISPATCH_PID" "$kind"
   wait "$_SESSION_DISPATCH_PID" || rc=$?
+  [ -z "$oom_source" ] || oom_after="$(_session_oom_count "$oom_source")"
+  case "$oom_before:$oom_after" in
+    *[!0-9:]* | :* | *:) oom_delta=0 ;;
+    *) [ "$oom_after" -ge "$oom_before" ] && oom_delta=$((oom_after - oom_before)) ;;
+  esac
   local survivor_count
   printf -v survivor_count '%s' "$(_session_left "$session_stamp")"
   _session_peak_rss_stop
@@ -765,6 +833,8 @@ run_session() {
   # kill count toward the vendor breaker and stop a lane for a reason the
   # vendor had nothing to do with.
   if [ -n "$mem_hit" ]; then
+    verdict="$SESSION_MEM_OUTCOME"
+  elif [ "$oom_delta" -gt 0 ] && [ "$verdict" != ok ]; then
     verdict="$SESSION_MEM_OUTCOME"
   elif [ "$verdict" = FAILED ] && session_terminal "$slog"; then
     verdict=TERMINAL
@@ -830,12 +900,12 @@ run_session() {
   # Unconditional, unlike the two suffixes ahead of it — a session with no id
   # emits `sid=unknown`, because D3 asks for the token on EVERY record and
   # `unknown` is the answer `_session_mint_sid` already gives.
-  log "SESSION END kind=$kind key=$key rc=$rc dur=${dur}s outcome=$verdict acted=$acted reply_tail=$reply_tail log=$log_bytes left=$survivor_count tier=$_SESSION_TIER${peak_rss:+ peak_rss=$peak_rss}$usage_suffix$pool_suffix$sid_suffix"
+  log "SESSION END kind=$kind key=$key rc=$rc dur=${dur}s outcome=$verdict acted=$acted reply_tail=$reply_tail log=$log_bytes left=$survivor_count tier=$_SESSION_TIER${peak_rss:+ peak_rss=$peak_rss} oom=$oom_delta$usage_suffix$pool_suffix$sid_suffix"
   # Written after the line that reports the session and before the counters
   # that bill it, reading the two figures that line just published: this stub
   # and that record can never disagree about what the session left behind.
-  _session_resume_record "$kind" "$key" "$dir" "$rc" "$tmo" "$log_bytes" \
-    "$survivor_count" "$verdict"
+  _session_resume_record "$kind" "$key" "$dir" "$rc" "$tmo" \
+    "$survivor_count" "$verdict" "$slog"
   _session_terminal_record "$kind" "$terminal" "$acted" "$slog"
   # The rolling counter is written alongside the line that carries the same
   # duration, so the budget and the log can never disagree about what a
