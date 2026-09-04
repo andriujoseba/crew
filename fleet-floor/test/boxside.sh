@@ -951,22 +951,74 @@ t "flow-cli: a closed session declares nothing" "- -1" \
 t "flow-cli: ...and reports no session in flight" 0 \
   "$(bs_flow_field 10 "$BS_FLOW_LINE")"
 
-# The floor reads the same evidence, and this is where the two readers are held
-# together on it: `derive_sessions` over the same log must name the same lane
-# and the same ceiling the shell just scanned. A private regex on either side
-# is the disagreement auth_from_flow exists to remove.
+# The other way a session stops being in flight, and until round 1 it was the
+# one the wire lied about: an orphan past the six-hour bound is a crashed
+# session, not live work, and the floor holds NO kind and NO ceiling for it —
+# its `cur` is None. The script used to emit that dead START's numbers anyway,
+# inertly, correct only because `cmd_status` gates them on field 10. A field
+# that is wrong-but-unread is a second source of truth waiting for a reader,
+# which is the thing auth_from_flow exists to refuse, so it now says what the
+# floor says (round 1, claude-bot).
 bs_flow_log "$BS_FH" \
-  "3690 SESSION START kind=build key=crew#624 timeout=3600s log=/h/g.log holder=tick sid=8f1c0a2e"
-BS_FLOW_CUR="$(BS_SERVER="$BS_FLOOR/server" python3 - "$BS_FH/duty/duty.log" <<'PY'
+  "25000 duty run start" \
+  "24990 SESSION START kind=build key=crew#d timeout=3600s log=/h/d.log holder=tick sid=dead1"
+BS_FLOW_LINE="$(bs_flow "$BS_FH")"
+t "flow-cli: an orphan past the six-hour bound declares nothing" "- -1" \
+  "$(awk '{print $12, $13}' <<<"$BS_FLOW_LINE")"
+t "flow-cli: ...and reports no session in flight either" 0 \
+  "$(bs_flow_field 10 "$BS_FLOW_LINE")"
+
+# bs_flow_cur <log> — `derive_sessions`'s in-flight session over the same file
+# the shell just scanned, as `<kind> <timeout>` or `none`. One reader of the
+# floor, for the same reason duty_log_of is one writer of the fixtures: two
+# spellings of "what the floor makes of this log" could drift apart and leave
+# every cross-reader case below comparing a box against itself.
+bs_flow_cur() {
+  BS_SERVER="$BS_FLOOR/server" python3 - "$1" <<'PY'
 import os, sys, time
 sys.path.insert(0, os.environ["BS_SERVER"])
 import floor
 _, cur = floor.derive_sessions(open(sys.argv[1]).read().splitlines(), time.time())
 print("%s %s" % (cur["kind"], cur["timeout"]) if cur else "none")
 PY
-)"
+}
+
+t "flow-cli: ...and the floor makes nothing of that log either" none \
+  "$(bs_flow_cur "$BS_FH/duty/duty.log")"
+
+# The floor reads the same evidence, and this is where the two readers are held
+# together on it: `derive_sessions` over the same log must name the same lane
+# and the same ceiling the shell just scanned. A private regex on either side
+# is the disagreement auth_from_flow exists to remove.
+bs_flow_log "$BS_FH" \
+  "3690 SESSION START kind=build key=crew#624 timeout=3600s log=/h/g.log holder=tick sid=8f1c0a2e"
+BS_FLOW_CUR="$(bs_flow_cur "$BS_FH/duty/duty.log")"
 t "flow-cli: both readers scan one line to the same ceiling" "$BS_FLOW_CUR" \
   "$(awk '{print $12, $13}' <<<"$(bs_flow "$BS_FH")")"
+
+# ...and the same claim where the two readers' LANGUAGES disagree about the
+# digits rather than about the line (round 1, codex-bot). `TIMEOUT_BUILD=0900`
+# is a role conf a host may hold: nothing between it and `session.sh`'s
+# `timeout=${tmo}s` canonicalises, and GNU `timeout 0900` runs that session.
+# Neither reader rewrites the box's record — D1 is that the record is read —
+# so the wire carries `0900` and each reader turns it into a number itself.
+# Python reads a leading zero as decimal. Bash reads it as OCTAL, so a
+# `crew status` without the `10#` took `0900` into `$(( ))` as an invalid
+# octal literal and died out of the middle of the roster loop, on a box the
+# floor rendered fine. The pair below is the wire and the agreement, stated
+# separately because only the second one is about both readers.
+bs_flow_log "$BS_FH" \
+  "600 duty run start" \
+  "590 SESSION START kind=build key=crew#624 timeout=0900s log=/h/z.log holder=tick sid=0a1b2c3d"
+BS_FLOW_LINE="$(bs_flow "$BS_FH")"
+t "flow-cli: a leading-zero ceiling goes out as the record spells it" "build 0900" \
+  "$(awk '{print $12, $13}' <<<"$BS_FLOW_LINE")"
+# The floor's absolute reading is pinned as well as the agreement: two readers
+# that were broken the same way would satisfy an agreement test on its own.
+t "flow-cli: the floor reads those digits as nine hundred" "build 900" \
+  "$(bs_flow_cur "$BS_FH/duty/duty.log")"
+t "flow-cli: ...and the CLI's own canonicalisation reaches the same number" 900 \
+  "$(( 10#$(bs_flow_field 13 "$BS_FLOW_LINE") ))"
 
 if [ -n "${BS_STANDALONE:-}" ]; then
   echo
