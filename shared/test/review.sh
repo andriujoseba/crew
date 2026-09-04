@@ -258,8 +258,9 @@ DUTY_DIR="$D671_COUNT" _review_owed_clear fx/repo 7
 t review-owed-settle-clears-all-heads empty \
   "$([ ! -s "$D671_COUNT/.review-owed" ] && printf empty || printf PRESENT)"
 
-d671_drive() ( # root post-mode ticks [capture] [invalid] [multi]
+d671_drive() ( # root post-mode ticks [capture] [invalid] [multi] [mutation]
   local root="$1" post_mode="$2" ticks="$3" capture="${4:-}" invalid="${5:-0}" multi="${6:-0}"
+  local mutation="${7:-none}"
   # shellcheck disable=SC2030  # fixture globals are intentionally isolated
   local DUTY_DIR="$root" WORK_DIR="$root/work" TREES_DIR="$root/trees"
   local LOG_DIR="$root/logs" CONF_DIR="$root/conf" PROMPTS_DIR="$SHARED/prompts"
@@ -299,6 +300,8 @@ d671_drive() ( # root post-mode ticks [capture] [invalid] [multi]
               jq -cn '{data:{repository:{pullRequest:{reviews:{nodes:[]}}}}}'
             fi
             ;;
+          dismissed) jq -cn --arg h "$D671_HEAD_A" '{data:{repository:{pullRequest:{reviews:{nodes:[{commit:{oid:$h},state:"DISMISSED"}]}}}}}' ;;
+          wrong-head) jq -cn --arg h "$D671_HEAD_B" '{data:{repository:{pullRequest:{reviews:{nodes:[{commit:{oid:$h},state:"APPROVED"}]}}}}}' ;;
           none) jq -cn '{data:{repository:{pullRequest:{reviews:{nodes:[]}}}}}' ;;
           error) return 1 ;;
         esac
@@ -333,6 +336,10 @@ d671_drive() ( # root post-mode ticks [capture] [invalid] [multi]
   }
   log() { :; }
   warn() { printf '%s\n' "$*" >>"$root/warn"; }
+  case "$mutation" in
+    accept-nonverdict) _review_verdict_at_head() { REVIEW_VERDICT_POSTCONDITION=mutated; return 0; } ;;
+    unbounded) _review_owed_exhausted() { return 1; } ;;
+  esac
   for ((tick=1; tick<=ticks; tick++)); do duty_review; done
 )
 
@@ -392,6 +399,20 @@ t review-mixed-session-retry-excludes-settled-sibling 1 \
   "$(grep -c 'oldest first: 8\.' "$D671_MIXED/session-log")"
 t review-postcondition-query-is-scoped-to-me 3 \
   "$(grep -c '^POST-SCOPED-TO-ME$' "$D671_MIXED/calls")"
+
+# Required mutations: each deliberately weakens one failure direction. The
+# fixture reports `red` only when that weakening violates its safety property.
+for D671_MUT_KIND in none dismissed wrong-head error; do
+  D671_MUT="$TMP/review-mutant-$D671_MUT_KIND"
+  d671_drive "$D671_MUT" "$D671_MUT_KIND" 1 '' 0 0 accept-nonverdict
+  t "review-$D671_MUT_KIND-settlement-mutation-reds" red \
+    "$([ -s "$D671_MUT/.seen-review" ] && printf red || printf FALSE-PASS)"
+done
+D671_MUT="$TMP/review-mutant-unbounded"
+d671_drive "$D671_MUT" none 4 '' 0 0 unbounded
+t review-unbounded-retry-mutation-reds red \
+  "$([ "$(grep -c '^SESSION ' "$D671_MUT/session-log")" -eq 4 ] \
+      && [ ! -s "$D671_MUT/.seen-review" ] && printf red || printf FALSE-PASS)"
 
 # #605: repo commands run in the detached checkout, never its worktree parent.
 # Drive the real prompt render above so the engine-to-prompt contract is pinned,

@@ -401,6 +401,8 @@ _review_owed_attempt() { # $1=repo $2=num $3=head; prints new attempt count
   printf '%s\n' "$count"
 }
 
+_review_owed_exhausted() { [ "$1" -ge 3 ]; }
+
 # _review_check_evidence_from_payload REPO NUM SNAPSHOT CURRENT_HEAD — render
 # the check evidence handed to a reviewer. SNAPSHOT is one `gh pr view` object:
 # its headRefOid and statusCheckRollup are one atomic view, so every conclusion
@@ -765,7 +767,7 @@ $key $updated"
               warn "review: $SR#$key_pr could not update its missing-verdict attempt counter; request remains owed"
               continue
             fi
-            if [ "$attempt" -ge 3 ]; then
+            if _review_owed_exhausted "$attempt"; then
               warn "review: $SR#$key_pr at ${candidate_heads["$SR#$key_pr"]} still has no exact-head verdict after $attempt attempts — settling local spend; GitHub request remains live"
               commit_items="$commit_items
 $key $updated"
