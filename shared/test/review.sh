@@ -143,8 +143,12 @@ d601_drive() (
     fi
     if [ "$1" = search ]; then return 0; fi
     if [ "$1" = api ] && [ "$2" = graphql ]; then
-      if [[ "$*" == *'reviews(author:'* ]]; then
+      if [[ "$*" == *'timelineItems(itemTypes:'* ]]; then
         printf '%s - - - 2026-08-30T06:30:00Z\n' "$D601_HEAD"
+      elif [[ "$*" == *'reviews(author:'* ]]; then
+        jq -cn --arg head "$D601_HEAD" '{data:{repository:{pullRequest:{reviews:{nodes:[
+          {commit:{oid:$head},submittedAt:"2026-08-30T07:01:00Z",state:"APPROVED"}
+        ]}}}}}'
       else
         jq -cn --arg head "$D601_HEAD" '{data:{repository:{pullRequest:{
           headRefOid:$head, author:{login:"author"}, labels:{nodes:[]},
@@ -195,6 +199,171 @@ if grep -q -- '--add-label state:building' "$D601_CALLS"; then r1=WRITES-IT; els
 t addressing-never-writes-state-building absent "$r1"
 t review-session-removes-its-mutation-copy gone \
   "$([ ! -e "$D601/trees/fx__repo/mutation-7" ] && printf gone || printf PRESENT)"
+t completed-session-exact-head-verdict-settles \
+  'fx/repo#7 2026-08-30T07:00:00Z' "$(cat "$D601/.seen-review")"
+
+# #671: a successful model process is not a durable terminal action. The
+# postcondition is an exact-head opinionated review by this identity or a
+# recognized park; everything else remains owed, with local spending bounded
+# to three attempts per PR/head.
+D671_HEAD_A="eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+D671_HEAD_B="ffffffffffffffffffffffffffffffffffffffff"
+
+d671_verdict_result() ( # payload-kind expected-head
+  local kind="$1" expected="$2" ME=fixture-reviewer
+  gh() {
+    case "$kind" in
+      approve) jq -cn --arg h "$D671_HEAD_A" '{data:{repository:{pullRequest:{reviews:{nodes:[{commit:{oid:$h},state:"APPROVED"}]}}}}}' ;;
+      changes) jq -cn --arg h "$D671_HEAD_A" '{data:{repository:{pullRequest:{reviews:{nodes:[{commit:{oid:$h},state:"CHANGES_REQUESTED"}]}}}}}' ;;
+      dismissed) jq -cn --arg h "$D671_HEAD_A" '{data:{repository:{pullRequest:{reviews:{nodes:[{commit:{oid:$h},state:"DISMISSED"}]}}}}}' ;;
+      none) jq -cn '{data:{repository:{pullRequest:{reviews:{nodes:[]}}}}}' ;;
+      malformed) printf 'not-json\n' ;;
+      error) return 1 ;;
+    esac
+  }
+  if _review_verdict_at_head fx/repo 7 "$expected"; then
+    printf 'yes:%s\n' "$REVIEW_VERDICT_POSTCONDITION"
+  else
+    printf 'no:%s\n' "$REVIEW_VERDICT_POSTCONDITION"
+  fi
+)
+
+t review-postcondition-accepts-approval "yes:APPROVED" \
+  "$(d671_verdict_result approve "$D671_HEAD_A")"
+t review-postcondition-accepts-changes "yes:CHANGES_REQUESTED" \
+  "$(d671_verdict_result changes "$D671_HEAD_A")"
+t review-postcondition-rejects-dismissed "no:none" \
+  "$(d671_verdict_result dismissed "$D671_HEAD_A")"
+t review-postcondition-rejects-other-head "no:none" \
+  "$(d671_verdict_result approve "$D671_HEAD_B")"
+t review-postcondition-empty-reviews-is-no-verdict "no:none" \
+  "$(d671_verdict_result none "$D671_HEAD_A")"
+t review-postcondition-malformed-is-lookup-error "no:lookup-error" \
+  "$(d671_verdict_result malformed "$D671_HEAD_A")"
+t review-postcondition-api-error-is-lookup-error "no:lookup-error" \
+  "$(d671_verdict_result error "$D671_HEAD_A")"
+
+D671_COUNT="$TMP/review-owed-counter"
+mkdir -p "$D671_COUNT"
+(
+  DUTY_DIR="$D671_COUNT"
+  _review_owed_attempt fx/repo 7 "$D671_HEAD_A"
+  _review_owed_attempt fx/repo 7 "$D671_HEAD_A"
+  _review_owed_attempt fx/repo 7 "$D671_HEAD_B"
+) >"$D671_COUNT/results"
+t review-owed-same-head-increments $'1\n2\n1' "$(cat "$D671_COUNT/results")"
+t review-owed-moved-head-discards-old-counter "fx/repo#7@$D671_HEAD_B 1" \
+  "$(cat "$D671_COUNT/.review-owed")"
+DUTY_DIR="$D671_COUNT" _review_owed_clear fx/repo 7
+t review-owed-settle-clears-all-heads empty \
+  "$([ ! -s "$D671_COUNT/.review-owed" ] && printf empty || printf PRESENT)"
+
+d671_drive() ( # root post-mode ticks [capture] [invalid]
+  local root="$1" post_mode="$2" ticks="$3" capture="${4:-}" invalid="${5:-0}"
+  local DUTY_DIR="$root" WORK_DIR="$root/work" TREES_DIR="$root/trees"
+  local LOG_DIR="$root/logs" CONF_DIR="$root/conf" PROMPTS_DIR="$SHARED/prompts"
+  local BIN_DIR="$root/bin" REPOS_FILE="$root/repos.txt"
+  local ME=fixture-reviewer MARK_REVIEWING='reviewing head'
+  local TIMEOUT_REVIEW=30 AUTO_APPROVE_REREQUEST=1 LABEL_ADDRESSING=state:addressing
+  local tick
+  mkdir -p "$WORK_DIR" "$TREES_DIR" "$LOG_DIR"
+  printf 'fx/repo\n' >"$REPOS_FILE"
+  : >"$root/calls"; : >"$root/warn"; : >"$root/session-log"
+  gh() {
+    printf '%s\n' "$*" >>"$root/calls"
+    if [ "$1" = api ] && [[ "$2" == repos/fx/repo/pulls\?* ]]; then
+      jq -cn --arg me "$ME" '[{draft:false,requested_reviewers:[{login:$me}],
+        created_at:"2026-09-04T10:00:00Z",updated_at:"2026-09-04T11:00:00Z",
+        number:7,user:{login:"author"}}]'
+      return 0
+    fi
+    if [ "$1" = search ]; then return 0; fi
+    if [ "$1" = api ] && [ "$2" = graphql ]; then
+      if [[ "$*" == *'timelineItems(itemTypes:'* ]]; then
+        printf '%s - - - 2026-09-04T10:30:00Z\n' "$D671_HEAD_A"
+      elif [[ "$*" == *'reviews(author:'* ]]; then
+        case "$post_mode" in
+          verdict) jq -cn --arg h "$D671_HEAD_A" '{data:{repository:{pullRequest:{reviews:{nodes:[{commit:{oid:$h},state:"APPROVED"}]}}}}}' ;;
+          none) jq -cn '{data:{repository:{pullRequest:{reviews:{nodes:[]}}}}}' ;;
+          error) return 1 ;;
+        esac
+      else
+        return 1
+      fi
+      return 0
+    fi
+    return 3
+  }
+  ensure_checkout() { mkdir -p "$2/.git"; }
+  _review_check_evidence_list() { :; }
+  _review_detached_run_blocks_dispatch() { return 1; }
+  review_park_prune_inactive() { :; }
+  review_park_inspect() {
+    REVIEW_PARK_STATE=none REVIEW_PARK_RESULTS="" REVIEW_PARK_REASON="" REVIEW_PARK_DIGESTS=""
+  }
+  review_park_capture() {
+    REVIEW_PARK_CAPTURE_INVALID="$invalid"
+    REVIEW_PARK_CAPTURED="$capture"
+  }
+  review_park_clear() { :; }
+  _review_park_cleanup_runs() { :; }
+  review_cleanup_mutation_copies() { :; }
+  _mark_addressing() { :; }
+  run_session() {
+    printf 'SESSION %s %s\n%s\n%s\n' "$1" "$2" "$5" \
+      'acted=yes; submit-verdict exited 1; final answer: verdict submitted successfully' \
+      >>"$root/session-log"
+    RUN_SESSION_RC=0
+    RUN_SESSION_LOG='acted=yes; submit-verdict exited 1; final answer: verdict submitted successfully'
+  }
+  log() { :; }
+  warn() { printf '%s\n' "$*" >>"$root/warn"; }
+  for ((tick=1; tick<=ticks; tick++)); do duty_review; done
+)
+
+D671_NONE="$TMP/review-post-none"
+d671_drive "$D671_NONE" none 4
+t review-no-verdict-bounds-dispatch-at-three 3 \
+  "$(grep -c '^SESSION ' "$D671_NONE/session-log")"
+t review-no-verdict-third-attempt-settles 'fx/repo#7 2026-09-04T11:00:00Z' \
+  "$(cat "$D671_NONE/.seen-review")"
+t review-no-verdict-warns-once 1 \
+  "$(grep -c "fx/repo#7 at $D671_HEAD_A still has no exact-head verdict after 3 attempts" "$D671_NONE/warn")"
+t review-no-verdict-leaves-live-request-untouched 0 \
+  "$(grep -Ec 'requested-reviewer|issue comment' "$D671_NONE/calls" || true)"
+if grep -Fq 'acted=yes; submit-verdict exited 1; final answer: verdict submitted successfully' \
+    "$D671_NONE/session-log"; then r1=covered; else r1=MISSING; fi
+t review-false-submission-prose-does-not-settle-early covered "$r1"
+
+D671_ERROR="$TMP/review-post-error"
+d671_drive "$D671_ERROR" error 1
+t review-post-lookup-error-leaves-seen-empty empty \
+  "$([ ! -s "$D671_ERROR/.seen-review" ] && printf empty || printf PRESENT)"
+t review-post-lookup-error-remains-owed "fx/repo#7@$D671_HEAD_A 1" \
+  "$(cat "$D671_ERROR/.review-owed")"
+t review-post-lookup-error-warns 1 \
+  "$(grep -c 'post-session verdict lookup failed; request remains owed' "$D671_ERROR/warn")"
+
+D671_VERDICT="$TMP/review-post-verdict"
+d671_drive "$D671_VERDICT" verdict 2
+t review-exact-head-verdict-settles-once 1 \
+  "$(grep -c '^SESSION ' "$D671_VERDICT/session-log")"
+t review-exact-head-verdict-clears-counter empty \
+  "$([ ! -s "$D671_VERDICT/.review-owed" ] && printf empty || printf PRESENT)"
+
+D671_PARK="$TMP/review-post-park"
+d671_drive "$D671_PARK" none 2 7 0
+t review-valid-park-settles-without-verdict 1 \
+  "$(grep -c '^SESSION ' "$D671_PARK/session-log")"
+t review-valid-park-clears-counter empty \
+  "$([ ! -s "$D671_PARK/.review-owed" ] && printf empty || printf PRESENT)"
+
+D671_INVALID="$TMP/review-post-invalid-park"
+d671_drive "$D671_INVALID" verdict 1 '' 1
+t review-invalid-park-withholds-seen empty \
+  "$([ ! -s "$D671_INVALID/.seen-review" ] && printf empty || printf PRESENT)"
+t review-invalid-park-does-not-spend-budget empty \
+  "$([ ! -s "$D671_INVALID/.review-owed" ] && printf empty || printf PRESENT)"
 
 # #605: repo commands run in the detached checkout, never its worktree parent.
 # Drive the real prompt render above so the engine-to-prompt contract is pinned,

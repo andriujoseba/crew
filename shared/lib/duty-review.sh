@@ -349,7 +349,7 @@ _review_verdict_at_head() {
     return 1
   fi
   if ! printf '%s' "$payload" | jq -e '
-      (.errors // []) | length == 0 and
+      ((.errors // []) | length == 0) and
       (.data.repository.pullRequest | type == "object") and
       (.data.repository.pullRequest.reviews.nodes | type == "array")' >/dev/null 2>&1; then
     return 1
@@ -386,21 +386,19 @@ _review_owed_clear() { # $1=repo $2=num
 }
 
 _review_owed_attempt() { # $1=repo $2=num $3=head; prints new attempt count
-  local repo="$1" num="$2" head="$3" ledger="$DUTY_DIR/.review-owed" tmp prefix key input
+  local repo="$1" num="$2" head="$3" ledger="$DUTY_DIR/.review-owed" tmp prefix key input count
   prefix="$repo#$num@"; key="$prefix$head"
   input="$ledger"; [ -e "$input" ] || input=/dev/null
+  count="$(awk -v k="$key" '$1 == k { print $2+0; found=1; exit } END { if (!found) print 0 }' "$input")"
+  count=$((count + 1))
   tmp="$(mktemp "${ledger}.XXXXXX")" || return 1
-  awk -v p="$prefix" -v k="$key" '
-    BEGIN { count=0 }
-    $1 == k { count=$2+0; next }
+  awk -v p="$prefix" '
     index($1,p) == 1 { next }
     NF >= 2 { print }
-    END { count++; print k, count; print count > "/dev/stderr" }
-  ' "$input" >"$tmp" 2>"$tmp.count"
-  REVIEW_OWED_ATTEMPT="$(cat "$tmp.count" 2>/dev/null)"
-  rm -f "$tmp.count"
+  ' "$input" >"$tmp"
+  printf '%s %s\n' "$key" "$count" >>"$tmp"
   mv -f "$tmp" "$ledger"
-  printf '%s\n' "$REVIEW_OWED_ATTEMPT"
+  printf '%s\n' "$count"
 }
 
 # _review_check_evidence_from_payload REPO NUM SNAPSHOT CURRENT_HEAD — render
