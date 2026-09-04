@@ -367,8 +367,8 @@ _session_resume_state() {
 # answer, and the caller then dispatches an ordinary session.
 #
 # The tuple is a gate and not a datum, so it is checked here and left out of
-# what this prints: `_session_resume_plan` reads the six D6 fields and has the
-# pair in its own arguments already.
+# what this prints: `_session_resume_plan` reads the resumability fields and
+# has the pair in its own arguments already.
 #
 # The read is bounded at 64 lines so a stub that is not one — a log rotated
 # onto the path, a file an operator dropped there — cannot make this loop the
@@ -413,7 +413,7 @@ _session_resume_read() {
     # `$field` is unquoted in the pattern below, so one carrying a glob
     # metacharacter can only match MORE readily — the worst that produces is a
     # refusal, which is the safe direction; and an unknown field still falls to
-    # the `*)` arm. The eight real names are plain lowercase, so no legitimate
+    # the `*)` arm. The nine real names are plain lowercase, so no legitimate
     # stub can trip it.
     case " $seen " in *" $field "*) return 0 ;; esac
     seen="$seen $field"
@@ -430,9 +430,8 @@ _session_resume_read() {
       *) return 0 ;;
     esac
   done <"$file"
-  # Every field is required. A stub carrying seven of eight is a stub that was
-  # half-written when the box died, and the two figures D6 reads are exactly
-  # the ones that only exist at the moment of the kill.
+  # Every field is required. A short stub was half-written when the box died,
+  # so it is never treated as resumable.
   [ -n "$kind" ] && [ -n "$key" ] && [ -n "$sid" ] && [ -n "$head" ] \
     && [ -n "$wall" ] && [ -n "$try" ] && [ -n "$outcome" ] \
     && [ -n "$productive" ] && [ -n "$survivor_count" ] || return 0
@@ -463,9 +462,8 @@ _session_resume_read() {
 #  2  its head is not `unknown` and equals `$dir`'s head now — a moved head
 #     means the world changed and the carried context is about a tree that is
 #     gone;
-#  3  the killed session's log was non-empty. A `rc=124` with a zero-byte log
-#     is a session that produced nothing at all, and resuming it resumes
-#     whatever wedged it, with the wedge in its context;
+#  3  the killed session's log did not classify as terminal/error output. The
+#     old non-empty test admitted the incident's 15-byte `Execution error`;
 #  4  nothing of that session was still alive — `left=0` on its record. This is
 #     the load-bearing one and the reason #529 is a functional predecessor and
 #     not only a file collision: resuming a lane while a process of the
@@ -573,60 +571,41 @@ _session_identity() {
 # _session_resume_record KIND KEY DIR RC WALL LEFT VERDICT LOG — the
 # stub, D5.
 #
-# Written on a TIMEOUT and on nothing else; ANY other end deletes it, which is
-# what keeps a stub from outliving the episode that produced it. It returns 0
-# on every path — a recovery mechanism must never be able to fail a session.
+# Written on a TIMEOUT or MEMORY end and on nothing else; ANY other end deletes
+# it, which keeps a stub from outliving the episode that produced it. It
+# returns 0 on every path — recovery must never be able to fail a session.
 #
-# THE GATE IS THE VERDICT AND NOT THE RAW `rc`, and the difference is the
-# memory ceiling. D5 says so as of triage's amendment of 2026-08-31 — it was
-# minted in terms of `rc=124`, with no ceiling qualifier, and for an ordinary
-# session that is the same predicate — `verdict=TIMEOUT` holds exactly
-# when `timeout` reported 124 and the ceiling did not fire. They part on the
-# case #474 D4 exists for: a session the engine killed for memory reports
-# whatever `timeout` reported for being signalled — 143, or **124 if the
-# deadline landed in the same instant** — and on that overlap an rc-keyed stub
-# is written for a session that was wedged. The next dispatch then resumes it
-# WITH THE WEDGE IN ITS CONTEXT, which is precisely what D6.3 refuses a
-# zero-byte log to prevent. `run_session` already ranks the ceiling above the
-# timeout twenty lines above its call to this, for the same reason; reading
-# `$rc` here would have reinstated underneath that branch the conflation the
-# branch removes above it (#596 review).
+# THE GATE IS THE VERDICT AND NOT THE RAW `rc`. MEMORY may arrive with 124,
+# 137, or 143 depending on whether the kernel kill coincided with timeout's
+# wall; the verdict is the engine's resolved fact and admits all three. A
+# TIMEOUT still requires 124, preserving the original wall-clock contract.
 #
 # The decision lives INSIDE this function rather than at the call site, and
 # that placement is load-bearing: the caller cannot simply skip the call on a
-# mem kill, because the delete is here too. Guarding the call would leave a
-# PREVIOUS timeout's stub alive on disk across a memory kill — a wider bug than
-# the narrow one being closed. So every non-TIMEOUT end, the ceiling included,
-# still falls through to the same `rm -f`.
+# classified end, because the delete is here too. Guarding the call would leave
+# a previous resumable stub alive across an ordinary end.
 #
-# WHAT IT CARRIES, and why it is eight fields rather than D5's four. The `sid`,
+# WHAT IT CARRIES, and why it is nine fields rather than D5's four. The `sid`,
 # the head, the wall and the try count are D5's list. `kind` and `key` are the
 # lane's identity, written because the filename cannot hold it — see
 # `_session_resume_state`, where the fold is lossy — and read back as a gate:
 # a stub whose pair is not the reader's is another lane's and is refused. A
 # key carrying a newline would write a stub its own reader then refuses, which
 # is the same failure direction; no key this engine dispatches has one (`$R`,
-# `$R#$N`, `fleet`). `log` and `left` are
-# D6.3 and D6.4, and they are here because THEY DO NOT EXIST ANYWHERE ELSE AT
-# READ TIME: both are figures #529 takes at the moment the session ends, and a
-# next-tick reader can neither re-stat a log that has been rotated nor ask
-# procfs what survived a session that ended an hour ago. Deriving them by
-# parsing the previous `SESSION END` back out of `duty.log` is the discovery
-# D1 refuses. So the two conditions are recorded by the writer that can see
-# them, and read by the gate that cannot.
+# `$R#$N`, `fleet`). `outcome` supplies the informed prompt. `productive` is
+# the result of running the shipped terminal classifier while the killed log
+# still exists; `left` is the survivor count only the ending dispatch can see.
 #
 # The write is not atomic, deliberately. A box that dies mid-write leaves a
-# stub missing fields, and `_session_resume_read` requires all eight — so the
+# stub missing fields, and `_session_resume_read` requires all nine — so the
 # truncated stub reads as absent, which is the answer it should get. A rename
 # dance would buy the same outcome through a second mechanism.
 _session_resume_record() {
   local kind="$1" key="$2" dir="$3" rc="$4" wall="$5" survivor_count="$6"
   local verdict="$7" slog="$8" productive=yes state
   state="$(_session_resume_state "$kind" "$key")"
-  # Both halves are asserted rather than one: the verdict is what decides, and
-  # the `rc` check is redundant by construction — `verdict=TIMEOUT` is set only
-  # under `rc=124` — so it costs nothing and states the episode this stub is
-  # about on the face of the code.
+  # TIMEOUT keeps its 124 invariant. MEMORY instead requires only a dirty end:
+  # its raw status varies with which kernel/timeout signal reached reap first.
   if { [ "$verdict" != TIMEOUT ] || [ "$rc" -ne 124 ]; } \
       && { [ "$verdict" != MEMORY ] || [ "$rc" -eq 0 ]; }; then
     rm -f "$state" 2>/dev/null || true
@@ -888,9 +867,10 @@ $prompt"
   # convention that file states for a numeric it cannot recover — #553's
   # parity guard is what makes that a rule rather than a habit.
   #
-  # sid= is LAST, past the usage and pool suffixes, and is the fourth field to
-  # take this position after tier=, log=/left= and peak_rss=. The id on this
-  # line and the id on the SESSION START above are the same value by
+  # oom= follows peak_rss= and is always numeric: zero is the measured or
+  # safely unavailable baseline, while a positive delta records kernel kills
+  # during this dispatch. sid= remains LAST, past oom, usage and pool suffixes.
+  # The id on this line and the id on the SESSION START above are the same by
   # construction — `_session_identity` resolved it once, before the dispatch —
   # so the two records of one session point at one transcript (#538 D3).
   #
