@@ -703,6 +703,17 @@ done
 # worth is that "applied" means verified.
 t new-clone-unsized-claims-nothing-applied 0 \
   "$(grep -cE '(cpu|memory|disk) applied' <<<"$note_line" || true)"
+# ...and the route the line hands the operator repairs EVERY figure it renders
+# a verdict for. This is the branch where all three read NOT applied, so a
+# route missing one is a figure the operator is told about and cannot fix.
+# Memory is the figure #607 exists over — codex-reviewer died with exit 137 —
+# and it was the one the first cut of this line omitted (round 1).
+t new-clone-unsized-route-repairs-cpu 1 \
+  "$(grep -cF "limits.cpu $EXP_CPU" <<<"$note_line" || true)"
+t new-clone-unsized-route-repairs-memory 1 \
+  "$(grep -cF "limits.memory $EXP_MEM" <<<"$note_line" || true)"
+t new-clone-unsized-route-repairs-disk 1 \
+  "$(grep -cF "root size=$EXP_DISK" <<<"$note_line" || true)"
 
 # The probe fails CLOSED. A box whose help cannot be read at all is treated as
 # one that cannot size a clone: the cost of guessing wrong that way is this
