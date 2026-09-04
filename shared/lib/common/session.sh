@@ -256,6 +256,11 @@ _session_log_bytes() {
 # a deliberate change with its own evidence — not a config edit.
 SESSION_RESUME_MAX_TRIES=1
 
+# Set by `_session_resume_plan` when the next dispatch continues a session.
+# The outcome is carried in the stub rather than rediscovered from duty.log,
+# so the resumed prompt can say why the predecessor stopped.
+_SESSION_RESUME_OUTCOME=""
+
 # _session_sid_valid SID — a v4-shaped UUID and nothing else. The shape is
 # checked with a glob and the alphabet with a substitution, so no `[[ =~ ]]`
 # and no fork. Two guards rather than one, and THE SECOND READS ONLY THE
@@ -362,8 +367,8 @@ _session_resume_state() {
 # answer, and the caller then dispatches an ordinary session.
 #
 # The tuple is a gate and not a datum, so it is checked here and left out of
-# what this prints: `_session_resume_plan` reads the six D6 fields and has the
-# pair in its own arguments already.
+# what this prints: `_session_resume_plan` reads the resumability fields and
+# has the pair in its own arguments already.
 #
 # The read is bounded at 64 lines so a stub that is not one — a log rotated
 # onto the path, a file an operator dropped there — cannot make this loop the
@@ -382,7 +387,8 @@ _session_resume_state() {
 # what `run_session` already calls this quantity where it emits it.
 _session_resume_read() {
   local file="$1" want_kind="${2-}" want_key="${3-}" line field value lines=0
-  local kind="" key="" sid="" head="" wall="" try="" logb="" survivor_count=""
+  local kind="" key="" sid="" head="" wall="" try="" logb="" outcome="" productive=""
+  local survivor_count=""
   local seen=""
   [ -s "$file" ] || return 0
   while IFS= read -r line || [ -n "$line" ]; do
@@ -407,7 +413,7 @@ _session_resume_read() {
     # `$field` is unquoted in the pattern below, so one carrying a glob
     # metacharacter can only match MORE readily — the worst that produces is a
     # refusal, which is the safe direction; and an unknown field still falls to
-    # the `*)` arm. The eight real names are plain lowercase, so no legitimate
+    # the `*)` arm. The ten real names are plain lowercase, so no legitimate
     # stub can trip it.
     case " $seen " in *" $field "*) return 0 ;; esac
     seen="$seen $field"
@@ -419,16 +425,17 @@ _session_resume_read() {
       wall) wall="$value" ;;
       try) try="$value" ;;
       log) logb="$value" ;;
+      outcome) outcome="$value" ;;
+      productive) productive="$value" ;;
       left) survivor_count="$value" ;;
       *) return 0 ;;
     esac
   done <"$file"
-  # Every field is required. A stub carrying seven of eight is a stub that was
-  # half-written when the box died, and the two figures D6 reads are exactly
-  # the ones that only exist at the moment of the kill.
+  # Every field is required. A short stub was half-written when the box died,
+  # so it is never treated as resumable.
   [ -n "$kind" ] && [ -n "$key" ] && [ -n "$sid" ] && [ -n "$head" ] \
-    && [ -n "$wall" ] && [ -n "$try" ] && [ -n "$logb" ] \
-    && [ -n "$survivor_count" ] || return 0
+    && [ -n "$wall" ] && [ -n "$try" ] && [ -n "$logb" ] && [ -n "$outcome" ] \
+    && [ -n "$productive" ] && [ -n "$survivor_count" ] || return 0
   # The identity the path could not carry. A stub reached through a colliding
   # fold names the OTHER lane's pair, and a lane that is not this one is not a
   # session this dispatch may continue.
@@ -438,9 +445,11 @@ _session_resume_read() {
   case "$wall" in '' | *[!0-9]*) return 0 ;; esac
   case "$try" in '' | *[!0-9]*) return 0 ;; esac
   case "$logb" in unknown) ;; '' | *[!0-9]*) return 0 ;; esac
+  case "$outcome" in TIMEOUT | MEMORY) ;; *) return 0 ;; esac
+  case "$productive" in yes | no) ;; *) return 0 ;; esac
   case "$survivor_count" in unknown) ;; '' | *[!0-9]*) return 0 ;; esac
-  printf 'sid=%s\nhead=%s\nwall=%s\ntry=%s\nlog=%s\nleft=%s\n' \
-    "$sid" "$head" "$wall" "$try" "$logb" "$survivor_count"
+  printf 'sid=%s\nhead=%s\nwall=%s\ntry=%s\nlog=%s\noutcome=%s\nproductive=%s\nleft=%s\n' \
+    "$sid" "$head" "$wall" "$try" "$logb" "$outcome" "$productive" "$survivor_count"
 }
 
 # _session_resume_plan KIND KEY DIR — decide whether this dispatch continues
@@ -455,9 +464,8 @@ _session_resume_read() {
 #  2  its head is not `unknown` and equals `$dir`'s head now — a moved head
 #     means the world changed and the carried context is about a tree that is
 #     gone;
-#  3  the killed session's log was non-empty. A `rc=124` with a zero-byte log
-#     is a session that produced nothing at all, and resuming it resumes
-#     whatever wedged it, with the wedge in its context;
+#  3  the killed session's log did not classify as terminal/error output. The
+#     old non-empty test admitted the incident's 15-byte `Execution error`;
 #  4  nothing of that session was still alive — `left=0` on its record. This is
 #     the load-bearing one and the reason #529 is a functional predecessor and
 #     not only a file collision: resuming a lane while a process of the
@@ -472,10 +480,11 @@ _session_resume_read() {
 # would be the second resume D7 exists to forbid.
 _session_resume_plan() {
   local kind="$1" key="$2" dir="$3" state fields
-  local sid="" head="" try="" logb="" survivor_count=""
+  local sid="" head="" try="" logb="" outcome="" productive="" survivor_count=""
   _SESSION_SID=""
   _SESSION_RESUMED=no
   _SESSION_TRY=0
+  _SESSION_RESUME_OUTCOME=""
   state="$(_session_resume_state "$kind" "$key")"
   fields="$(_session_resume_read "$state" "$kind" "$key")"
   rm -f "$state" 2>/dev/null || true
@@ -483,18 +492,21 @@ _session_resume_plan() {
   while IFS='=' read -r field value; do
     case "$field" in
       sid) sid="$value" ;; head) head="$value" ;; try) try="$value" ;;
-      log) logb="$value" ;; left) survivor_count="$value" ;;
+      log) logb="$value" ;; outcome) outcome="$value" ;; productive) productive="$value" ;;
+      left) survivor_count="$value" ;;
     esac
   done <<<"$fields"
+  : "$logb" # Retained record evidence; `productive=` is the decision (#600).
   [ "$head" != unknown ] || return 0
   [ "$head" = "$(_session_head "$dir")" ] || return 0
-  [ "$logb" != unknown ] && [ "$logb" -gt 0 ] || return 0
+  [ "$productive" = yes ] || return 0
   [ "$survivor_count" != unknown ] && [ "$survivor_count" -eq 0 ] || return 0
   [ "$try" -lt "$SESSION_RESUME_MAX_TRIES" ] || return 0
   declare -F bot_cli_resume_args >/dev/null 2>&1 || return 0
   _SESSION_SID="$sid"
   _SESSION_RESUMED=yes
   _SESSION_TRY=$((try + 1))
+  _SESSION_RESUME_OUTCOME="$outcome"
   return 0
 }
 
@@ -536,6 +548,7 @@ _session_identity() {
     _SESSION_SID=""
     _SESSION_RESUMED=no
     _SESSION_TRY=0
+    _SESSION_RESUME_OUTCOME=""
   fi
   _SESSION_SID="$(_session_mint_sid)"
   [ "$_SESSION_SID" != unknown ] || return 0
@@ -558,65 +571,55 @@ _session_identity() {
   return 0
 }
 
-# _session_resume_record KIND KEY DIR RC WALL LOG_BYTES LEFT VERDICT — the
-# stub, D5.
+_session_resume_admitted() { # _session_resume_admitted RC VERDICT
+  case "$2" in
+    TIMEOUT) [ "$1" -eq 124 ] ;;
+    MEMORY) [ "$1" -ne 0 ] ;;
+    *) return 1 ;;
+  esac
+}
+
+# _session_resume_record KIND KEY DIR RC WALL LOG_BYTES LEFT VERDICT ACTED LOG
+# — the stub, D5.
 #
-# Written on a TIMEOUT and on nothing else; ANY other end deletes it, which is
-# what keeps a stub from outliving the episode that produced it. It returns 0
-# on every path — a recovery mechanism must never be able to fail a session.
+# Written on a TIMEOUT or MEMORY end and on nothing else; ANY other end deletes
+# it, which keeps a stub from outliving the episode that produced it. It
+# returns 0 on every path — recovery must never be able to fail a session.
 #
-# THE GATE IS THE VERDICT AND NOT THE RAW `rc`, and the difference is the
-# memory ceiling. D5 says so as of triage's amendment of 2026-08-31 — it was
-# minted in terms of `rc=124`, with no ceiling qualifier, and for an ordinary
-# session that is the same predicate — `verdict=TIMEOUT` holds exactly
-# when `timeout` reported 124 and the ceiling did not fire. They part on the
-# case #474 D4 exists for: a session the engine killed for memory reports
-# whatever `timeout` reported for being signalled — 143, or **124 if the
-# deadline landed in the same instant** — and on that overlap an rc-keyed stub
-# is written for a session that was wedged. The next dispatch then resumes it
-# WITH THE WEDGE IN ITS CONTEXT, which is precisely what D6.3 refuses a
-# zero-byte log to prevent. `run_session` already ranks the ceiling above the
-# timeout twenty lines above its call to this, for the same reason; reading
-# `$rc` here would have reinstated underneath that branch the conflation the
-# branch removes above it (#596 review).
+# THE GATE IS THE VERDICT AND NOT THE RAW `rc`. MEMORY may arrive with 124,
+# 137, or 143 depending on whether the kernel kill coincided with timeout's
+# wall; the verdict is the engine's resolved fact and admits all three. A
+# TIMEOUT still requires 124, preserving the original wall-clock contract.
 #
 # The decision lives INSIDE this function rather than at the call site, and
 # that placement is load-bearing: the caller cannot simply skip the call on a
-# mem kill, because the delete is here too. Guarding the call would leave a
-# PREVIOUS timeout's stub alive on disk across a memory kill — a wider bug than
-# the narrow one being closed. So every non-TIMEOUT end, the ceiling included,
-# still falls through to the same `rm -f`.
+# classified end, because the delete is here too. Guarding the call would leave
+# a previous resumable stub alive across an ordinary end.
 #
-# WHAT IT CARRIES, and why it is eight fields rather than D5's four. The `sid`,
+# WHAT IT CARRIES, and why it is ten fields rather than D5's four. The `sid`,
 # the head, the wall and the try count are D5's list. `kind` and `key` are the
 # lane's identity, written because the filename cannot hold it — see
 # `_session_resume_state`, where the fold is lossy — and read back as a gate:
 # a stub whose pair is not the reader's is another lane's and is refused. A
 # key carrying a newline would write a stub its own reader then refuses, which
 # is the same failure direction; no key this engine dispatches has one (`$R`,
-# `$R#$N`, `fleet`). `log` and `left` are
-# D6.3 and D6.4, and they are here because THEY DO NOT EXIST ANYWHERE ELSE AT
-# READ TIME: both are figures #529 takes at the moment the session ends, and a
-# next-tick reader can neither re-stat a log that has been rotated nor ask
-# procfs what survived a session that ended an hour ago. Deriving them by
-# parsing the previous `SESSION END` back out of `duty.log` is the discovery
-# D1 refuses. So the two conditions are recorded by the writer that can see
-# them, and read by the gate that cannot.
+# `$R#$N`, `fleet`). `log` preserves the old byte evidence while `productive`
+# replaces it as the gate; that value comes from the shipped action classifier,
+# with the terminal classifier as an additional refusal, while the killed log
+# still exists. `outcome` supplies the informed prompt, and `left` is the
+# survivor count only the ending dispatch can see.
 #
 # The write is not atomic, deliberately. A box that dies mid-write leaves a
-# stub missing fields, and `_session_resume_read` requires all eight — so the
+# stub missing fields, and `_session_resume_read` requires all ten — so the
 # truncated stub reads as absent, which is the answer it should get. A rename
 # dance would buy the same outcome through a second mechanism.
 _session_resume_record() {
   local kind="$1" key="$2" dir="$3" rc="$4" wall="$5" logb="$6" survivor_count="$7"
-  local verdict="$8"
-  local state
+  local verdict="$8" acted="$9" slog="${10}" productive=no state
   state="$(_session_resume_state "$kind" "$key")"
-  # Both halves are asserted rather than one: the verdict is what decides, and
-  # the `rc` check is redundant by construction — `verdict=TIMEOUT` is set only
-  # under `rc=124` — so it costs nothing and states the episode this stub is
-  # about on the face of the code.
-  if [ "$rc" -ne 124 ] || [ "$verdict" != TIMEOUT ]; then
+  # TIMEOUT keeps its 124 invariant. MEMORY instead requires only a dirty end:
+  # its raw status varies with which kernel/timeout signal reached reap first.
+  if ! _session_resume_admitted "$rc" "$verdict"; then
     rm -f "$state" 2>/dev/null || true
     return 0
   fi
@@ -624,11 +627,59 @@ _session_resume_record() {
   # could never satisfy D6 anyway. Refuse to write one rather than leave a file
   # whose only possible future is being discarded.
   [ "$_SESSION_SID" != unknown ] || { rm -f "$state" 2>/dev/null || true; return 0; }
+  # `acted` is resolved through the active shipped profile before this call.
+  # Only a positive classification earns a resume: `no` did no durable work,
+  # and `unknown` includes the incident's real 15-byte `Execution error` body.
+  # Keep terminal as a second refusal so vendor endings never become resumable
+  # if a profile's action vocabulary later recognizes text around the banner.
+  if [ "$acted" = yes ] && ! session_terminal "$slog"; then
+    productive=yes
+  fi
   case "$wall" in '' | *[!0-9]*) wall=0 ;; esac
-  printf 'kind=%s\nkey=%s\nsid=%s\nhead=%s\nwall=%s\ntry=%s\nlog=%s\nleft=%s\n' \
+  printf 'kind=%s\nkey=%s\nsid=%s\nhead=%s\nwall=%s\ntry=%s\nlog=%s\noutcome=%s\nproductive=%s\nleft=%s\n' \
     "$kind" "$key" "$_SESSION_SID" "$(_session_head "$dir")" "$wall" \
-    "$_SESSION_TRY" "$logb" "$survivor_count" >"$state" 2>/dev/null || true
+    "$_SESSION_TRY" "$logb" "$verdict" "$productive" "$survivor_count" \
+    >"$state" 2>/dev/null || true
   return 0
+}
+
+# _session_oom_source — the narrowest kernel counter available to this engine.
+# cgroup v2's memory.events counts kills in this service's own cgroup; the
+# node-wide vmstat counter is the fallback on older or differently mounted
+# systems. The private override is a test seam, not operator configuration.
+_session_oom_source() {
+  local proc_root="${SESSION_PROC_ROOT:-/proc}" cgroup_root="${_SESSION_CGROUP_ROOT:-/sys/fs/cgroup}"
+  local hierarchy controllers path candidate
+  if [ -n "${_SESSION_OOM_EVENTS_FILE:-}" ] && [ -r "$_SESSION_OOM_EVENTS_FILE" ]; then
+    printf '%s' "$_SESSION_OOM_EVENTS_FILE"
+    return 0
+  fi
+  while IFS=: read -r hierarchy controllers path; do
+    if [ "$hierarchy" = 0 ] && [ -z "$controllers" ]; then
+      candidate="${cgroup_root%/}${path%/}/memory.events"
+      [ -r "$candidate" ] && { printf '%s' "$candidate"; return 0; }
+      break
+    fi
+  done <"$proc_root/self/cgroup" 2>/dev/null
+  [ -r "$proc_root/vmstat" ] && printf '%s' "$proc_root/vmstat"
+  return 0
+}
+
+# _session_oom_count FILE — oom_kill from either memory.events or vmstat.
+# Anything unreadable or malformed is no measurement and prints nothing.
+_session_oom_count() {
+  awk '$1 == "oom_kill" && $2 ~ /^[0-9]+$/ { print $2; exit }' "$1" 2>/dev/null
+}
+
+_session_resume_preamble() {
+  case "$1" in
+    MEMORY)
+      printf '%s' 'The previous attempt was terminated because this box ran out of memory. The last command in its log is suspect: do not run it again. Record it as unverified, name the tool and the out-of-memory reason, and continue.'
+      ;;
+    TIMEOUT)
+      printf '%s' 'The previous attempt reached its wall-clock limit. Continue from its existing transcript without repeating completed work.'
+      ;;
+  esac
 }
 
 # run_session KIND KEY DIR TIMEOUT PROMPT — the only way a duty launches the
@@ -639,6 +690,7 @@ _session_resume_record() {
 run_session() {
   local kind="$1" key="$2" dir="$3" tmo="$4" prompt="$5"
   local slog session_stamp cli_log structured_log="" cli_stderr_fd=1 rc=0 start terminal=no
+  local oom_source="" oom_before="" oom_after="" oom_delta=- oom_hit=no resume_preamble=""
   # Budget BEFORE the terminal gate, and the order is load-bearing (#464): the
   # terminal gate's recovery path makes a live vendor probe, and a lane that
   # has spent its window must not be able to buy one.
@@ -655,6 +707,12 @@ run_session() {
   # `duty-review.sh`, the two most contended files on this board, are not
   # touched at all.
   _session_identity "$kind" "$key" "$dir"
+  if [ "$_SESSION_RESUMED" = yes ]; then
+    resume_preamble="$(_session_resume_preamble "$_SESSION_RESUME_OUTCOME")"
+    [ -z "$resume_preamble" ] || prompt="$resume_preamble
+
+$prompt"
+  fi
   mkdir -p "$LOG_DIR"
   slog="$LOG_DIR/$(date -u '+%Y%m%dT%H%M%SZ')-$kind-${key//[\/#]/_}.log"
   session_stamp="${slog##*/}"
@@ -682,6 +740,8 @@ run_session() {
   # tier=, log=, left= and peak_rss= on SESSION END below.
   log "SESSION START kind=$kind key=$key timeout=${tmo}s log=$slog holder=$(_session_holder) sid=$_SESSION_SID"
   start=$SECONDS
+  oom_source="$(_session_oom_source)"
+  [ -z "$oom_source" ] || oom_before="$(_session_oom_count "$oom_source")"
   # </dev/null: the CLI reads piped stdin to EOF as context, and stdin here
   # is the caller's while-read work list — without this, the first session
   # of a sweep swallowed every remaining repo (one-iteration loops).
@@ -741,6 +801,16 @@ run_session() {
   # separate actor reading the same figure off the same file.
   _session_mem_watch_start "$slog.peak" "$slog.mem" "$_SESSION_DISPATCH_PID" "$kind"
   wait "$_SESSION_DISPATCH_PID" || rc=$?
+  [ -z "$oom_source" ] || oom_after="$(_session_oom_count "$oom_source")"
+  case "$oom_before:$oom_after" in
+    *[!0-9:]* | :* | *:) ;;
+    *)
+      if [ "$oom_after" -ge "$oom_before" ]; then
+        oom_delta=$((oom_after - oom_before))
+        [ "$oom_delta" -gt 0 ] && oom_hit=yes
+      fi
+      ;;
+  esac
   local survivor_count
   printf -v survivor_count '%s' "$(_session_left "$session_stamp")"
   _session_peak_rss_stop
@@ -765,6 +835,8 @@ run_session() {
   # kill count toward the vendor breaker and stop a lane for a reason the
   # vendor had nothing to do with.
   if [ -n "$mem_hit" ]; then
+    verdict="$SESSION_MEM_OUTCOME"
+  elif [ "$oom_hit" = yes ] && [ "$verdict" != ok ]; then
     verdict="$SESSION_MEM_OUTCOME"
   elif [ "$verdict" = FAILED ] && session_terminal "$slog"; then
     verdict=TERMINAL
@@ -818,9 +890,10 @@ run_session() {
   # convention that file states for a numeric it cannot recover — #553's
   # parity guard is what makes that a rule rather than a habit.
   #
-  # sid= is LAST, past the usage and pool suffixes, and is the fourth field to
-  # take this position after tier=, log=/left= and peak_rss=. The id on this
-  # line and the id on the SESSION START above are the same value by
+  # oom= follows peak_rss=. Zero is a measured zero delta, a positive number
+  # records kernel kills during this dispatch, and `-` says neither kernel
+  # counter was readable. sid= remains LAST, past oom, usage and pool suffixes.
+  # The id on this line and the id on the SESSION START above are the same by
   # construction — `_session_identity` resolved it once, before the dispatch —
   # so the two records of one session point at one transcript (#538 D3).
   #
@@ -830,12 +903,12 @@ run_session() {
   # Unconditional, unlike the two suffixes ahead of it — a session with no id
   # emits `sid=unknown`, because D3 asks for the token on EVERY record and
   # `unknown` is the answer `_session_mint_sid` already gives.
-  log "SESSION END kind=$kind key=$key rc=$rc dur=${dur}s outcome=$verdict acted=$acted reply_tail=$reply_tail log=$log_bytes left=$survivor_count tier=$_SESSION_TIER${peak_rss:+ peak_rss=$peak_rss}$usage_suffix$pool_suffix$sid_suffix"
+  log "SESSION END kind=$kind key=$key rc=$rc dur=${dur}s outcome=$verdict acted=$acted reply_tail=$reply_tail log=$log_bytes left=$survivor_count tier=$_SESSION_TIER${peak_rss:+ peak_rss=$peak_rss} oom=$oom_delta$usage_suffix$pool_suffix$sid_suffix"
   # Written after the line that reports the session and before the counters
   # that bill it, reading the two figures that line just published: this stub
   # and that record can never disagree about what the session left behind.
-  _session_resume_record "$kind" "$key" "$dir" "$rc" "$tmo" "$log_bytes" \
-    "$survivor_count" "$verdict"
+  _session_resume_record "$kind" "$key" "$dir" "$rc" "$tmo" \
+    "$log_bytes" "$survivor_count" "$verdict" "$acted" "$slog"
   _session_terminal_record "$kind" "$terminal" "$acted" "$slog"
   # The rolling counter is written alongside the line that carries the same
   # duration, so the budget and the log can never disagree about what a

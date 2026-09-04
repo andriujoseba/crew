@@ -157,6 +157,97 @@ case "$evidence_end" in
 esac
 t session-evidence-fields-follow-reply-tail appended "$r1"
 
+# --- the kernel's OOM record, sampled around one dispatch (#600) ----------
+oom_counter_run() ( # oom_counter_run KEY BEFORE AFTER RC OUTPUT
+  local key="$1" before="$2" after="$3" rc="$4" output="$5"
+  local odir="$TMP/oom-counter-$key" events="$TMP/oom-counter-$key.events"
+  mkdir -p "$odir/logs" "$odir/work"
+  printf 'oom_kill %s\n' "$before" >"$events"
+  DUTY_DIR="$odir"; LOG_DIR="$odir/logs"; DUTY_TICK_ID="tick_oom_counter"
+  _SESSION_OOM_EVENTS_FILE="$events"
+  export OOM_EVENTS="$events" OOM_AFTER="$after" OOM_RC="$rc" OOM_OUTPUT="$output"
+  # shellcheck disable=SC2016  # expanded by the nested fixture shell
+  BOT_CLI_CMD=(bash -c \
+    'printf "%s" "$OOM_OUTPUT"; printf "oom_kill %s\n" "$OOM_AFTER" >"$OOM_EVENTS"; exit "$OOM_RC"')
+  # shellcheck disable=SC2317  # invoked indirectly by session_acted
+  bot_session_acted() { return 0; }
+  bot_session_terminal() { grep -qx 'Execution error' "$1"; }
+  # A deterministic peak makes the new field's position assertable without a
+  # scheduler race in the real watcher.
+  _session_peak_rss_start() { printf '42\n' >"$1"; }
+  _session_peak_rss_stop() { :; }
+  run_session build "fixture/$key" "$odir/work" 5 prompt
+)
+
+oom_dirty="$(oom_counter_run dirty 10 11 124 'partial work' 2>&1)"
+t oom-dirty-timeout-is-memory '124|MEMORY|1' \
+  "$(sed -n 's/.*SESSION END .* rc=\([^ ]*\).* outcome=\([^ ]*\).* oom=\([^ ]*\).*/\1|\2|\3/p' \
+    <<<"$oom_dirty")"
+oom_clean="$(oom_counter_run clean 20 22 0 'final reply' 2>&1)"
+t oom-unrelated-clean-session-stays-ok '0|ok|2' \
+  "$(sed -n 's/.*SESSION END .* rc=\([^ ]*\).* outcome=\([^ ]*\).* oom=\([^ ]*\).*/\1|\2|\3/p' \
+    <<<"$oom_clean")"
+oom_none="$(oom_counter_run none 30 30 3 'ordinary failure' 2>&1)"
+t oom-unchanged-counter-is-zero '3|FAILED|0' \
+  "$(sed -n 's/.*SESSION END .* rc=\([^ ]*\).* outcome=\([^ ]*\).* oom=\([^ ]*\).*/\1|\2|\3/p' \
+    <<<"$oom_none")"
+oom_dirty_end="$(grep 'SESSION END' <<<"$oom_dirty")"
+case "$oom_dirty_end" in
+  *' peak_rss=42 oom=1 '*) r1=ordered ;;
+  *) r1=MISORDERED ;;
+esac
+t oom-follows-peak-rss ordered "$r1"
+t oom-floor-re-end-keeps-existing-captures 'build|yes' \
+  "$(OOM_END="$oom_dirty_end" python3 - "$ROOT/fleet-floor/server/floor/units.py" <<'PY'
+import os, re, sys
+src = open(sys.argv[1]).read()
+ns = {"re": re}
+for name in ("TS", "RE_END"):
+    m = re.search(r"^%s = (.+?)(?=\n[A-Z_#]|\n\n)" % name, src, re.S | re.M)
+    exec("%s = %s" % (name, m.group(1)), ns)
+m = ns["RE_END"].search("2026-09-04T00:00:00Z " + os.environ["OOM_END"])
+print("|".join([m.group(2), m.group(7)]) if m else "NO-MATCH")
+PY
+)"
+
+# The source prefers this process's cgroup-v2 counter and falls back to the
+# node-wide vmstat counter when that narrower file is absent.
+OOM_SOURCE_ROOT="$TMP/oom-source"
+mkdir -p "$OOM_SOURCE_ROOT/proc/self" "$OOM_SOURCE_ROOT/cgroup/unit"
+printf '0::/unit\n' >"$OOM_SOURCE_ROOT/proc/self/cgroup"
+printf 'oom_kill 7\n' >"$OOM_SOURCE_ROOT/cgroup/unit/memory.events"
+printf 'oom_kill 9\n' >"$OOM_SOURCE_ROOT/proc/vmstat"
+t oom-source-prefers-current-cgroup "$OOM_SOURCE_ROOT/cgroup/unit/memory.events" \
+  "$(SESSION_PROC_ROOT="$OOM_SOURCE_ROOT/proc" _SESSION_CGROUP_ROOT="$OOM_SOURCE_ROOT/cgroup" \
+    _session_oom_source)"
+rm -f "$OOM_SOURCE_ROOT/cgroup/unit/memory.events"
+t oom-source-falls-back-to-vmstat "$OOM_SOURCE_ROOT/proc/vmstat" \
+  "$(SESSION_PROC_ROOT="$OOM_SOURCE_ROOT/proc" _SESSION_CGROUP_ROOT="$OOM_SOURCE_ROOT/cgroup" \
+    _session_oom_source)"
+oom_unreadable_run() (
+  local odir="$TMP/oom-unreadable"
+  mkdir -p "$odir/logs" "$odir/work" "$odir/proc/self" "$odir/cgroup"
+  printf '0::/missing\n' >"$odir/proc/self/cgroup"
+  DUTY_DIR="$odir"; LOG_DIR="$odir/logs"; DUTY_TICK_ID=tick_oom_unreadable
+  SESSION_PROC_ROOT="$odir/proc"; _SESSION_CGROUP_ROOT="$odir/cgroup"
+  BOT_CLI_CMD=(bash -c 'printf "ordinary failure\n"; exit 3')
+  # shellcheck disable=SC2317  # invoked indirectly by session_acted
+  bot_session_acted() { return 0; }
+  _session_peak_rss_start() { :; }
+  _session_peak_rss_stop() { :; }
+  run_session build fixture/unreadable "$odir/work" 5 prompt
+)
+t oom-unreadable-counter-is-numeric-unknown '3|FAILED|-' \
+  "$(sed -n 's/.*SESSION END .* rc=\([^ ]*\).* outcome=\([^ ]*\).* oom=\([^ ]*\).*/\1|\2|\3/p' \
+    <<<"$(oom_unreadable_run 2>&1)")"
+oom_run_source="$(awk '/^run_session\(\) \{/{on=1} on{print} on && /^}/{exit}' \
+  "$SHARED/lib/common/session.sh")"
+# shellcheck disable=SC2016  # grep matches the subject's literal variable
+t oom-counter-is-sampled-exactly-at-dispatch-and-reap 2 \
+  "$(grep -c '_session_oom_count "$oom_source"' <<<"$oom_run_source" || true)"
+t oom-accounting-adds-no-fleet-setting 0 \
+  "$(grep -c 'SESSION_OOM' "$SHARED/conf/fleet.defaults.conf" || true)"
+
 # --- session identity, and the one resume it buys (#538) -----------------
 #
 # Every case drives run_session with a stub CLI that records its own argv,
@@ -176,6 +267,24 @@ printf '%s\n' "$@" >"$SID_ARGV"
 case "${SID_SHAPE:-reply}" in
   reply) printf 'final reply\n' ;;
   fail) printf 'final reply\n'; exit 3 ;;
+  oom-progress)
+    printf 'partial work\n'
+    printf 'oom_kill %s\n' "$(( $(awk '$1 == "oom_kill" { print $2 }' "$SID_OOM_EVENTS") + 1 ))" \
+      >"$SID_OOM_EVENTS"
+    exit 124
+    ;;
+  oom-error)
+    printf 'Execution error'
+    printf 'oom_kill %s\n' "$(( $(awk '$1 == "oom_kill" { print $2 }' "$SID_OOM_EVENTS") + 1 ))" \
+      >"$SID_OOM_EVENTS"
+    exit 124
+    ;;
+  oom-terminal)
+    printf "%s\n" "You've hit your weekly limit · resets 9am (UTC)"
+    printf 'oom_kill %s\n' "$(( $(awk '$1 == "oom_kill" { print $2 }' "$SID_OOM_EVENTS") + 1 ))" \
+      >"$SID_OOM_EVENTS"
+    exit 137
+    ;;
   mute-hang) exec sleep 30 ;;
   talk-hang) printf 'partial work\n'; exec sleep 30 ;;
   escape-hang)
@@ -209,6 +318,7 @@ sid_commit() {
 # profile hooks D2 lets a CLI carry independently.
 #
 #   both      a profile that can pin and resume — `claude`'s shape
+#   claude    the shipped claude profile, including both classifiers
 #   pin-only  a CLI that can pin an id and cannot continue one (D6.6)
 #   none      a profile with neither hook — the pre-#538 lane, unchanged
 #   refusing  hooks that are defined and render nothing, the contract
@@ -221,9 +331,24 @@ sid_run() (
   local box="$1" key="$2" tmo="$3" shape="$4" hooks="${5:-both}" work="${6:-}"
   local sdir; sdir="$(sid_box "$box")"
   DUTY_DIR="$sdir"; LOG_DIR="$sdir/logs"; DUTY_TICK_ID="tick-sid"
+  unset -f bot_session_acted bot_session_terminal
+  if [ "$hooks" = claude ]; then
+    # shellcheck disable=SC1091  # production profile under test
+    source "$SHARED/conf/agents/claude.conf"
+  fi
   BOT_CLI_CMD=(bash "$SID_CLI" -p)
   export SID_ARGV="$sdir/argv" SID_SHAPE="$shape" SID_ESCAPEE="$sdir/escapee"
+  [ -e "$sdir/memory.events" ] || printf 'oom_kill 0\n' >"$sdir/memory.events"
+  export SID_OOM_EVENTS="$sdir/memory.events"
+  _SESSION_OOM_EVENTS_FILE="$sdir/memory.events"
+  # shellcheck disable=SC1090  # test-selected mutated copy of the subject
+  [ -z "${SID_SESSION_MUTANT:-}" ] || source "$SID_SESSION_MUTANT"
   alert() { :; }
+  if [ "$hooks" != claude ]; then
+    # shellcheck disable=SC2317  # invoked indirectly by session_acted
+    bot_session_acted() { grep -qx 'partial work' "$1"; }
+    bot_session_terminal() { grep -qx 'Execution error' "$1"; }
+  fi
   case "$hooks" in
     both)
       bot_cli_session_id_args() { BOT_CLI_SESSION_ID_ARGS=(--session-id "$1"); }
@@ -233,7 +358,7 @@ sid_run() (
     refusing)
       bot_cli_session_id_args() { BOT_CLI_SESSION_ID_ARGS=(); return 1; }
       bot_cli_resume_args() { BOT_CLI_RESUME_ARGS=(); return 1; } ;;
-    none) : ;;
+    claude | none) : ;;
   esac
   rm -f "$sdir/argv"
   # `log` writes to stdout, so the box's own record file is where the two lines
@@ -244,6 +369,16 @@ sid_run() (
   printf -- '--argv--\n'
   cat "$sdir/argv" 2>/dev/null
 )
+
+sid_mutant() { # sid_mutant NAME SED-EXPR
+  local out="$TMP/session-sid-mutant-$1.sh"
+  sed "$2" "$SHARED/lib/common/session.sh" >"$out"
+  if cmp -s "$out" "$SHARED/lib/common/session.sh"; then
+    t "sid-mutation-$1-applies" applied INERT
+  else
+    t "sid-mutation-$1-applies" applied applied
+  fi
+}
 
 # The record the LAST dispatch into this box wrote.
 sid_line() { # sid_line BOX RECORD
@@ -363,6 +498,66 @@ t sid-resume-does-not-also-pin-the-id 0 \
   "$(sed -n '/^--argv--$/,$p' <<<"$sid_resumed" | grep -c -- '--session-id' || true)"
 t sid-resume-consumes-its-stub gone \
   "$([ -e "$(sid_stub resume fixture_res)" ] && printf PRESENT || printf gone)"
+t sid-timeout-resume-names-the-wall-clock-cause 1 \
+  "$(grep -c 'previous attempt reached its wall-clock limit' <<<"$sid_resumed" || true)"
+
+# A kernel memory kill buys the same one resume, but the prompt makes the
+# continuation informed: it names the cause and forbids replaying the suspect
+# last command before handing the lane's original prompt back to it.
+sid_run memresume fixture/memresume 5 oom-progress both >/dev/null
+SID_MEMORY_KILLED="$(sid_of memresume START)"
+SID_MEMORY_STUB="$(sid_stub memresume fixture_memresume)"
+t sid-memory-kill-is-recorded '124|MEMORY|1' \
+  "$(sed -n 's/.* rc=\([^ ]*\).* outcome=\([^ ]*\).* oom=\([^ ]*\).*/\1|\2|\3/p' \
+    <<<"$(sid_line memresume END)")"
+t sid-memory-kill-writes-a-stub present \
+  "$([ -s "$SID_MEMORY_STUB" ] && printf present || printf MISSING)"
+t sid-memory-stub-carries-cause MEMORY "$(sid_stub_field "$SID_MEMORY_STUB" outcome)"
+t sid-memory-stub-records-productive-log yes \
+  "$(sid_stub_field "$SID_MEMORY_STUB" productive)"
+sid_memory_resumed="$(sid_run memresume fixture/memresume 5 reply both)"
+t sid-memory-resume-continues-the-killed-session same \
+  "$(sid_same "$(sid_argv_flag "$sid_memory_resumed" --resume)" "$SID_MEMORY_KILLED")"
+t sid-memory-resume-names-oom-cause 1 \
+  "$(grep -c 'previous attempt was terminated because this box ran out of memory' \
+    <<<"$sid_memory_resumed" || true)"
+t sid-memory-resume-forbids-the-suspect-command 1 \
+  "$(grep -c 'do not run it again' <<<"$sid_memory_resumed" || true)"
+t sid-memory-resume-keeps-the-original-prompt 1 \
+  "$(grep -c '^prompt$' <<<"$sid_memory_resumed" || true)"
+
+# MUST FAIL: restoring the old non-empty byte test admits the real 15-byte
+# error body, and dropping the informed preamble hides why the resume exists.
+# shellcheck disable=SC2016  # sed matches the subject's literal variables
+sid_mutant nonempty-log \
+  's/^  \[ "$productive" = yes \] || return 0$/  [ "$logb" != unknown ] \&\& [ "$logb" -gt 0 ] || return 0/'
+sid_run memerror-mut fixture/memerror-mut 5 oom-error both >/dev/null
+sid_error_mut_killed="$(sid_of memerror-mut START)"
+sid_error_mut_resumed="$(SID_SESSION_MUTANT="$TMP/session-sid-mutant-nonempty-log.sh" \
+  sid_run memerror-mut fixture/memerror-mut 5 reply both)"
+t sid-mutation-nonempty-log-wrongly-resumes-the-error RESUMED \
+  "$([ "$(sid_argv_flag "$sid_error_mut_resumed" --resume)" = "$sid_error_mut_killed" ] \
+    && printf RESUMED || printf ordinary)"
+
+sid_mutant no-preamble \
+  's/^    resume_preamble=.*$/    resume_preamble=""/'
+sid_run memprompt-mut fixture/memprompt-mut 5 oom-progress both >/dev/null
+sid_prompt_mut="$(SID_SESSION_MUTANT="$TMP/session-sid-mutant-no-preamble.sh" \
+  sid_run memprompt-mut fixture/memprompt-mut 5 reply both)"
+t sid-mutation-dropping-preamble-hides-the-cause 0 \
+  "$(grep -c 'previous attempt was terminated because this box ran out of memory' \
+    <<<"$sid_prompt_mut" || true)"
+
+# The landed #538 guard admitted only rc=124 + TIMEOUT. Restoring it must drop
+# the memory stub even though the kernel evidence resolved the outcome.
+# shellcheck disable=SC2016  # sed matches the subject's literal variables
+sid_mutant timeout-only \
+  's/^  if ! _session_resume_admitted "$rc" "$verdict"; then$/  if [ "$rc" -ne 124 ] || [ "$verdict" != TIMEOUT ]; then/'
+SID_SESSION_MUTANT="$TMP/session-sid-mutant-timeout-only.sh" \
+  sid_run memguard-mut fixture/memguard-mut 5 oom-progress both >/dev/null
+t sid-mutation-timeout-only-drops-the-memory-stub MISSING \
+  "$([ -s "$(sid_stub memguard-mut fixture_memguard-mut)" ] \
+    && printf present || printf MISSING)"
 
 # --- the six refusals, one case each (D6) --------------------------------
 #
@@ -397,14 +592,31 @@ t sid-refuses-when-the-head-is-unknown ordinary \
   "$(sid_refusal "$(sid_run nohead fixture/nohead 5 reply both "$TMP/sid-nogit-work")" \
     nohead "$sid_nohead_killed")"
 
-# 3 — the killed session said nothing. A zero-byte log is a session that
-# produced nothing at all, and resuming it resumes whatever wedged it.
-sid_run mute fixture/mute 1 mute-hang both >/dev/null
-sid_mute_killed="$(sid_of mute START)"
-t sid-stub-records-an-empty-log-as-zero 0 \
-  "$(sid_stub_field "$(sid_stub mute fixture_mute)" log)"
-t sid-refuses-an-empty-log-timeout ordinary \
-  "$(sid_refusal "$(sid_run mute fixture/mute 5 reply both)" mute "$sid_mute_killed")"
+# 3 — the killed session's log must classify as productive. The real incident
+# body is 15 bytes and non-empty, so the old byte-floor resumed it; the shipped
+# profile action classifier names it as unknown and refuses it on that fact.
+sid_run errorlog fixture/errorlog 5 oom-error claude >/dev/null
+sid_error_killed="$(sid_of errorlog START)"
+t sid-error-output-stub-records-the-classifier no \
+  "$(sid_stub_field "$(sid_stub errorlog fixture_errorlog)" productive)"
+t sid-error-output-fixture-is-the-real-15-byte-body 15 \
+  "$(sid_stub_field "$(sid_stub errorlog fixture_errorlog)" log)"
+t sid-refuses-the-real-execution-error-body ordinary \
+  "$(sid_refusal "$(sid_run errorlog fixture/errorlog 5 reply claude)" \
+    errorlog "$sid_error_killed")"
+
+# A dirty non-124 kill carrying a vendor-terminal tail would feed the breaker
+# if kernel OOM promotion did not outrank terminal classification.
+sid_run membreaker fixture/membreaker 5 oom-terminal claude >/dev/null
+t sid-memory-kill-feeds-no-vendor-breaker 0 \
+  "$(find "$TMP/sid-membreaker" -maxdepth 1 -name '.session-terminal.*' | wc -l)"
+# shellcheck disable=SC2016  # sed matches the subject's literal variables
+sid_mutant no-oom-promotion \
+  '/^  elif \[ "$oom_hit" = yes \] \&\& \[ "$verdict" != ok \]; then$/,+1d'
+SID_SESSION_MUTANT="$TMP/session-sid-mutant-no-oom-promotion.sh" \
+  sid_run membreaker-mut fixture/membreaker-mut 5 oom-terminal claude >/dev/null
+t sid-mutation-dropping-oom-promotion-feeds-the-breaker 1 \
+  "$(find "$TMP/sid-membreaker-mut" -maxdepth 1 -name '.session-terminal.*' | wc -l)"
 
 # 4 — something of that session is still alive. THE LOAD-BEARING ONE: resuming
 # a lane while a process of the previous session still runs puts two live
@@ -452,7 +664,7 @@ t sid-refuses-a-profile-that-cannot-resume ordinary \
 SID_PLAN_BOX="$(sid_box planonly)"
 sid_plan_verdict() ( # sid_plan_verdict none|both
   local stub="$SID_PLAN_BOX/.session-resume.build.fixture_plan"
-  printf 'kind=build\nkey=fixture/plan\nsid=%s\nhead=%s\nwall=1\ntry=0\nlog=14\nleft=0\n' \
+  printf 'kind=build\nkey=fixture/plan\nsid=%s\nhead=%s\nwall=1\ntry=0\nlog=14\noutcome=TIMEOUT\nproductive=yes\nleft=0\n' \
     "$(_session_mint_sid)" "$(git -C "$SID_PLAN_BOX/work" rev-parse HEAD)" >"$stub"
   DUTY_DIR="$SID_PLAN_BOX"
   unset -f bot_cli_resume_args
@@ -497,7 +709,7 @@ sid_forge_shifted_dash() {
   sed -i 's/^sid=.*/sid=-d7d876b-ae67-47d5-ba46-ce4a32081d20/' "$1"
 }
 sid_remove() { rm -f "$1"; }
-# A stub whose six fields are all present and all valid, carrying one field
+# A stub whose required fields are all present and valid, carrying one field
 # this reader does not know. It is the only corrupt shape here that reaches the
 # END of the parse with everything D6 asks for in hand, so it is the only one
 # the unknown-field arm alone decides: with that arm removed the stub parses
@@ -535,26 +747,26 @@ t sid-missing-stub-is-absent ordinary "$(sid_corrupt_case removed sid_remove)"
 # writer directly, where the classification is made — the treatment the sid
 # validator gets above, for the same reason.
 #
-# The third assertion is the one that would have been lost by guarding the
-# CALL instead of the write: on a memory kill the stub must be DELETED, not
-# merely left unwritten, or a previous timeout's stub outlives it and the next
-# dispatch resumes a session that was wedged (#596 review).
+# The stale-file assertion preserves the writer's placement: an outcome this
+# issue does not admit must still delete a previous timeout's stub.
 sid_record_says() ( # sid_record_says RC VERDICT [STALE] — WROTE | deleted
+  local state slog
   DUTY_DIR="$TMP/sid-record"; mkdir -p "$DUTY_DIR"
   _SESSION_SID=d7d876b7-ae67-47d5-ba46-ce4a32081d20
   _SESSION_TRY=1
   state="$(_session_resume_state build fixture/rec)"
   rm -f "$state"
   [ -z "${3-}" ] || printf 'kind=build\n' >"$state"
-  _session_resume_record build fixture/rec "$TMP" "$1" 5 100 0 "$2"
+  slog="$TMP/sid-record.log"
+  printf 'partial work\n' >"$slog"
+  bot_session_terminal() { return 1; }
+  _session_resume_record build fixture/rec "$TMP" "$1" 5 100 0 "$2" yes "$slog"
   [ -s "$state" ] && printf WROTE || printf deleted
   return 0
 )
 t sid-a-timeout-writes-the-stub WROTE "$(sid_record_says 124 TIMEOUT)"
-t sid-a-memory-kill-at-124-writes-no-stub deleted "$(sid_record_says 124 MEMORY)"
-t sid-a-memory-kill-at-124-deletes-a-stale-stub deleted \
-  "$(sid_record_says 124 MEMORY stale)"
-t sid-an-ordinary-end-writes-no-stub deleted "$(sid_record_says 0 ok)"
+t sid-a-memory-kill-at-124-writes-the-stub WROTE "$(sid_record_says 124 MEMORY)"
+t sid-an-ordinary-end-deletes-a-stale-stub deleted "$(sid_record_says 0 ok stale)"
 
 # --- two keys, one filename: the tuple decides, never the path -----------
 #
@@ -1072,11 +1284,11 @@ t budget-off-says-nothing-about-budgets 0 \
 budget_off_golden() {
   cat <<'GOLDEN'
 SESSION START kind=build key=fixture/test1 timeout=5s log=<slog>-build-fixture_test1.log holder=<holder> sid=unknown
-SESSION END kind=build key=fixture/test1 rc=0 dur=<n>s outcome=ok acted=yes reply_tail=ZmluYWwgcmVwbHk= log=17 left=0 tier=default sid=unknown
+SESSION END kind=build key=fixture/test1 rc=0 dur=<n>s outcome=ok acted=yes reply_tail=ZmluYWwgcmVwbHk= log=17 left=0 tier=default oom=0 sid=unknown
 SESSION START kind=build key=fixture/test2 timeout=5s log=<slog>-build-fixture_test2.log holder=<holder> sid=unknown
-SESSION END kind=build key=fixture/test2 rc=0 dur=<n>s outcome=ok acted=yes reply_tail=ZmluYWwgcmVwbHk= log=17 left=0 tier=default sid=unknown
+SESSION END kind=build key=fixture/test2 rc=0 dur=<n>s outcome=ok acted=yes reply_tail=ZmluYWwgcmVwbHk= log=17 left=0 tier=default oom=0 sid=unknown
 SESSION START kind=build key=fixture/test3 timeout=5s log=<slog>-build-fixture_test3.log holder=<holder> sid=unknown
-SESSION END kind=build key=fixture/test3 rc=0 dur=<n>s outcome=ok acted=yes reply_tail=ZmluYWwgcmVwbHk= log=17 left=0 tier=default sid=unknown
+SESSION END kind=build key=fixture/test3 rc=0 dur=<n>s outcome=ok acted=yes reply_tail=ZmluYWwgcmVwbHk= log=17 left=0 tier=default oom=0 sid=unknown
 GOLDEN
 }
 # The last line is the state-file/alert tally the case above reads; everything

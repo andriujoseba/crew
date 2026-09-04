@@ -618,7 +618,7 @@ t orphan-mutation-tier-missing-has-no-value '' \
 # numeric convention this file already uses for rc and dur says the right
 # thing — owed, and lost with the box.
 t orphan-peak-rss-is-owed-not-absent '-' "$(orph_kv "$ORPH1_LINE" peak_rss)"
-orph_mutant peak-missing 's/ peak_rss=- input_tokens=-/ input_tokens=-/'
+orph_mutant peak-missing 's/ peak_rss=- oom=- input_tokens=-/ oom=- input_tokens=-/'
 ORPH_M9="$TMP/ledger-mutant-peak-missing.sh"
 t orphan-parity-reads-peak-rss peak_rss \
   "$(session_end_missing "$SHARED/lib/common/session.sh" "$ORPH_M9")"
@@ -627,6 +627,22 @@ orph_start "$ORPH13" 2026-08-14T14:00:00Z build o/r#14 "$ORPH_DEAD.$ORPH_BOOT"
 orph_pass "$ORPH13" "$ORPH_M9"
 t orphan-mutation-peak-missing-has-no-value '' \
   "$(orph_kv "$(orph_lines "$ORPH13")" peak_rss)"
+
+# #600's numeric OOM delta is equally unknowable after the box dies. Keep its
+# unknown marker immediately after peak_rss, and prove deleting it trips both
+# source-derived guards rather than only the membership half.
+t orphan-oom-is-owed-not-zero '-' "$(orph_kv "$ORPH1_LINE" oom)"
+orph_mutant oom-missing 's/ peak_rss=- oom=- input_tokens=-/ peak_rss=- input_tokens=-/'
+ORPH_M14="$TMP/ledger-mutant-oom-missing.sh"
+t orphan-parity-reads-oom oom \
+  "$(session_end_missing "$SHARED/lib/common/session.sh" "$ORPH_M14")"
+t orphan-order-reads-oom-removal oom \
+  "$(session_end_order_mismatch "$SHARED/lib/common/session.sh" "$ORPH_M14" | head -1)"
+ORPH15="$TMP/orphan-mut-oom-missing"; orph_fixture "$ORPH15"
+orph_start "$ORPH15" 2026-08-14T16:00:00Z build o/r#16 "$ORPH_DEAD.$ORPH_BOOT"
+orph_pass "$ORPH15" "$ORPH_M14"
+t orphan-mutation-oom-missing-has-no-value '' \
+  "$(orph_kv "$(orph_lines "$ORPH15")" oom)"
 
 # D1 is order as well as membership. Swap two reconstructed accounting fields
 # and require the source-derived comparison to name both displaced tokens.

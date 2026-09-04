@@ -265,7 +265,7 @@ _session_orphan_scan() {
 #
 # The reconstructed terminal carries the observed emitter's fields even when
 # it cannot recover their values. Unknown numeric measurements use `-`
-# (`rc=-`, `dur=-`, `peak_rss=-`, token counts and cost); unknown categorical
+# (`rc=-`, `dur=-`, `peak_rss=-`, `oom=-`, token counts and cost); unknown categorical
 # measurements use `unknown` (`acted=unknown`, `tier=unknown`, session and pool
 # identity). The reconciler knows the session started and knows nobody is
 # running it, but knows nothing about how it exited, how long it took, which
@@ -280,13 +280,10 @@ _session_orphan_scan() {
 # (`fleet-floor/server/floor/units.py:16-22`), and #553's order guard walks the
 # OBSERVED token list, which `started` is not in.
 #
-# `peak_rss=-` and not an absent field, which is the one place this line and
-# run_session's differ in kind rather than in value (#473 D2): the observed
-# emitter OMITS the field where the kernel gave no figure, because there the
-# absence says "this platform reports no VmHWM" and an aggregate must be able
-# to see it. Here the absence would say nothing at all — every reconstructed
-# line has no figure, by construction — while a `-` says the measurement was
-# owed and lost with the box, exactly as `rc=-` does.
+# `peak_rss=-` and `oom=-`, not absent fields: every reconstructed line lost
+# those numeric measurements with the box. `oom=0` would fabricate the absence
+# of the incident this issue exists to expose, while `-` says the value was owed
+# and is unavailable, exactly as `rc=-` does.
 session_reconcile_orphans() {
   local logfile="$DUTY_DIR/duty.log" records kind key holder slog started closed=0
   [ -s "$logfile" ] || return 0
@@ -330,7 +327,7 @@ session_reconcile_orphans() {
     # against `run_session`'s own line. That costs the order guard nothing:
     # `started` is this writer's alone, so it is not in the observed token list
     # the comparison walks.
-    log "SESSION END kind=$kind key=$key rc=- dur=- outcome=$SESSION_ORPHAN_OUTCOME acted=unknown reply_tail= log=- left=- tier=unknown peak_rss=- input_tokens=- output_tokens=- cache_creation_input_tokens=- cache_read_input_tokens=- cost_usd=- session_id=unknown model=unknown models=- pool=unknown started=$started sid=unknown" >>"$logfile"
+    log "SESSION END kind=$kind key=$key rc=- dur=- outcome=$SESSION_ORPHAN_OUTCOME acted=unknown reply_tail= log=- left=- tier=unknown peak_rss=- oom=- input_tokens=- output_tokens=- cache_creation_input_tokens=- cache_read_input_tokens=- cost_usd=- session_id=unknown model=unknown models=- pool=unknown started=$started sid=unknown" >>"$logfile"
     # D3: the same per-kind counter an observed TERMINAL feeds, and no second
     # mechanism. A box that kills itself on every review session has a dead
     # review lane, whether the vendor said so or the kernel did.
