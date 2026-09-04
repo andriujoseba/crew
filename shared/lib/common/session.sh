@@ -604,9 +604,9 @@ _session_resume_admitted() { # _session_resume_admitted RC VERDICT
 # key carrying a newline would write a stub its own reader then refuses, which
 # is the same failure direction; no key this engine dispatches has one (`$R`,
 # `$R#$N`, `fleet`). `log` preserves the old byte evidence while `productive`
-# replaces it as the gate. `outcome` supplies the informed prompt. `productive` is
-# the result of running the shipped terminal classifier while the killed log
-# still exists; `left` is the survivor count only the ending dispatch can see.
+# replaces it as the gate; that value comes from the shipped terminal
+# classifier while the killed log still exists. `outcome` supplies the informed
+# prompt, and `left` is the survivor count only the ending dispatch can see.
 #
 # The write is not atomic, deliberately. A box that dies mid-write leaves a
 # stub missing fields, and `_session_resume_read` requires all ten — so the

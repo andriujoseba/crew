@@ -224,6 +224,13 @@ rm -f "$OOM_SOURCE_ROOT/cgroup/unit/memory.events"
 t oom-source-falls-back-to-vmstat "$OOM_SOURCE_ROOT/proc/vmstat" \
   "$(SESSION_PROC_ROOT="$OOM_SOURCE_ROOT/proc" _SESSION_CGROUP_ROOT="$OOM_SOURCE_ROOT/cgroup" \
     _session_oom_source)"
+oom_run_source="$(awk '/^run_session\(\) \{/{on=1} on{print} on && /^}/{exit}' \
+  "$SHARED/lib/common/session.sh")"
+# shellcheck disable=SC2016  # grep matches the subject's literal variable
+t oom-counter-is-sampled-exactly-at-dispatch-and-reap 2 \
+  "$(grep -c '_session_oom_count "$oom_source"' <<<"$oom_run_source" || true)"
+t oom-accounting-adds-no-fleet-setting 0 \
+  "$(grep -c 'SESSION_OOM' "$SHARED/conf/fleet.defaults.conf" || true)"
 
 # --- session identity, and the one resume it buys (#538) -----------------
 #
@@ -251,7 +258,7 @@ case "${SID_SHAPE:-reply}" in
     exit 124
     ;;
   oom-error)
-    printf 'Execution error\n'
+    printf 'Execution error'
     printf 'oom_kill %s\n' "$(( $(awk '$1 == "oom_kill" { print $2 }' "$SID_OOM_EVENTS") + 1 ))" \
       >"$SID_OOM_EVENTS"
     exit 124
@@ -459,6 +466,8 @@ t sid-resume-does-not-also-pin-the-id 0 \
   "$(sed -n '/^--argv--$/,$p' <<<"$sid_resumed" | grep -c -- '--session-id' || true)"
 t sid-resume-consumes-its-stub gone \
   "$([ -e "$(sid_stub resume fixture_res)" ] && printf PRESENT || printf gone)"
+t sid-timeout-resume-names-the-wall-clock-cause 1 \
+  "$(grep -c 'previous attempt reached its wall-clock limit' <<<"$sid_resumed" || true)"
 
 # A kernel memory kill buys the same one resume, but the prompt makes the
 # continuation informed: it names the cause and forbids replaying the suspect
@@ -558,6 +567,8 @@ sid_run errorlog fixture/errorlog 5 oom-error both >/dev/null
 sid_error_killed="$(sid_of errorlog START)"
 t sid-error-output-stub-records-the-classifier no \
   "$(sid_stub_field "$(sid_stub errorlog fixture_errorlog)" productive)"
+t sid-error-output-fixture-is-the-real-15-byte-body 15 \
+  "$(sid_stub_field "$(sid_stub errorlog fixture_errorlog)" log)"
 t sid-memory-kill-feeds-no-vendor-breaker 0 \
   "$(find "$TMP/sid-errorlog" -maxdepth 1 -name '.session-terminal.*' | wc -l)"
 t sid-refuses-the-real-execution-error-body ordinary \
