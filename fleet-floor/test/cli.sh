@@ -414,6 +414,43 @@ t "crew status: a lock held with no session in flight names that" \
   "STUCK — duty run has held the lock for 47m with no session in flight, past 10m" \
   "$(cl_note cli-stuck)"
 
+# --- ...and where the two readers' LANGUAGES disagree about the digits -------
+#
+# `TIMEOUT_BUILD=0900` is a role conf a host may hold. Nothing between it and
+# `session.sh`'s `timeout=${tmo}s` canonicalises, GNU `timeout 0900` runs that
+# session, and the floor's `int()` reads 900. Bash reads a leading zero as
+# octal and `0900` is not octal, so `$(( session_ceiling + … ))` was a FATAL
+# expansion under this file's own `set -euo pipefail` — which makes this the
+# only row in the quartet whose failure was never a wrong badge. The pair
+# below is the ordinary boundary asked of that value; the row-count assertion
+# further up is what catches the abort, and the case after them says so where
+# a reader will find it (round 1, codex-bot).
+if grep -qE '^cli-lane-zero .*session active' "$CL_TMP/crew-out" \
+   && ! grep -qE '^cli-lane-zero .*STUCK' "$CL_TMP/crew-out"; then
+  ok "crew status: a leading-zero ceiling is read as decimal, not octal"
+else
+  fail "crew status: a leading-zero ceiling is read as decimal, not octal" \
+       "$(grep '^cli-lane-zero ' "$CL_TMP/crew-out")"
+fi
+# 800s is inside 900+60 and PAST the 600s constant, so this row also separates
+# the two readings rather than merely surviving one: a `crew status` still
+# grading against STUCK_AFTER_S calls this box STUCK.
+t "crew status: one second past a leading-zero ceiling is STUCK, naming it" \
+  "STUCK — duty run has held the lock for 16m, past the build session's 15m ceiling" \
+  "$(cl_note cli-lane-zero-over)"
+# The abort, asserted AS an abort. `crew status` returning 1 out of its roster
+# loop is not a mislabelled box — it is a table that stops, and every row
+# after the offending one is simply absent. Two rows follow the pair in the
+# fixture, and naming them here is what makes this case fail LOUDLY rather
+# than shrink the row count by two somewhere else in the file.
+if grep -qE '^cli-unconverged ' "$CL_TMP/crew-out" \
+   && grep -qE '^cli-premanifest ' "$CL_TMP/crew-out"; then
+  ok "crew status: the rows below a leading-zero ceiling still print"
+else
+  fail "crew status: the rows below a leading-zero ceiling still print" \
+       "table ends at: $(tail -1 "$CL_TMP/crew-out")"
+fi
+
 # The knob keeps its one meaning and gains no second one. Raising it must
 # release the no-session clause and must NOT silently re-cap a declared
 # ceiling — which would re-introduce the false alarm this replaces, on exactly

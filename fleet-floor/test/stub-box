@@ -118,6 +118,14 @@ lockheld_of() {
     lane-over)              printf 3661 ;;
     # Past STUCK_AFTER_S with a session in flight that declared no ceiling.
     lane-legacy)            printf 700 ;;
+    # The round-1 pair, and the numbers are chosen to be discriminating: their
+    # session declares `timeout=0900s`, so the bound is 960. 800 is inside it
+    # and PAST the 600s fleet-wide constant, so a reader still grading against
+    # the constant calls this box STUCK and the ceiling-reading one does not;
+    # 961 is one second past the bound, the same both-sides boundary the trio
+    # above states at 3600.
+    lane-zero)              printf 800 ;;
+    lane-zero-over)         printf 961 ;;
     *)                      printf '' ;;
   esac
 }
@@ -278,6 +286,21 @@ duty_log_of() {
       echo "$(ago 3700) duty run start"
       echo "$(ago 3700) heavy-duty/crew: build duty (ready unclaimed=1, whole rounds owed=0)"
       echo "$(ago 3690) SESSION START kind=build key=crew#610 timeout=3600s log=/h/duty/logs/g.log holder=tick sid=8f1c0a2e-1d3b-4c5a-9e70-2b6d4f8a1c33"
+      ;;
+    lane-zero|lane-zero-over)
+      # The digits a role conf saying `TIMEOUT_BUILD=0900` puts on the record.
+      # Nothing between that conf and `session.sh`'s `timeout=${tmo}s`
+      # canonicalises, and GNU `timeout 0900` runs the session, so this is a
+      # line the engine can genuinely write. It is spelled here rather than
+      # normalised because the two readers must each canonicalise it
+      # themselves: Python reads a leading zero as decimal, bash reads it as
+      # OCTAL, and `0900` is not octal at all — a `crew status` that took
+      # these digits into `$(( ))` raw died out of the middle of the roster
+      # loop under `set -euo pipefail` while the floor rendered the same box
+      # fine. Same evidence on both boxes; only lockheld_of differs.
+      echo "$(ago 1000) duty run start"
+      echo "$(ago 1000) heavy-duty/crew: build duty (ready unclaimed=1, whole rounds owed=0)"
+      echo "$(ago 990) SESSION START kind=build key=crew#624 timeout=0900s log=/h/duty/logs/z.log holder=tick sid=0a1b2c3d-4e5f-6071-8293-a4b5c6d7e8f9"
       ;;
     lane-legacy)
       # An engine older than the `timeout=` token — every line ever written
@@ -598,7 +621,7 @@ case "${1:-}" in
         _log=1; _active=0
         case "$sc" in
           nothired|unconverged|premanifest|neverticked|suppressed-notimestamp) _log=0 ;;
-          working|suppressed-working|suppressed-paired-crash|noauth|skew-behind|skew-ahead|invalid-tickage|lane-build|lane-edge|lane-over|lane-ping|lane-legacy) _active=1 ;;
+          working|suppressed-working|suppressed-paired-crash|noauth|skew-behind|skew-ahead|invalid-tickage|lane-build|lane-edge|lane-over|lane-ping|lane-legacy|lane-zero|lane-zero-over) _active=1 ;;
         esac
         # The lock age comes from lockheld_of, the same reader probe.sh's
         # ::lockheld and the ping's `l` field use. It used to be spelled a

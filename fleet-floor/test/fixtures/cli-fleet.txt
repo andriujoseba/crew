@@ -58,3 +58,11 @@ cli-lane-over  running  lane-over
 # An engine older than the `timeout=` token: there is no ceiling to read, so
 # both readers fall back to STUCK_AFTER_S. This is the box that must not move.
 cli-lane-legacy running  lane-legacy
+# The same quartet's question asked of a ceiling the two readers' LANGUAGES
+# disagree about: `timeout=0900s`, which Python reads as 900 and bash reads as
+# an invalid octal literal. Not a wrong badge — an ABORT. The arithmetic is
+# fatal under `set -euo pipefail`, so `crew status` stopped printing at this
+# box and took every row below it with it, which is why these two sit ABOVE
+# `cli-unconverged` and `cli-premanifest` rather than at the end of the file.
+cli-lane-zero  running  lane-zero
+cli-lane-zero-over running lane-zero-over
