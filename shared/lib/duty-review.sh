@@ -333,6 +333,76 @@ rereq_decision() {
   fi
 }
 
+# _review_verdict_at_head REPO NUM HEAD — positive postcondition for a
+# completed review session. The captured candidate head is deliberate: a
+# verdict on a head that moved during the session belongs to the next round.
+# REVIEW_VERDICT_POSTCONDITION distinguishes an ordinary miss from an
+# unreadable lookup without weakening either one into a verdict.
+_review_verdict_at_head() {
+  local repo="$1" num="$2" head="$3" owner name payload row oid state extra
+  owner="${repo%%/*}"; name="${repo##*/}"
+  REVIEW_VERDICT_POSTCONDITION=lookup-error
+  if ! payload="$(gh api graphql -f query='query($owner:String!,$name:String!,$num:Int!,$me:String!){
+    repository(owner:$owner,name:$name){ pullRequest(number:$num){
+      reviews(author:$me,last:1,states:[APPROVED,CHANGES_REQUESTED]){nodes{commit{oid} submittedAt state}}
+    } } }' -f owner="$owner" -f name="$name" -F num="$num" -f me="$ME" 2>/dev/null)"; then
+    return 1
+  fi
+  if ! printf '%s' "$payload" | jq -e '
+      (.errors // []) | length == 0 and
+      (.data.repository.pullRequest | type == "object") and
+      (.data.repository.pullRequest.reviews.nodes | type == "array")' >/dev/null 2>&1; then
+    return 1
+  fi
+  row="$(printf '%s' "$payload" | jq -r '
+    .data.repository.pullRequest.reviews.nodes[0] // {}
+    | "\(.commit.oid // "-") \(.state // "-")"' 2>/dev/null)" || return 1
+  read -r oid state extra <<<"$row"
+  if [ -n "${extra:-}" ] || [ -z "${oid:-}" ] || [ -z "${state:-}" ]; then
+    return 1
+  fi
+  REVIEW_VERDICT_POSTCONDITION=none
+  if [ "$oid" = "$head" ]; then
+    case "$state" in
+      APPROVED|CHANGES_REQUESTED)
+        REVIEW_VERDICT_POSTCONDITION="$state"
+        return 0
+        ;;
+    esac
+  fi
+  return 1
+}
+
+# The retry budget is local spending state, not GitHub state. One entry per
+# PR/head keeps a moved head fresh; clearing by PR removes every stale-head
+# remainder when a durable verdict or park settles the request.
+_review_owed_clear() { # $1=repo $2=num
+  local repo="$1" num="$2" ledger="$DUTY_DIR/.review-owed" tmp prefix
+  prefix="$repo#$num@"
+  [ -e "$ledger" ] || return 0
+  tmp="$(mktemp "${ledger}.XXXXXX")" || return 1
+  awk -v p="$prefix" 'index($1,p) != 1 { print }' "$ledger" >"$tmp"
+  mv -f "$tmp" "$ledger"
+}
+
+_review_owed_attempt() { # $1=repo $2=num $3=head; prints new attempt count
+  local repo="$1" num="$2" head="$3" ledger="$DUTY_DIR/.review-owed" tmp prefix key input
+  prefix="$repo#$num@"; key="$prefix$head"
+  input="$ledger"; [ -e "$input" ] || input=/dev/null
+  tmp="$(mktemp "${ledger}.XXXXXX")" || return 1
+  awk -v p="$prefix" -v k="$key" '
+    BEGIN { count=0 }
+    $1 == k { count=$2+0; next }
+    index($1,p) == 1 { next }
+    NF >= 2 { print }
+    END { count++; print k, count; print count > "/dev/stderr" }
+  ' "$input" >"$tmp" 2>"$tmp.count"
+  REVIEW_OWED_ATTEMPT="$(cat "$tmp.count" 2>/dev/null)"
+  rm -f "$tmp.count"
+  mv -f "$tmp" "$ledger"
+  printf '%s\n' "$REVIEW_OWED_ATTEMPT"
+}
+
 # _review_check_evidence_from_payload REPO NUM SNAPSHOT CURRENT_HEAD — render
 # the check evidence handed to a reviewer. SNAPSHOT is one `gh pr view` object:
 # its headRefOid and statusCheckRollup are one atomic view, so every conclusion
@@ -639,7 +709,7 @@ $key $updated"
   # One session per repo covering all its pending PRs, oldest first —
   # amortizes checkout and session cost (grok/kimi pattern).
   local dir slug prompt prs check_evidence expected_heads park_evidence ready_prs
-  local commit_items captured_prs key_pr updated
+    local commit_items captured_prs key_pr updated attempt
   for SR in "${repo_order[@]}"; do
     prs="${repo_prs[$SR]% }"
     slug="${SR//\//__}"
@@ -679,9 +749,25 @@ $key $updated"
         while read -r key updated; do
           [ -n "${updated:-}" ] || continue
           key_pr="${key##*#}"
-          if [[ "$captured_prs" != *" $key_pr "* ]]; then
+          if [[ "$captured_prs" == *" $key_pr "* ]]; then
             commit_items="$commit_items
 $key $updated"
+            _review_owed_clear "$SR" "$key_pr"
+          elif _review_verdict_at_head "$SR" "$key_pr" "${candidate_heads["$SR#$key_pr"]}"; then
+            commit_items="$commit_items
+$key $updated"
+            _review_owed_clear "$SR" "$key_pr"
+          else
+            if [ "$REVIEW_VERDICT_POSTCONDITION" = lookup-error ]; then
+              warn "review: $SR#$key_pr post-session verdict lookup failed; request remains owed"
+            fi
+            attempt="$(_review_owed_attempt "$SR" "$key_pr" "${candidate_heads["$SR#$key_pr"]}")"
+            if [ "$attempt" -ge 3 ]; then
+              warn "review: $SR#$key_pr at ${candidate_heads["$SR#$key_pr"]} still has no exact-head verdict after $attempt attempts — settling local spend; GitHub request remains live"
+              commit_items="$commit_items
+$key $updated"
+              _review_owed_clear "$SR" "$key_pr"
+            fi
           fi
         done <<<"${repo_items[$SR]}"
         printf '%s\n' "$commit_items" | ledger_commit "$DUTY_DIR/.seen-review"
