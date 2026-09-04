@@ -160,7 +160,42 @@ case "$cmd" in
   info)
     name="$1"
     state="running"; [ ! -s "$state_dir/state-$name" ] || state="$(cat "$state_dir/state-$name")"
-    printf '[{"status":"%s"}]\n' "$state"
+    # The resource keys ride the same passthrough the real `box info --json`
+    # is: `incus list --format json`, config and devices verbatim. Empty
+    # LIFE_BOX_RESOURCES is the box that answers about its status and nothing
+    # else, which is what #607 D5's note has to survive without inventing a
+    # figure.
+    # A box that cannot be read AT ALL is a different answer from one that
+    # answers without resource keys, and it reaches a different line of the
+    # reader — the shell fallback rather than jq's own defaults.
+    [ "${LIFE_BOX_RESOURCES:-}" != unreadable ] || exit 1
+    if [ -n "${LIFE_BOX_RESOURCES:-}" ]; then
+      IFS='|' read -r r_cpu r_mem r_disk <<<"$LIFE_BOX_RESOURCES"
+      printf '[{"status":"%s","expanded_config":{"limits.cpu":"%s","limits.memory":"%s"},"expanded_devices":{"root":{"type":"disk","size":"%s"}}}]\n' \
+        "$state" "$r_cpu" "$r_mem" "$r_disk"
+    else
+      printf '[{"status":"%s"}]\n' "$state"
+    fi
+    ;;
+  new)
+    # `box new --help` is the capability probe's whole input (#607 D5). The
+    # sentence WRAPS in box's real help output and it is reproduced wrapped
+    # here on purpose: a probe that matched line-by-line would pass a fixture
+    # that joined it and fail against the box an operator actually has.
+    if [ "${1:-}" = --help ]; then
+      case "${LIFE_CLONE_SIZING:-yes}" in
+        yes)
+          printf 'usage: box new --name <box> [--from <src>[/<snap>]]\n'
+          printf 'Named sizes select fresh-mint bundles. A --from clone instead accepts the\n'
+          printf 'explicit --cpu/--memory/--disk flags (#171). They ride the copy itself.\n' ;;
+        old)
+          printf 'usage: box new --name <box> [--from <src>[/<snap>]]\n'
+          printf -- '--cpu/--memory/--disk shape a fresh mint; a clone carries its source resources.\n' ;;
+        *) exit 2 ;;
+      esac
+      exit 0
+    fi
+    printf 'new %s\n' "$*" >>"$calls"
     ;;
   *) exit 2 ;;
 esac
@@ -208,6 +243,8 @@ run_crew() {
     LIFE_DOWN_FAIL="${LIFE_DOWN_FAIL:-}" \
     LIFE_STOP_NOT_TAKE="${LIFE_STOP_NOT_TAKE:-}" \
     LIFE_READY_FAILS="${LIFE_READY_FAILS:-0}" \
+    LIFE_CLONE_SIZING="${LIFE_CLONE_SIZING:-yes}" \
+    LIFE_BOX_RESOURCES="${LIFE_BOX_RESOURCES:-}" \
     LIFE_PROBE_BIN="$PROBE_BIN" LIFE_NO_FLOCK_BIN="$NO_FLOCK_BIN" \
     CREW_DRAIN_POLL_SECONDS=0 CREW_RESTART_READY_POLL_SECONDS=0 \
     CREW_RESTART_READY_ATTEMPTS=3 PATH="${LIFE_PATH:-$SHIM:$PATH}" bash "$CLI" "$@"
@@ -575,5 +612,154 @@ reset_case
 capture restart alpha --force-after 00
 t hostjob-usage-error-still-exits-two 2 "$RC"
 t hostjob-usage-error-writes-no-log '' "$(job_log)"
+
+# --- `crew new` sizes the box it mints (#607) -------------------------------
+# Asserted at the box transport boundary — the argv crew hands `box new` — for
+# the reason every other case in this suite is: the sizing a role gets is a
+# statement crew makes to the host, and it is the whole of crew's half of it.
+# A test that minted a real box would prove the same thing about incus.
+#
+# Its own fleet definition, so the roster rows these cases need do not enter
+# the --all iterations above and shift their counts.
+CONF_NEW="$TMP/conf-new"
+mkdir -p "$CONF_NEW"
+cp "$CONF/fleet.conf" "$CONF/repos.txt" "$CONF/notify-repos.txt" \
+  "$CONF/doctrine.conf" "$CONF_NEW/"
+cat >"$CONF_NEW/fleet.roster" <<'EOF'
+gamma claude reviewer
+delta claude reviewer goldbox/gold
+epsilon claude builder
+EOF
+
+# The criterion in the issue's own words: a reviewer roster line with no 4th
+# column produces a box at 4 vCPU / 8GiB / 60GiB. Read out of reviewer.conf at
+# run time and not pinned here, so this case follows the conf it is about.
+read -r EXP_CPU EXP_MEM EXP_DISK <<<"$(
+  bash -c '. "$1"; printf "%s %s %s\n" "$BOX_CPU" "$BOX_MEMORY" "$BOX_DISK"' \
+    _ "$SHARED/conf/roles/reviewer.conf")"
+
+reset_case
+LIFE_CONF="$CONF_NEW" capture new gamma
+t new-fresh-mint-exits-zero 0 "$RC"
+t new-fresh-mint-carries-the-role-size \
+  "new --name gamma --template claude-box --cpu $EXP_CPU --memory $EXP_MEM --disk $EXP_DISK" \
+  "$(grep '^new ' "$STATE/calls")"
+t new-fresh-mint-is-the-reviewer-at-builder-parity \
+  "new --name gamma --template claude-box --cpu 4 --memory 8GiB --disk 60GiB" \
+  "$(grep '^new ' "$STATE/calls")"
+
+# D5, the half that lands — and it lands in TWO figures, not three. box 0.10.0
+# takes --cpu and --memory on a copy unconditionally, but --disk only where the
+# SOURCE has a root device of its own: a VM whose root is profile-inherited, or
+# a source box cannot read, makes it refuse and die before `incus copy`, so
+# nothing is created at all. crew therefore never passes --disk on this path.
+# Triage ruled it on #607 (2026-09-03): no branch of this fix may turn a roster
+# line that mints today into one that does not.
+#
+# The exact argv IS the assertion. A `--disk` creeping back in is invisible to
+# every other test here and kills every gold-snapshot roster line on the first
+# host whose gold predates box's own `--device root,size=` mints.
+reset_case
+LIFE_CONF="$CONF_NEW" LIFE_BOX_RESOURCES="$EXP_CPU|$EXP_MEM|30GiB" capture new delta
+t new-clone-sized-exits-zero 0 "$RC"
+t new-clone-sized-carries-cpu-and-memory-only \
+  "new --name delta --from goldbox/gold --cpu $EXP_CPU --memory $EXP_MEM" \
+  "$(grep '^new ' "$STATE/calls")"
+t new-clone-sized-passes-no-disk 0 \
+  "$(grep -c -- '--disk' <<<"$(grep '^new ' "$STATE/calls")" || true)"
+# A PARTIAL landing is a legitimate outcome and must be said out loud (#607
+# criterion 5 as amended) — so the sized branch reports too, per figure, and
+# the figure that did not ride is named as not applied rather than omitted.
+t new-clone-sized-still-reports-one-line 1 "$(grep -c '^note: ' <<<"$OUT" || true)"
+note_line="$(grep '^note: ' <<<"$OUT" || true)"
+t new-clone-sized-reports-cpu-applied 1 \
+  "$(grep -cF 'cpu applied' <<<"$note_line" || true)"
+t new-clone-sized-reports-memory-applied 1 \
+  "$(grep -cF 'memory applied' <<<"$note_line" || true)"
+t new-clone-sized-reports-disk-not-applied 1 \
+  "$(grep -cF 'disk NOT applied' <<<"$note_line" || true)"
+t new-clone-sized-names-the-carried-disk 1 \
+  "$(grep -cF "carries $EXP_CPU cpu / $EXP_MEM / 30GiB" <<<"$note_line" || true)"
+
+# D5, the half that cannot: an older box refuses the flags on a copy outright,
+# so the clone is made unsized — passing them would kill every gold-snapshot
+# roster line, which is the #590 defect — and ONE line names the box, all three
+# verdicts, and both sizes.
+reset_case
+LIFE_CONF="$CONF_NEW" LIFE_CLONE_SIZING=old LIFE_BOX_RESOURCES='2|4GiB|30GiB' \
+  capture new delta
+t new-clone-unsized-exits-zero 0 "$RC"
+t new-clone-unsized-passes-no-sizing-flags "new --name delta --from goldbox/gold" \
+  "$(grep '^new ' "$STATE/calls")"
+t new-clone-unsized-note-is-one-line 1 "$(grep -c '^note: ' <<<"$OUT" || true)"
+note_line="$(grep '^note: ' <<<"$OUT" || true)"
+for needle in delta 'carries 2 cpu / 4GiB / 30GiB' \
+              "profile asks $EXP_CPU cpu / $EXP_MEM / $EXP_DISK" \
+              'cpu NOT applied' 'memory NOT applied' 'disk NOT applied'; do
+  t "new-clone-unsized-note-names-${needle// /-}" 1 \
+    "$(grep -cF "$needle" <<<"$note_line" || true)"
+done
+# Nothing crew did not ask for is ever reported as applied — the whole line's
+# worth is that "applied" means verified.
+t new-clone-unsized-claims-nothing-applied 0 \
+  "$(grep -cE '(cpu|memory|disk) applied' <<<"$note_line" || true)"
+# ...and the route the line hands the operator repairs EVERY figure it renders
+# a verdict for. This is the branch where all three read NOT applied, so a
+# route missing one is a figure the operator is told about and cannot fix.
+# Memory is the figure #607 exists over — codex-reviewer died with exit 137 —
+# and it was the one the first cut of this line omitted (round 1).
+t new-clone-unsized-route-repairs-cpu 1 \
+  "$(grep -cF "limits.cpu $EXP_CPU" <<<"$note_line" || true)"
+t new-clone-unsized-route-repairs-memory 1 \
+  "$(grep -cF "limits.memory $EXP_MEM" <<<"$note_line" || true)"
+t new-clone-unsized-route-repairs-disk 1 \
+  "$(grep -cF "root size=$EXP_DISK" <<<"$note_line" || true)"
+
+# The probe fails CLOSED. A box whose help cannot be read at all is treated as
+# one that cannot size a clone: the cost of guessing wrong that way is this
+# note, and the cost of guessing wrong the other way is a `crew new` that dies
+# on a roster line that worked yesterday.
+reset_case
+LIFE_CONF="$CONF_NEW" LIFE_CLONE_SIZING=broken LIFE_BOX_RESOURCES='2|4GiB|30GiB' \
+  capture new delta
+t new-clone-unreadable-help-does-not-size "new --name delta --from goldbox/gold" \
+  "$(grep '^new ' "$STATE/calls")"
+t new-clone-unreadable-help-still-reports 1 "$(grep -c '^note: ' <<<"$OUT" || true)"
+
+# A figure that does not read says so. The alternative — printing the profile's
+# own numbers, or nothing — is a note that states as fact something crew never
+# read off the daemon.
+reset_case
+LIFE_CONF="$CONF_NEW" LIFE_CLONE_SIZING=old capture new delta
+t new-clone-unreadable-resources-are-not-invented 1 \
+  "$(grep -c 'carries ? cpu / ? / ?' <<<"$OUT" || true)"
+
+# ...and the same answer when the box cannot be read at all, which is a
+# different line of the reader: jq's defaults answer the first case, the
+# shell's the second, and only one of them runs per case.
+reset_case
+LIFE_CONF="$CONF_NEW" LIFE_CLONE_SIZING=old LIFE_BOX_RESOURCES=unreadable \
+  capture new delta
+t new-clone-unreadable-box-still-reports-one-line 1 "$(grep -c '^note: ' <<<"$OUT" || true)"
+t new-clone-unreadable-box-invents-nothing 1 \
+  "$(grep -c 'carries ? cpu / ? / ?' <<<"$OUT" || true)"
+
+# An unreadable figure on a flag crew DID pass is "unverified" and never
+# "applied": the sized branch asked for cpu and memory, and a daemon that will
+# not say what the box carries has not confirmed they landed.
+reset_case
+LIFE_CONF="$CONF_NEW" LIFE_BOX_RESOURCES=unreadable capture new delta
+t new-clone-sized-unreadable-is-unverified 1 \
+  "$(grep -cF 'cpu unverified, memory unverified' <<<"$OUT" || true)"
+t new-clone-sized-unreadable-claims-nothing-applied 0 \
+  "$(grep -cE '(cpu|memory|disk) applied' <<<"$OUT" || true)"
+
+# The builder is untouched by all of this and mints at its own figures — the
+# parity is reviewer→builder, not a new tier for both.
+reset_case
+LIFE_CONF="$CONF_NEW" capture new epsilon
+t new-builder-mint-unchanged \
+  "new --name epsilon --template claude-box --cpu 4 --memory 8GiB --disk 60GiB" \
+  "$(grep '^new ' "$STATE/calls")"
 
 suite_finish

@@ -1297,6 +1297,120 @@ validate_profiles() {  # agent role
   [ -f "$ROLES_DIR/$2.conf" ]  || usage_error "unknown role '$2' — see: crew profiles"
 }
 
+# Can THIS host's box size a clone? box 0.10.0 made --cpu/--memory/--disk ride
+# a `--from` copy; every box before it rejected them outright (box#171, #607
+# D5). Probed off the help text rather than compared against `box --version`,
+# for the reason box_supports_force_down is: the question is what this binary
+# does, and a version string is a proxy for it that a fork or a local build
+# gets wrong. The needle is box's own sentence for the capability.
+#
+# `tr` first, because that sentence WRAPS in the help output — "A --from clone
+# instead accepts the\nexplicit --cpu/--memory/--disk flags" — and a
+# line-oriented match on it silently never fires, which fails safe here (the
+# clone is merely unsized) and is still a wrong answer.
+#
+# Fails CLOSED on anything unexpected: no box, an error, a help text that does
+# not say it. The cost of a false no is a clone at the source's size and a line
+# saying so; the cost of a false yes is a `crew new` that dies on a roster line
+# that worked yesterday, which is #590 all over again.
+box_supports_clone_sizing() {
+  local help
+  help="$(box new --help 2>&1 | tr '\n' ' ' || true)"
+  grep -qE -- '--from clone[^.]*accepts[^.]*--cpu' <<<"$help"
+}
+
+# box_size_fields NAME — what the instance actually carries, tab-separated as
+# CPU, MEMORY, DISK. Three fields and not one string, because #607 D5 as
+# amended is answered PER FIGURE: cpu, memory and disk land or fail
+# independently now, so the reporter has to compare them one at a time.
+#
+# `box info --json` is a raw `incus list --format json` passthrough, and these
+# are incus's own documented keys rather than a shape crew is guessing at:
+# limits.cpu and limits.memory in the config, the root device's size beside
+# them. Expanded first — the question is what the box will RUN with, and a
+# limit set by a profile is as real as one stamped on the instance.
+#
+# A figure that does not read is "?" and never a plausible default. The shell
+# defaults below are the second half of that: jq's `//` answers a key that is
+# missing from a document, and `${cpu:-?}` answers a document that never
+# arrived — no box, no daemon, unparseable output. The disk figure is genuinely
+# absent on a container, whose root rides the storage pool, so "?" there is an
+# answer and not a failure.
+box_size_fields() { # NAME
+  local raw cpu mem disk
+  raw="$(box info "$1" --json 2>/dev/null \
+    | jq -r 'if type == "array" then (.[0] // {}) else . end
+             | (.expanded_config // .config // {}) as $c
+             | (.expanded_devices // .devices // {}) as $d
+             | [($c["limits.cpu"] // "?"),
+                ($c["limits.memory"] // "?"),
+                ((($d.root // {}).size) // "?")] | @tsv' 2>/dev/null \
+    | head -1 | tr -d '\r' || true)"
+  IFS=$'\t' read -r cpu mem disk <<<"$raw"
+  printf '%s\t%s\t%s\n' "${cpu:-?}" "${mem:-?}" "${disk:-?}"
+}
+
+# size_verdict ASKED FIGURE READ WANT — one figure's answer, in the three words
+# the note is allowed to say. ASKED is the space-fenced list of flags crew
+# actually passed, so this never has to infer intent from an outcome.
+#
+#   NOT applied  — crew did not ask for it, or asked and the daemon reports
+#                  something else
+#   applied      — crew asked and the read-back agrees
+#   unverified   — crew asked and the figure does not read back at all
+#
+# The middle case is deliberately biased: an incus that normalises a unit
+# ("8GiB" stored as a byte count) would be reported NOT applied when it did
+# apply. That is the safe direction and the note prints both figures beside the
+# verdict, so an operator can see the disagreement — whereas the other error,
+# claiming a landing crew never verified, is exactly the silence D5 forbids.
+#
+# The FIRST case reads the same way on a coincidence, and that is also
+# deliberate: a gold snapshot already carrying the role's disk reports "disk
+# NOT applied" beside two identical figures, because crew withheld --disk and
+# so verified nothing. "applied" means crew asked and confirmed, never crew
+# looked and liked what it saw — a snapshot that happens to agree today is one
+# re-gold away from disagreeing, and the note that claimed it landed would not
+# move. Both figures are on the line, so the coincidence is legible.
+size_verdict() { # ASKED FIGURE READ WANT
+  case "$1" in
+    *" $2 "*) ;;
+    *) printf 'NOT applied\n'; return ;;
+  esac
+  if [ "$3" = "$4" ]; then printf 'applied\n'
+  elif [ "$3" = '?' ]; then printf 'unverified\n'
+  else printf 'NOT applied\n'; fi
+}
+
+# clone_size_report NAME ROLE ASKED WANT_CPU WANT_MEM WANT_DISK WHY — the ONE
+# line every `--from` clone owes its operator (#607 D5, amended by triage
+# 2026-09-03 to be answered per figure).
+#
+# EVERY clone, not only the one that could not be sized: with --disk withheld
+# on this path by construction (see create_box), even the best case is a
+# PARTIAL landing, and "a partial landing is a legitimate outcome and must be
+# said out loud" is the criterion's own wording. A branch that printed nothing
+# because two of three figures rode would be the silent case in better clothes.
+#
+# The wanted figures are ARGUMENTS and not create_box's locals reached through
+# bash's dynamic scope: this function is the thing #607 is about, and a caller
+# that has to set three variables with the right names to use it is one rename
+# away from reporting a size nobody asked for.
+#
+# THE RESIZE ROUTE NAMES ALL THREE FIGURES, including ones that landed. Memory
+# is the reason #607 exists — codex-reviewer died with exit 137, not out of
+# disk — so a route that skipped it left an operator following the line
+# verbatim repairing the two figures that did not kill the box. It is also not
+# a per-figure route: the verdicts are already on the line, and printing the
+# whole route once is a command an operator can run against whatever they see
+# there, rather than a second thing to reconcile with the first.
+clone_size_report() { # NAME ROLE ASKED WANT_CPU WANT_MEM WANT_DISK WHY
+  local name="$1" role="$2" asked=" $3 " want_cpu="$4" want_mem="$5" want_disk="$6" why="$7"
+  local cpu mem disk
+  IFS=$'\t' read -r cpu mem disk <<<"$(box_size_fields "$name")"
+  echo "note: $name — cpu $(size_verdict "$asked" cpu "$cpu" "$want_cpu"), memory $(size_verdict "$asked" memory "$mem" "$want_mem"), disk $(size_verdict "$asked" disk "$disk" "$want_disk"); it carries $cpu cpu / $mem / $disk and the $role profile asks $want_cpu cpu / $want_mem / $want_disk. $why (resize: box incus $name -- config set {} limits.cpu $want_cpu, config set {} limits.memory $want_mem, and config device set {} root size=$want_disk with the box stopped first — box new --help says why)"
+}
+
 # create_box NAME AGENT ROLE [FROM] — infrastructure only, no engine.
 create_box() {
   local name="$1" agent="$2" role="$3" from="${4:-}"
@@ -1320,22 +1434,55 @@ create_box() {
   # </dev/null on both: create_box runs inside the create-all and up roster
   # loops, which read from a FIFO any stdin-inheriting `box` call would drain
   # (#48). Neither form takes input — every argument is on the command line.
-  # A CLONE carries its source's resources, and `box new --from` REFUSES the
-  # sizing flags outright: "--cpu/--memory/--disk shape a fresh mint; a clone
-  # carries its source's resources ('box incus' can change them afterwards)".
-  # Passing them here meant every roster line with a 4th-column gold snapshot
-  # died at `crew new`/`crew create-all`. Never noticed because no roster line
-  # has ever carried one — the same never-exercised-path shape as #47 and #48.
   #
-  # The role profile's sizing therefore does NOT apply to a cloned box, which
-  # is a real semantic and not a detail to swallow: a builder minted from a
-  # reviewer-sized gold comes up with the reviewer's 2 CPU / 4GiB. Said out
-  # loud here so an operator can resize rather than discover it under load.
+  # THE CLONE PATH TAKES --cpu AND --memory AGAIN, AND NEVER --disk (#607 D5,
+  # as amended by triage 2026-09-03). The refusal those flags were removed for
+  # was real: `box new --from` used to reject all three outright, so every
+  # roster line with a 4th-column gold snapshot died at `crew new` (#590). box
+  # 0.10.0, tagged 2026-09-02, reverses that for cpu and memory — they ride the
+  # copy, incus sizing the clone as it creates it, with no resize, no restart
+  # and no step inside the guest (box#171).
+  #
+  # --disk IS NOT THE SAME FLAG AND IT IS THE ONE THAT CAN COST THE MINT.
+  # `box new --help` states its precondition and bin/box:2179-2186 implements
+  # it: --disk rides a copy only where the SOURCE has a root device of its own.
+  # A container source takes a note and clones anyway; a VM whose root comes
+  # from a profile — or a source box cannot read, which box treats as the same
+  # answer — makes box refuse and die BEFORE `incus copy`, so nothing is
+  # created at all. That is #590's outcome one layer further in, produced by
+  # #607's own fix, and the ruling on this issue forbids it in as many words:
+  # no branch may turn a roster line that mints today into one that does not.
+  #
+  # So crew does not ask. It is not that the question is hard — it is that crew
+  # cannot ask it: box reads the source with `incus config show <srcref>`, and
+  # crew's only window on the daemon is `box info --json`, an `incus list` over
+  # INSTANCES, which cannot see the `<box>/<snapshot>` ref a 4th column holds.
+  # A crew-side pre-flight would be a copy of another tool's precondition, read
+  # off a different object, drifting the first time box edits it. The disk is
+  # reported as not landing instead, with the route to resize it.
+  #
+  # PROBED, not version-compared, and the probe governs the two flags that do
+  # ride: this host's box is whatever the operator installed, and passing them
+  # to one that predates 0.10.0 re-breaks #590 for the same rosters. Same idiom
+  # as box_supports_force_down. Either way the clone ends in ONE line saying
+  # what landed and what did not — a builder minted from a reviewer-sized gold
+  # comes up on the reviewer's disk regardless, and finding that out under load
+  # is what the report exists to prevent.
   if [ -n "$from" ]; then
-    echo "creating $name  (role=$role agent=$agent from=$from)"
-    echo "  note: a clone inherits $from's cpu/memory/disk — the $role profile's"
-    echo "        $BOX_CPU cpu / $BOX_MEMORY / $BOX_DISK does NOT apply (resize with: box incus)"
-    box new --name "$name" --from "$from" </dev/null
+    if box_supports_clone_sizing; then
+      echo "creating $name  (role=$role agent=$agent from=$from cpu=$BOX_CPU mem=$BOX_MEMORY)"
+      box new --name "$name" --from "$from" \
+        --cpu "$BOX_CPU" --memory "$BOX_MEMORY" </dev/null
+      clone_size_report "$name" "$role" "cpu memory" \
+        "$BOX_CPU" "$BOX_MEMORY" "$BOX_DISK" \
+        "crew does not pass --disk on a copy: box serves it only from a source with a root device of its own and refuses before anything is created, so asking would trade this box for a clearer number (box#171)"
+    else
+      echo "creating $name  (role=$role agent=$agent from=$from)"
+      box new --name "$name" --from "$from" </dev/null
+      clone_size_report "$name" "$role" "" \
+        "$BOX_CPU" "$BOX_MEMORY" "$BOX_DISK" \
+        "this host's box predates 0.10.0 clone sizing and rejects the flags on a copy, so the clone carries $from's size"
+    fi
   else
     echo "creating $name  (role=$role agent=$agent cpu=$BOX_CPU mem=$BOX_MEMORY disk=$BOX_DISK template=$agent-box)"
     box new --name "$name" --template "$agent-box" --cpu "$BOX_CPU" --memory "$BOX_MEMORY" --disk "$BOX_DISK" </dev/null

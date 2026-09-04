@@ -1353,5 +1353,51 @@ idle_n="$(printf '%s\n' "$agg" | sed -n 's/.*idle=\([0-9]*\).*/\1/p')"
 [ "${idle_n:-0}" -gt 0 ] && [ "${idle_n:-10}" -lt 10 ] && r1=non-degenerate || r1="degenerate(idle=$idle_n)"
 t acted-aggregate-idle-is-non-degenerate non-degenerate "$r1"
 
+# --- role box sizing: the reviewer is the builder's size (#607) -------------
+# The reviewer was sized "lean" at half the builder's box on a premise that is
+# false in both halves — its worktrees are not throwaway (#606) and session
+# LENGTH does not set peak RSS, the heaviest single command does. That command
+# is the builder's own suite, re-run to verify it, plus a mutation probe over a
+# corrupted copy, plus lint sweeps the builder never runs. It killed a
+# ShellCheck sweep twice with exit 137 on the box these numbers replace.
+#
+# READ FROM BOTH FILES, never two hardcoded copies (#607 acceptance criterion
+# 1): a test that pins 4/8GiB/60GiB in its own source goes green on a day
+# someone trims reviewer.conf back and updates the literal beside it, which is
+# the whole failure this asserts against. What is asserted is the RELATION.
+box_sizing_of() {  # box_sizing_of <role>
+  bash -c '. "$1"; printf "%s/%s/%s\n" "${BOX_CPU:-}" "${BOX_MEMORY:-}" "${BOX_DISK:-}"' \
+    _ "$SHARED/conf/roles/$1.conf" 2>/dev/null
+}
+t role-sizing-reviewer-matches-builder "$(box_sizing_of builder)" "$(box_sizing_of reviewer)"
+# ...and the relation is only worth asserting over figures that are actually
+# there: two roles that both failed to declare any would compare equal as
+# "//" and pass a suite that had proved nothing.
+case "$(box_sizing_of reviewer)" in
+  */*/*) [ -n "$(box_sizing_of reviewer | tr -d '/')" ] && r1=declared || r1=empty ;;
+  *) r1=malformed ;;
+esac
+t role-sizing-reviewer-is-declared declared "$r1"
+
+# D2: the comment above those numbers is the deliverable as much as they are —
+# it is the reasoning that produced the wrong figure, and left in place it is
+# what restores them in six months. The two dead words must be gone, and the
+# real reason must be named.
+reviewer_comment="$(sed -n '/^# Box resources/,/^BOX_CPU=/p' "$SHARED/conf/roles/reviewer.conf")"
+t role-sizing-reviewer-comment-drops-lean 0 \
+  "$(grep -ci 'lean' <<<"$reviewer_comment" || true)"
+t role-sizing-reviewer-comment-drops-throwaway 0 \
+  "$(grep -ci 'throwaway detached worktrees' <<<"$reviewer_comment" || true)"
+for needle in 'mutation probe' "builder's whole suite"; do
+  t "role-sizing-reviewer-comment-names-${needle// /-}" 1 \
+    "$(grep -cF "$needle" <<<"$reviewer_comment" || true)"
+done
+
+# D3: triage is LEFT ALONE. "Reads boards and launches short sessions" is
+# accurate — no docker, no suites, no toolchains — and resizing it on the
+# reviewer's reasoning would be the same mistake in the other direction. The
+# figures are pinned literally here on purpose: this one is a "did not move"
+# assertion, so deriving it from the file it guards would assert nothing.
+t role-sizing-triage-unchanged "2/4GiB/30GiB" "$(box_sizing_of triage)"
 
 suite_finish

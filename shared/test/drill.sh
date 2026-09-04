@@ -904,4 +904,64 @@ t drill-runbook-names-the-declared-leg-record present \
 t drill-runbook-hardcodes-no-pr-number 0 \
   "$(grep -cE 'PR #[0-9]' "$RUNBOOK" || true)"
 
+# --- the drill box is minted at the drilled role's own size (#607 D4) -------
+# rehearsal.sh minted every role at a flat 2 cpu / 4GiB / 20GiB, which is not
+# what `crew new` does for any role in the fleet — so the one thing a green
+# rehearsal could never say anything about was role sizing, and it took an
+# OOM-killed reviewer to find that out.
+#
+# The production block is EXTRACTED AND RUN, not grepped: what matters is the
+# three figures it resolves for a given role, and a grep would go green on a
+# block that read the right file and resolved nothing from it.
+# shellcheck disable=SC2016  # match literal production shell source
+size_block="$(sed -n '/^ROLE_CONF="\$SOURCE_TREE/,/^fi$/p' "$ROOT/drill/rehearsal.sh")"
+# shellcheck disable=SC2016  # the printf runs in the CHILD, on its variables
+drill_size_for() { # ROLE [TREE]
+  env SOURCE_TREE="${2:-$ROOT}" ROLE="$1" bash -c \
+    "$size_block"'; printf "%s %s %s\n" "$BOX_CPU" "$BOX_MEMORY" "$BOX_DISK"' 2>&1
+}
+conf_size_for() { # ROLE
+  bash -c '. "$1"; printf "%s %s %s\n" "$BOX_CPU" "$BOX_MEMORY" "$BOX_DISK"' \
+    _ "$SHARED/conf/roles/$1.conf"
+}
+for drill_role in reviewer triage builder; do
+  t "drill-box-sized-at-$drill_role-role-size" "$(conf_size_for "$drill_role")" \
+    "$(drill_size_for "$drill_role")"
+done
+# ...and the roles must not all resolve to one size, which is the defect this
+# replaces and the state three equal comparisons above would still pass in.
+t drill-box-size-differs-by-role different \
+  "$([ "$(drill_size_for reviewer)" != "$(drill_size_for triage)" ] \
+      && echo different || echo identical)"
+
+# No size literal remains in that file. Comments are excluded from the
+# population on purpose — the block's own comment quotes the literal it
+# removed, and a guard that could not survive being explained would be
+# rewritten rather than kept.
+t drill-role-script-holds-no-size-literal 0 \
+  "$(grep -vE '^[[:space:]]*#' "$ROOT/drill/rehearsal.sh" \
+     | grep -cE -- '--(cpu|memory|disk)[= ]+[0-9]' || true)"
+
+# The role conf is a REQUIRED INPUT, declared with the drill's other three, so
+# a source that cannot say how big a $ROLE box is is refused at acquisition and
+# attributed like every other missing input — not later, as a box step that
+# stopped for reasons of its own.
+# shellcheck disable=SC2016  # match literal production shell source
+t drill-role-conf-is-a-required-input 1 \
+  "$(grep -c '^for required in .*shared/conf/roles/\$ROLE\.conf' "$ROOT/drill/rehearsal.sh" || true)"
+
+# A conf that declares no figures is REFUSED, not guessed past: minting at a
+# size the fleet does not use is what this leg exists to stop.
+DRILL_NOSIZE="$TMP/nosize-tree"
+mkdir -p "$DRILL_NOSIZE/shared/conf/roles"
+printf 'TIMEOUT_REVIEW=1\n' >"$DRILL_NOSIZE/shared/conf/roles/reviewer.conf"
+nosize_out="$(drill_size_for reviewer "$DRILL_NOSIZE")"; nosize_rc=$?
+t drill-box-size-undeclared-is-refused 1 "$nosize_rc"
+t drill-box-size-undeclared-says-why 1 \
+  "$(grep -c 'declares no BOX_CPU' <<<"$nosize_out" || true)"
+missing_out="$(drill_size_for reviewer "$TMP/no-such-tree")"; missing_rc=$?
+t drill-box-size-missing-conf-is-refused 1 "$missing_rc"
+t drill-box-size-missing-conf-names-the-path 1 \
+  "$(grep -c 'no role conf at' <<<"$missing_out" || true)"
+
 suite_finish
