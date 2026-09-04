@@ -260,6 +260,7 @@ t review-owed-settle-clears-all-heads empty \
 
 d671_drive() ( # root post-mode ticks [capture] [invalid] [multi]
   local root="$1" post_mode="$2" ticks="$3" capture="${4:-}" invalid="${5:-0}" multi="${6:-0}"
+  # shellcheck disable=SC2030  # fixture globals are intentionally isolated
   local DUTY_DIR="$root" WORK_DIR="$root/work" TREES_DIR="$root/trees"
   local LOG_DIR="$root/logs" CONF_DIR="$root/conf" PROMPTS_DIR="$SHARED/prompts"
   local BIN_DIR="$root/bin" REPOS_FILE="$root/repos.txt"

@@ -27,9 +27,9 @@
 #  - ONE candidate set, merged and deduped by (repo, PR) BEFORE acting —
 #    sequential source passes double-announced on ceremony#32 (grok + kimi).
 #  - requested_reviewers self-clears on submit, but only when a verdict lands.
-#    A completed session may correctly decline or fail its one-shot submit, so
-#    unchanged requests also pass through a seen-ledger (#61). A changed PR
-#    advances updated_at and wakes again.
+#    A completed session is therefore settled only by its exact-head verdict
+#    or a recognized park. Missing verdicts retry three times before the local
+#    seen-ledger bounds spending; the live GitHub request remains untouched.
 #
 # shellcheck shell=bash
 # shellcheck disable=SC2016  # single-quoted GraphQL/jq programs with $vars are intended
@@ -707,7 +707,7 @@ $key $updated"
   # One session per repo covering all its pending PRs, oldest first —
   # amortizes checkout and session cost (grok/kimi pattern).
   local dir slug prompt prs check_evidence expected_heads park_evidence ready_prs
-    local commit_items captured_prs key_pr updated attempt
+  local commit_items captured_prs key_pr updated attempt
   for SR in "${repo_order[@]}"; do
     prs="${repo_prs[$SR]% }"
     slug="${SR//\//__}"
