@@ -456,6 +456,26 @@ t orphan-breaker-spares-other-kinds absent \
 # threshold measures box-kills and not reconciler passes.
 orph_pass "$ORPH5"
 t orphan-idle-pass-does-not-count 3 "$(cut -f1 <"$ORPH5/.session-terminal.build")"
+# ...and the trip it produced is marked as one the vendor did not cause (#551),
+# which is this file's half of that issue: D3's COUNT is unchanged and the
+# CLEAR is not. A box-kill falsifies nothing about the vendor, so the state
+# this caller writes must be the kind a succeeding `bot_cli_probe` cannot
+# clear — and this assertion is what makes that a property of the reconciler's
+# call rather than of the breaker's default.
+t orphan-breaker-trip-is-marked-non-vendor yes \
+  "$(cut -f4 <"$ORPH5/.session-terminal.build" 2>/dev/null || echo NONE)"
+orph5_probe_holds="$(
+  (
+    DUTY_DIR="$ORPH5"; DUTY_TICK_ID=orphan-probe-tick
+    bot_cli_probe() { return 0; }
+    if _session_terminal_gate build o/r#9 >/dev/null 2>&1; then
+      printf CLEARED
+    else
+      printf held
+    fi
+  )
+)"
+t orphan-breaker-trip-survives-a-succeeding-probe held "$orph5_probe_holds"
 
 # ...and that holds for callers who do NOT redirect stdout into duty.log, which
 # is the qualification the case above used to carry silently (claude-bot, round

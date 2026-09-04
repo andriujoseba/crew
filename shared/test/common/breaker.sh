@@ -207,6 +207,194 @@ terminal_breaker_recovery() (
 )
 t terminal-breaker-recovers-on-next-tick '4|cleared' "$(terminal_breaker_recovery)"
 
+# --- the third clear: a terminal the vendor did not cause (#551) -----------
+#
+# #388's probe clears what the vendor caused, and that stays exactly as it is.
+# A box that kills its own sessions produces a RECONSTRUCTED terminal
+# (common/ledger.sh) which the probe falsifies nothing about, so clearing on it
+# made the breaker a 25% throttle: trip, probe, clear, dispatch, die, forever.
+# These cases drive the two clears apart, and every one of them keeps
+# `bot_cli_probe` SUCCEEDING — the whole defect is that a succeeding probe used
+# to be enough.
+
+# The widening itself, read straight off the helper. Doubling from two and then
+# flat at the bound is what makes D3's two halves true at once: never every
+# tick, and never abandoned.
+hold_wait_series() {
+  local n out=""
+  for n in 0 1 2 3 4; do
+    out="${out:+$out|}$(_session_terminal_hold_wait "$n")"
+  done
+  printf '%s' "$out"
+}
+t hold-wait-doubles-then-flattens-at-the-bound '2|4|8|12|12' "$(hold_wait_series)"
+t hold-wait-honours-an-operator-bound 5 \
+  "$(SESSION_TERMINAL_HOLD_MAX_TICKS=5 _session_terminal_hold_wait 3)"
+t hold-wait-ignores-a-malformed-bound 12 \
+  "$(SESSION_TERMINAL_HOLD_MAX_TICKS=later _session_terminal_hold_wait 3)"
+# A conf that predates the key, under this suite's own `set -u`: the shipped
+# table answers and the call returns rather than aborting.
+hold_wait_unset_conf() (
+  unset SESSION_TERMINAL_HOLD_MAX_TICKS
+  _session_terminal_hold_wait 9
+)
+t hold-wait-degrades-when-the-conf-predates-the-key 12 "$(hold_wait_unset_conf)"
+
+# nonvendor_hold_walk DIRNAME TICKS [BOUND] — trip a lane with three
+# reconstructed terminals, then walk TICKS ticks. Every trial the gate releases
+# dies the way a box-kill dies: nothing writes an observed end, and the next
+# reconcile pass records another non-vendor terminal in its place. Prints the
+# ticks on which a trial was released, then the probe byte count.
+# shellcheck disable=SC2030,SC2031,SC2034,SC2317
+nonvendor_hold_walk() (
+  local bdir="$TMP/$1" ticks="$2" i released=""
+  mkdir -p "$bdir/logs" "$bdir/work"
+  DUTY_DIR="$bdir"; LOG_DIR="$bdir/logs"
+  SESSION_TERMINAL_THRESHOLD=3
+  [ -z "${3:-}" ] || SESSION_TERMINAL_HOLD_MAX_TICKS="$3"
+  bot_cli_probe() { printf probe >>"$bdir/probes"; return 0; }
+  warn() { :; }
+  alert() { printf '%s\n' "$*" >>"$bdir/alerts"; }
+  {
+    DUTY_TICK_ID=tick-1
+    for i in 1 2 3; do
+      _session_terminal_record review yes unknown "$bdir/logs/kill.log" non-vendor
+    done
+    for i in $(seq 2 "$ticks"); do
+      DUTY_TICK_ID="tick-$i"
+      if _session_terminal_gate review fixture/repo; then
+        released="${released:+$released,}$i"
+        _session_terminal_record review yes unknown "$bdir/logs/kill.log" non-vendor
+      fi
+    done
+  } >>"$bdir/output"
+  printf '%s|%s|%s' "$released" \
+    "$([ -e "$bdir/probes" ] && wc -c <"$bdir/probes" || echo 0)" \
+    "$([ -e "$bdir/alerts" ] && wc -l <"$bdir/alerts" || echo 0)"
+)
+
+# AC1 and AC4 in one walk. Ten ticks of a lane whose every dispatch dies with
+# the box: the succeeding probe is never bought and never clears, the first
+# trial falls two ticks past the trip rather than on the next tick, and the
+# 🚨 is raised once for the trip rather than once per cycle.
+t nonvendor-trip-holds-through-a-succeeding-probe '4,9|0|1' \
+  "$(nonvendor_hold_walk terminal-hold-ten 10)"
+
+# AC5. Sixty ticks of the same lane. The interval widens 2, 4, 8 and then sits
+# at the bound, so the trial ticks are fixed by the mechanism and not by the
+# fixture — and the last one is late in the walk, which is the assertion that
+# a lane that keeps dying is never left permanently dark.
+t nonvendor-hold-always-schedules-a-next-trial '4,9,18,31,44,57|0|1' \
+  "$(nonvendor_hold_walk terminal-hold-sixty 60)"
+
+# The bound is what the walk obeys, so an operator who sets a tighter one gets
+# a tighter floor on the retry rate: 2, 4, then flat at 4.
+t nonvendor-hold-widens-only-to-the-operator-bound '4,9,14,19,24,29|0|1' \
+  "$(nonvendor_hold_walk terminal-hold-bound 30 4)"
+
+# AC2, stated against AC1 rather than beside it: the SAME walk on a lane whose
+# terminals are the vendor's own still buys its probe on the next tick and is
+# cleared by it. The difference between the two lanes is the cause, and
+# nothing else about them differs.
+# shellcheck disable=SC2030,SC2031,SC2034,SC2317
+vendor_trip_still_recovers() (
+  local bdir="$TMP/terminal-vendor-probe" i released=""
+  mkdir -p "$bdir/logs" "$bdir/work"
+  DUTY_DIR="$bdir"; LOG_DIR="$bdir/logs"
+  SESSION_TERMINAL_THRESHOLD=3
+  bot_cli_probe() { printf probe >>"$bdir/probes"; return 0; }
+  warn() { :; }
+  alert() { printf '%s\n' "$*" >>"$bdir/alerts"; }
+  {
+    DUTY_TICK_ID=tick-1
+    for i in 1 2 3; do
+      _session_terminal_record review yes unknown "$bdir/logs/vendor.log"
+    done
+    DUTY_TICK_ID=tick-2
+    _session_terminal_gate review fixture/repo && released=tick-2
+  } >>"$bdir/output"
+  printf '%s|%s|%s|%s' "$released" \
+    "$([ -e "$bdir/probes" ] && wc -c <"$bdir/probes" || echo 0)" \
+    "$([ -e "$(_session_terminal_state review)" ] && echo present || echo cleared)" \
+    "$(grep -c 'resumed after the vendor probe succeeded' "$bdir/alerts" || true)"
+)
+t vendor-trip-still-recovers-on-the-probe 'tick-2|5|cleared|1' \
+  "$(vendor_trip_still_recovers)"
+
+# AC3, driven through the REAL run_session so the clear is produced by a
+# session that genuinely ran rather than by a helper asserting it did. The
+# trial released on tick-4 reaches its own SESSION END, which is the whole of
+# the evidence: the box survived it. Run twice, because "whatever that
+# session's outcome" is the half a transient-only case would miss.
+# shellcheck disable=SC2016,SC2030,SC2031,SC2034,SC2317
+observed_end_clears_hold() (
+  local shape="$1" bdir="$TMP/terminal-hold-observed-$1" i state
+  mkdir -p "$bdir/logs" "$bdir/work"
+  DUTY_DIR="$bdir"; LOG_DIR="$bdir/logs"
+  SESSION_TERMINAL_THRESHOLD=3
+  export BREAKER_CALLS="$bdir/calls"; : >"$BREAKER_CALLS"
+  export BREAK_TEXT=transient-network-failure
+  [ "$shape" != terminal ] || BREAK_TEXT=access_terminated_error
+  BOT_CLI_CMD=(bash -c 'printf x >>"$BREAKER_CALLS"; printf "%s\n" "$BREAK_TEXT"; exit 1')
+  bot_session_terminal() { grep -q access_terminated_error "$1"; }
+  bot_session_acted() { return 1; }
+  bot_cli_probe() { printf probe >>"$bdir/probes"; return 0; }
+  warn() { :; }
+  alert() { printf '%s\n' "$*" >>"$bdir/alerts"; }
+  DUTY_TICK_ID=tick-1
+  for i in 1 2 3; do
+    _session_terminal_record review yes unknown "$bdir/logs/kill.log" non-vendor
+  done
+  for i in 2 3 4 5; do
+    DUTY_TICK_ID="tick-$i"
+    run_session review fixture/repo "$bdir/work" 5 prompt
+  done >"$bdir/output"
+  state="$(_session_terminal_state review)"
+  printf '%s|%s|%s|%s' \
+    "$(wc -c <"$BREAKER_CALLS")" \
+    "$(grep -c 'SESSION SKIP.*terminal-breaker' "$bdir/output" || true)" \
+    "$(grep -c 'resumed after a session ran to its own end' "$bdir/alerts" || true)" \
+    "$([ -s "$state" ] && cut -f2 <"$state" || echo cleared)"
+)
+t observed-transient-end-clears-a-nonvendor-hold '2|2|1|cleared' \
+  "$(observed_end_clears_hold transient)"
+t observed-terminal-end-clears-a-nonvendor-hold '2|2|1|closed' \
+  "$(observed_end_clears_hold terminal)"
+
+# AC7. The lane learns a new clear and duty.log learns no new words: the skip
+# line is the one that already exists, byte for byte, and both alerts are the
+# established 🚨/✅ pair on the established channel.
+# shellcheck disable=SC2030,SC2031,SC2034,SC2317
+nonvendor_hold_vocabulary() (
+  local bdir="$TMP/terminal-hold-vocab" i body
+  local skip='^SESSION SKIP kind=review key=fixture/repo reason=terminal-breaker count=3$'
+  mkdir -p "$bdir/logs" "$bdir/work"
+  DUTY_DIR="$bdir"; LOG_DIR="$bdir/logs"
+  SESSION_TERMINAL_THRESHOLD=3
+  bot_cli_probe() { return 0; }
+  warn() { :; }
+  alert() { printf '%s\n' "$*" >>"$bdir/alerts"; }
+  {
+    DUTY_TICK_ID=tick-1
+    for i in 1 2 3; do
+      _session_terminal_record review yes unknown "$bdir/logs/kill.log" non-vendor
+    done
+    DUTY_TICK_ID=tick-2
+    _session_terminal_gate review fixture/repo || true
+  } >>"$bdir/output"
+  # `log` stamps every line, so the assertion is on the line it wrote: strip
+  # the timestamp and match the rest byte for byte. A here-string and not a
+  # pipe into grep, per #449.
+  body="$(sed 's/^[^ ]* //' "$bdir/output")"
+  printf '%s|%s|%s|%s' \
+    "$(grep -c "$skip" <<<"$body" || true)" \
+    "$(grep -cv "$skip" <<<"$body" || true)" \
+    "$(grep -cEv '^(🚨|✅|⚠️) ' "$bdir/alerts" || true)" \
+    "$(find "$bdir" -maxdepth 1 -name '.session-terminal.*' -printf '%f\n')"
+)
+t nonvendor-hold-adds-no-new-log-vocabulary '1|0|0|.session-terminal.review' \
+  "$(nonvendor_hold_vocabulary)"
+
 # --- the session budget (#464) --------------------------------------------
 #
 # Every case drives the REAL run_session in its own subshell with its own
