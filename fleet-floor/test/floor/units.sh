@@ -1249,8 +1249,17 @@ _, cur = derive_sessions([
 ], 1787843160)
 short, _ = stuck_verdict(700, cur)
 day, _ = stuck_verdict(86400, cur)
+# 2^63 — the value whose bash wrap goes NEGATIVE, so the CLI's twin of this
+# box reads STUCK without the width gate. Nothing happens here at all, which
+# is the point of measuring it on this side too.
+_, wrap = derive_sessions([
+    "2026-08-27T15:00:00Z SESSION START kind=build key=crew#624 timeout=9223372036854775808s log=/h/w.log holder=tick sid=2a3b4c5d",
+], 1787843160)
+wrapped, _ = stuck_verdict(700, wrap)
 print(json.dumps({"timeout": str(cur["timeout"]), "bound": str(short["bound"]),
-                  "short": short["stuck"], "day": day["stuck"]}, sort_keys=True))
+                  "short": short["stuck"], "day": day["stuck"],
+                  "wrap_timeout": str(wrap["timeout"]), "wrap": wrapped["stuck"]},
+                 sort_keys=True))
 PY
 )"
 ffh() { python3 -c "import json,sys;print(json.load(sys.stdin)['$1'])" <<<"$FF_HUGE"; }
@@ -1260,6 +1269,9 @@ t "stuck: ...so the bound is those digits plus the grace" \
   1000000000000000000000059 "$(ffh bound)"
 t "stuck: ...and 700s, past the constant, is not stuck" False "$(ffh short)"
 t "stuck: ...nor is a whole day" False "$(ffh day)"
+t "stuck: 2^63 is an ordinary number on this side" \
+  9223372036854775808 "$(ffh wrap_timeout)"
+t "stuck: ...and 700s under it is not stuck either" False "$(ffh wrap)"
 
 # BOTH ENTRY POINTS, one decision. ff-lane-ping's probe reports no lock at all
 # — the evidence poll had nothing to grade — and only the 10s heartbeat carries

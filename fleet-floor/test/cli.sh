@@ -470,6 +470,19 @@ else
   fail "crew status: a ceiling past bash's range is not STUCK at 700s" \
        "$(grep '^cli-lane-huge ' "$CL_TMP/crew-out")"
 fi
+# ...and the OTHER half of that fix, which the box above cannot red. Deleting
+# the width gate turns twenty-four nines into 2003764205206896639 — nobody's
+# ceiling, but still an enormous one, so `cli-lane-huge` comes out `session
+# active` by accident and only the source pin notices. 2^63 wraps NEGATIVE:
+# the bound lands below every lock age there is and this row reads STUCK. A
+# guard whose behaviour cannot red it is the shape 1b already caught once here.
+if grep -qE '^cli-lane-wrap .*session active' "$CL_TMP/crew-out" \
+   && ! grep -qE '^cli-lane-wrap .*STUCK' "$CL_TMP/crew-out"; then
+  ok "crew status: a ceiling whose wrap goes negative is not STUCK either"
+else
+  fail "crew status: a ceiling whose wrap goes negative is not STUCK either" \
+       "$(grep '^cli-lane-wrap ' "$CL_TMP/crew-out")"
+fi
 # The NOISE, asserted as absent. `crew status` merges stderr into this capture,
 # and a `[` that fails on its operand writes a line of its own between two
 # roster rows — not fatal, since an `if` condition is exempt from `set -e`, and

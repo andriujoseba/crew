@@ -72,3 +72,8 @@ cli-lane-zero-over running lane-zero-over
 # unbounded `int()` grades it against 10^24 + 60. Same file position, same
 # reason: it sits above the two rows that must still print.
 cli-lane-huge  running  lane-huge
+# ...and 2^63, whose wrap goes NEGATIVE. The box above cannot red a deleted
+# width gate — twenty-four nines wrap to a number that is still huge, so its
+# verdict comes out right by accident — and this one can: the bound lands below
+# every lock age there is and the row reads STUCK.
+cli-lane-wrap  running  lane-wrap

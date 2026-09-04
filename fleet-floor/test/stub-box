@@ -133,6 +133,11 @@ lockheld_of() {
     # STUCK; the floor, whose `int()` has no range, calls it healthy. There is
     # no over-the-bound twin because no lock age can be past that bound.
     lane-huge)              printf 700 ;;
+    # Its twin, and 700 is discriminating there for the OPPOSITE arithmetic
+    # reason: 2^63 wraps to a NEGATIVE ceiling, so an ungated `$(( ))` puts
+    # the bound below every lock age there is and calls the box STUCK. Same
+    # age, so the two boxes differ only in which half of the fix they red.
+    lane-wrap)              printf 700 ;;
     *)                      printf '' ;;
   esac
 }
@@ -325,6 +330,19 @@ duty_log_of() {
       echo "$(ago 800) duty run start"
       echo "$(ago 800) heavy-duty/crew: build duty (ready unclaimed=1, whole rounds owed=0)"
       echo "$(ago 790) SESSION START kind=build key=crew#624 timeout=999999999999999999999999s log=/h/duty/logs/h.log holder=tick sid=1f2e3d4c-5b6a-7988-9a0b-1c2d3e4f5a6b"
+      ;;
+    lane-wrap)
+      # 2^63 exactly, and it is here because the box above cannot catch the
+      # OTHER half of the fix. Drop the width gate and `$(( ))` turns twenty-
+      # four nines into 2003764205206896639 — a fabricated ceiling, but still
+      # a huge one, so the verdict on that box comes out right by accident and
+      # only the source pin reds. These digits wrap to
+      # -9223372036854775808, which puts the bound below every lock age there
+      # is: the box reads STUCK, loudly, in the table. A guard the behaviour
+      # cannot red is the shape this PR already learned about once (1b).
+      echo "$(ago 800) duty run start"
+      echo "$(ago 800) heavy-duty/crew: build duty (ready unclaimed=1, whole rounds owed=0)"
+      echo "$(ago 790) SESSION START kind=build key=crew#624 timeout=9223372036854775808s log=/h/duty/logs/w.log holder=tick sid=2a3b4c5d-6e7f-8091-a2b3-c4d5e6f70819"
       ;;
     lane-legacy)
       # An engine older than the `timeout=` token — every line ever written
@@ -645,7 +663,7 @@ case "${1:-}" in
         _log=1; _active=0
         case "$sc" in
           nothired|unconverged|premanifest|neverticked|suppressed-notimestamp) _log=0 ;;
-          working|suppressed-working|suppressed-paired-crash|noauth|skew-behind|skew-ahead|invalid-tickage|lane-build|lane-edge|lane-over|lane-ping|lane-legacy|lane-zero|lane-zero-over|lane-huge) _active=1 ;;
+          working|suppressed-working|suppressed-paired-crash|noauth|skew-behind|skew-ahead|invalid-tickage|lane-build|lane-edge|lane-over|lane-ping|lane-legacy|lane-zero|lane-zero-over|lane-huge|lane-wrap) _active=1 ;;
         esac
         # The lock age comes from lockheld_of, the same reader probe.sh's
         # ::lockheld and the ping's `l` field use. It used to be spelled a

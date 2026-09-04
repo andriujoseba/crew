@@ -48,6 +48,7 @@ cli-lane-zero-over claude builder
 # expression expected` between two rows and then graded the box against the
 # fleet-wide constant. Two rows still follow it.
 cli-lane-huge  claude  builder
+cli-lane-wrap  claude  builder
 # The box whose tenant role never converged (#220). LAST, so the bulk verbs
 # have to carry on past every healthy box before reaching it — a skip that
 # aborted the run would still have hired the rows above and read as a partial
