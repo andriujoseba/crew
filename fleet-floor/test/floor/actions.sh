@@ -251,7 +251,7 @@ else ok "mode: the harmless direction fires nothing either"; fi
 # loaded runner. Wait for a fresh wedged publication: otherwise this request
 # may legitimately see the heartbeat become unmeasured, take the graceful
 # path, and spend the action timeout proving a race instead of this contract.
-FS_PING_FRESH_MAX=$(( ${FLOOR_TEST_PING_TIMEOUT:-4} + 1 ))
+FS_PING_FRESH_MAX=$(( ${FLOOR_TEST_PING_INTERVAL:-2} * (${FLOOR_TEST_PING_FAILS:-2} + 2) - 1 ))
 FS_DL=$(( $(date +%s) + 60 ))
 while [ "$(uf ff-wedged "u[\"ping\"][\"wedged\"] and u[\"ping\"][\"age\"] <= $FS_PING_FRESH_MAX")" != "True" ] \
       && [ "$(date +%s)" -lt "$FS_DL" ]; do sleep 1; done
