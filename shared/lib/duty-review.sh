@@ -336,6 +336,8 @@ rereq_decision() {
 # _review_verdict_at_head REPO NUM HEAD — positive postcondition for a
 # completed review session. The captured candidate head is deliberate: a
 # verdict on a head that moved during the session belongs to the next round.
+# DISMISSED stays in the query so last:1 sees the latest opinionated review;
+# the positive state check below rejects it instead of exposing an older verdict.
 # REVIEW_VERDICT_POSTCONDITION distinguishes an ordinary miss from an
 # unreadable lookup without weakening either one into a verdict.
 _review_verdict_at_head() {
@@ -344,7 +346,7 @@ _review_verdict_at_head() {
   REVIEW_VERDICT_POSTCONDITION=lookup-error
   if ! payload="$(gh api graphql -f query='query($owner:String!,$name:String!,$num:Int!,$me:String!){
     repository(owner:$owner,name:$name){ pullRequest(number:$num){
-      reviews(author:$me,last:1,states:[APPROVED,CHANGES_REQUESTED]){nodes{commit{oid} submittedAt state}}
+      reviews(author:$me,last:1,states:[APPROVED,CHANGES_REQUESTED,DISMISSED]){nodes{commit{oid} submittedAt state}}
     } } }' -f owner="$owner" -f name="$name" -F num="$num" -f me="$ME" 2>/dev/null)"; then
     return 1
   fi
@@ -683,12 +685,6 @@ $(printf '%s' "$page" | jq -r --arg me "$ME" --arg sr "$SR" \
         # The queued session's verdict is admitted at this same head by
         # submit-verdict.sh's (me, PR, head, round) coverage key.
         if [ "$mine_oid" = "$head" ]; then
-          case "$mine_state" in
-            APPROVED|CHANGES_REQUESTED)
-              _review_owed_clear "$SR" "$N" \
-                || warn "review: $SR#$N could not clear settled missing-verdict attempts"
-              ;;
-          esac
           log "review: $SR#$N re-requested at unchanged head ${head:0:12} over a standing ${mine_state} — queuing a real review, not auto-approving (#114)"
         fi
         queue=1

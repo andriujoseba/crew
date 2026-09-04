@@ -216,6 +216,16 @@ d671_verdict_result() ( # payload-kind expected-head
       approve) jq -cn --arg h "$D671_HEAD_A" '{data:{repository:{pullRequest:{reviews:{nodes:[{commit:{oid:$h},state:"APPROVED"}]}}}}}' ;;
       changes) jq -cn --arg h "$D671_HEAD_A" '{data:{repository:{pullRequest:{reviews:{nodes:[{commit:{oid:$h},state:"CHANGES_REQUESTED"}]}}}}}' ;;
       dismissed) jq -cn --arg h "$D671_HEAD_A" '{data:{repository:{pullRequest:{reviews:{nodes:[{commit:{oid:$h},state:"DISMISSED"}]}}}}}' ;;
+      latest-dismissed)
+        # Model GitHub's server-side states filter before last:1: excluding
+        # DISMISSED exposes the older approval; including it returns the newer
+        # dismissal, which the positive postcondition must reject.
+        if [[ "$*" == *'states:[APPROVED,CHANGES_REQUESTED,DISMISSED]'* ]]; then
+          jq -cn --arg h "$D671_HEAD_A" '{data:{repository:{pullRequest:{reviews:{nodes:[{commit:{oid:$h},state:"DISMISSED"}]}}}}}'
+        else
+          jq -cn --arg h "$D671_HEAD_A" '{data:{repository:{pullRequest:{reviews:{nodes:[{commit:{oid:$h},state:"APPROVED"}]}}}}}'
+        fi
+        ;;
       none) jq -cn '{data:{repository:{pullRequest:{reviews:{nodes:[]}}}}}' ;;
       malformed) printf 'not-json\n' ;;
       error) return 1 ;;
@@ -234,6 +244,8 @@ t review-postcondition-accepts-changes "yes:CHANGES_REQUESTED" \
   "$(d671_verdict_result changes "$D671_HEAD_A")"
 t review-postcondition-rejects-dismissed "no:none" \
   "$(d671_verdict_result dismissed "$D671_HEAD_A")"
+t review-postcondition-rejects-newer-dismissal-over-older-approval "no:none" \
+  "$(d671_verdict_result latest-dismissed "$D671_HEAD_A")"
 t review-postcondition-rejects-other-head "no:none" \
   "$(d671_verdict_result approve "$D671_HEAD_B")"
 t review-postcondition-empty-reviews-is-no-verdict "no:none" \
@@ -264,9 +276,10 @@ DUTY_DIR="$D671_COUNT" _review_owed_prune_inactive 'fx/repo#8'
 t review-owed-complete-sweep-prunes-ended-request "fx/repo#8@$D671_HEAD_B 1" \
   "$(cat "$D671_COUNT/.review-owed")"
 
-d671_drive() ( # root post-mode ticks [capture] [invalid] [multi] [mutation] [ready] [lifecycle]
+d671_drive() ( # root post-mode ticks [capture] [invalid] [multi] [mutation] [ready] [lifecycle] [rerequest]
   local root="$1" post_mode="$2" ticks="$3" capture="${4:-}" invalid="${5:-0}" multi="${6:-0}"
   local mutation="${7:-none}" ready="${8:-0}" lifecycle="${9:-0}"
+  local rerequest="${10:-0}"
   # shellcheck disable=SC2030  # fixture globals are intentionally isolated
   local DUTY_DIR="$root" WORK_DIR="$root/work" TREES_DIR="$root/trees"
   local LOG_DIR="$root/logs" CONF_DIR="$root/conf" PROMPTS_DIR="$SHARED/prompts"
@@ -305,6 +318,9 @@ d671_drive() ( # root post-mode ticks [capture] [invalid] [multi] [mutation] [re
             "$D671_HEAD_A" "$D671_HEAD_A"
         elif [ "$lifecycle" -eq 1 ] && [ "$tick" -ge 3 ]; then
           printf '%s %s 2026-09-04T10:31:00Z DISMISSED 2026-09-04T10:32:00Z\n' \
+            "$D671_HEAD_A" "$D671_HEAD_A"
+        elif [ "$rerequest" -eq 1 ]; then
+          printf '%s %s 2026-09-04T10:31:00Z CHANGES_REQUESTED 2026-09-04T10:32:00Z\n' \
             "$D671_HEAD_A" "$D671_HEAD_A"
         else
           printf '%s - - - 2026-09-04T10:30:00Z\n' "$D671_HEAD_A"
@@ -431,6 +447,20 @@ D671_LIFECYCLE_MUT="$TMP/review-settle-gap-rerequest-no-prune"
 d671_drive "$D671_LIFECYCLE_MUT" lifecycle 2 '' 0 0 no-prune 0 1
 t review-disappeared-request-prune-mutation-reds red \
   "$([ -s "$D671_LIFECYCLE_MUT/owed-after-2" ] && printf red || printf FALSE-PASS)"
+
+# A newer unchanged-head request over a standing CHANGES_REQUESTED is live and
+# owed. Its existing attempts must survive each pre-dispatch queue decision;
+# otherwise a persistent post-session lookup failure spends forever at one.
+D671_LIVE_REREQUEST="$TMP/review-live-unchanged-head-rerequest"
+d671_drive "$D671_LIVE_REREQUEST" error 4 '' 0 0 none 0 0 1
+t review-live-unchanged-head-rerequest-bounds-dispatch-at-three 3 \
+  "$(grep -c '^SESSION ' "$D671_LIVE_REREQUEST/session-log")"
+t review-live-unchanged-head-rerequest-third-attempt-settles \
+  'fx/repo#7 2026-09-04T11:00:00Z' "$(cat "$D671_LIVE_REREQUEST/.seen-review")"
+t review-live-unchanged-head-rerequest-warns-once 1 \
+  "$(grep -c "fx/repo#7 at $D671_HEAD_A still has no exact-head verdict after 3 attempts" "$D671_LIVE_REREQUEST/warn")"
+t review-live-unchanged-head-rerequest-leaves-request-untouched 0 \
+  "$(grep -Ec 'requested-reviewer|issue comment' "$D671_LIVE_REREQUEST/calls" || true)"
 
 D671_READY_ONCE="$TMP/review-post-ready-once"
 d671_drive "$D671_READY_ONCE" none 1 '' 0 0 none 1
