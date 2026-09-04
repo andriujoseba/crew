@@ -7945,15 +7945,36 @@ t kill-grace-cli-consumed consumed "$r1"
 # on the first role edit, which is exactly what D1 refuses and what #610's own
 # test plan carries as a must-fail. So: the clause assigns from the field
 # auth_from_flow carried out, and the whole region names no conf at all.
+#
+# The subject is the WHOLE of `cmd_status` with its comments stripped, not the
+# clause alone, and driving the mutation is what proved it has to be. A conf
+# read placed INSIDE the clause reds a clause-scoped grep — but the likelier
+# patch is the well-meaning one that fills the gap a line ABOVE it, leaving the
+# clause verbatim and assigning `session_ceiling` itself from the host's table,
+# and that shipped GREEN against the clause-scoped grep. The stripped view is
+# for the two prose mentions of `conf/roles` in this function, which are
+# comments about the box loading its OWN conf inside the exec `cmd_status`
+# already makes — a different thing from the host reading its copy, and the
+# distinction this pin exists to keep.
+cli_status_code="$(sed -n '/^cmd_status()/,/^}$/p' "$CREW_CLI" | grep -v '^[[:space:]]*#')"
 stuck_clause="$(sed -n '/^    lock_ceiling=-1$/,/^    fi$/p' "$CREW_CLI")"
 # shellcheck disable=SC2016  # matching crew's literal assignment
 if grep -q 'lock_ceiling="\$session_ceiling"' <<<"$stuck_clause" \
-   && ! grep -qE 'ROLES_DIR|conf/roles' <<<"$stuck_clause"; then
+   && ! grep -qE 'ROLES_DIR|conf/roles' <<<"$stuck_clause" \
+   && ! grep -qE 'ROLES_DIR|conf/roles' <<<"$cli_status_code"; then
   r1=wire
 else
   r1=DRIFTED
 fi
 t stuck-ceiling-cli-off-the-wire wire "$r1"
+# ...and the same claim from the side no pattern list can be out-spelled on:
+# the ceiling is not RE-DERIVED anywhere in this function. `session_ceiling`
+# reaches `cmd_status` through the `read` and is assigned exactly once after
+# it — the `:--1` default that makes an un-upgraded box's row bit-identical to
+# today's. Any second assignment is a host-side source of truth whatever file
+# it came out of, including ones spelled without `ROLES_DIR` at all.
+t stuck-ceiling-cli-not-rederived 1 \
+  "$(grep -c 'session_ceiling=' <<<"$cli_status_code")"
 # D1's other half, and it is invisible to every fixture here for the same
 # reason: the stub answers a second round trip as readily as the first. The
 # datum comes out of the tail auth_from_flow already takes, so its body stays
