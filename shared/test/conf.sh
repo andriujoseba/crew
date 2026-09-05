@@ -482,6 +482,143 @@ t kimi-absent-cache-counters-are-zero '500|91|0|0' \
   "$(sed -n 's/.* input_tokens=\([^ ]*\).* output_tokens=\([^ ]*\).* cache_creation_input_tokens=\([^ ]*\).* cache_read_input_tokens=\([^ ]*\).*/\1|\2|\3|\4/p' \
       <<<"$(grep 'SESSION END' <<<"$kimi_nocache")")"
 
+# --- kimi: one eligible timeout resumes, with per-dispatch usage (#674) ---
+KIMI_RESUME_CLI="$TMP/kimi-resume-cli.sh"
+cat >"$KIMI_RESUME_CLI" <<'STUB'
+#!/usr/bin/env bash
+{
+  printf '%s\n' -- '--call--'
+  printf '%s\n' "$@"
+} >>"$KIMI_RESUME_ARGV"
+sid='' prev=''
+for a in "$@"; do
+  [ "$prev" = --session ] && { sid="$a"; break; }
+  prev="$a"
+done
+[ -n "$sid" ] || exit 2
+dir="$KIMI_SHARE_DIR/sessions/resumehash/$sid"
+wire="$dir/wire.jsonl"
+mkdir -p "$dir"
+if [ ! -e "$KIMI_RESUME_COUNT" ]; then
+  printf 1 >"$KIMI_RESUME_COUNT"
+  printf '%s\n' \
+    '{"type":"metadata","protocol_version":"1.10"}' \
+    '{"message":{"type":"StatusUpdate","payload":{"token_usage":{"input_other":100,"output":10,"input_cache_read":20,"input_cache_creation":30}}}}' \
+    '{"message":{"type":"StatusUpdate","payload":{"token_usage":{"input_other":200,"output":20,"input_cache_read":40,"input_cache_creation":60}}}}' \
+    >"$wire"
+  printf 'Used Shell (first)\nfirst turn reached tools\n'
+  sleep 5
+  exit 0
+fi
+case "${KIMI_RESUME_MODE:-normal}" in
+  missing)
+    printf '%s\n' '{"type":"metadata","protocol_version":"1.10"}' >"$wire"
+    ;;
+  unreadable)
+    chmod 600 "$wire"
+    ;;
+  larger)
+    printf '%s\n' '{"type":"metadata","protocol_version":"1.10"}' >"$wire"
+    ;;
+esac
+printf '%s\n' \
+  '{"message":{"type":"StatusUpdate","payload":{"token_usage":{"input_other":7,"output":3,"input_cache_read":5,"input_cache_creation":2}}}}' \
+  >>"$wire"
+printf 'Used Shell (second)\nsecond turn answer\n'
+STUB
+chmod +x "$KIMI_RESUME_CLI"
+
+kimi_resume_run() ( # kimi_resume_run normal|missing|unreadable|larger
+  local mode="${1:-normal}" udir="$TMP/kimi-resume-${1:-normal}-$RANDOM"
+  local first_return second_return wire
+  mkdir -p "$udir/logs" "$udir/share"
+  DUTY_DIR="$udir"; LOG_DIR="$udir/logs"; DUTY_TICK_ID="kimi-resume-$mode"
+  # shellcheck disable=SC1091
+  source "$SHARED/conf/agents/kimi.conf"
+  BOT_CLI_CMD=(bash "$KIMI_RESUME_CLI" --afk -p)
+  KIMI_RESUME_ARGV="$udir/argv"
+  KIMI_RESUME_COUNT="$udir/count"
+  KIMI_RESUME_MODE="$mode"
+  KIMI_SHARE_DIR="$udir/share"
+  export KIMI_RESUME_ARGV KIMI_RESUME_COUNT KIMI_RESUME_MODE KIMI_SHARE_DIR
+  run_session build "fixture/kimi-$mode" "$SHARED/.." 1 'first prompt' || true
+  first_return=$?
+  wire="$(find "$KIMI_SHARE_DIR/sessions" -type f -name wire.jsonl -print -quit)"
+  case "$mode" in
+    missing) rm -f "$wire" ;;
+    unreadable) chmod 000 "$wire" ;;
+  esac
+  run_session build "fixture/kimi-$mode" "$SHARED/.." 5 'second prompt' || true
+  second_return=$?
+  printf '%s\n%s|%s\n' '--returns--' "$first_return" "$second_return"
+  printf '%s\n' '--argv--'
+  cat "$KIMI_RESUME_ARGV"
+  printf '%s\n' '--prose--'
+  cat "$udir"/logs/*.log
+)
+
+kimi_resumed="$(kimi_resume_run normal 2>&1 | sed -e 's/^[0-9-]*T[0-9:]*Z //')"
+kimi_resume_starts="$(grep 'SESSION START' <<<"$kimi_resumed")"
+kimi_resume_ends="$(grep 'SESSION END' <<<"$kimi_resumed")"
+kimi_killed_sid="$(sed -n '1s/.* sid=\([^ ]*\).*/\1/p' <<<"$kimi_resume_starts")"
+t kimi-timeout-resumes-the-same-session-once "$kimi_killed_sid|2" \
+  "$(printf '%s|%s' \
+      "$(sed -n '2s/.* sid=\([^ ]*\).*/\1/p' <<<"$kimi_resume_starts")" \
+      "$(sed -n '/^--argv--$/,$p' <<<"$kimi_resumed" | grep -cFx -- --session || true)")"
+t kimi-resumed-end-keeps-the-killed-session-id "$kimi_killed_sid" \
+  "$(sed -n '2s/.* sid=\([^ ]*\).*/\1/p' <<<"$kimi_resume_ends")"
+t kimi-resume-does-not-compose-a-second-session-flag 1 \
+  "$(sed -n '/^--argv--$/,$p' <<<"$kimi_resumed" \
+    | awk '/^--call--$/{if (++call == 2) next} call == 2 && /^--session$/{n++} END{print n+0}')"
+t kimi-resumed-usage-excludes-the-killed-turn '7|3|2|5' \
+  "$(sed -n '2s/.* input_tokens=\([^ ]*\).* output_tokens=\([^ ]*\).* cache_creation_input_tokens=\([^ ]*\).* cache_read_input_tokens=\([^ ]*\).*/\1|\2|\3|\4/p' \
+      <<<"$kimi_resume_ends")"
+t kimi-resumed-usage-is-not-the-cumulative-red 0 \
+  "$(grep -c ' input_tokens=307 ' <<<"$kimi_resume_ends" || true)"
+t kimi-resume-keeps-the-session-outcome-and-prose '0|ok|second turn answer' \
+  "$(printf '%s|%s' \
+      "$(sed -n '2s/.* rc=\([^ ]*\).* outcome=\([^ ]*\).*/\1|\2/p' <<<"$kimi_resume_ends")" \
+      "$(sed -n '/^--prose--$/,$p' <<<"$kimi_resumed" | tail -1)")"
+t kimi-run-session-returns-zero-on-both-paths '0|0' \
+  "$(sed -n '/^--returns--$/{n;p;}' <<<"$kimi_resumed")"
+
+for mode in missing unreadable larger; do
+  kimi_withheld="$(kimi_resume_run "$mode" 2>&1 | sed -e 's/^[0-9-]*T[0-9:]*Z //')"
+  kimi_withheld_end="$(grep 'SESSION END' <<<"$kimi_withheld" | sed -n '2p')"
+  t "kimi-$mode-watermark-withholds-usage" 0 \
+    "$(grep -c ' input_tokens=' <<<"$kimi_withheld_end" || true)"
+  t "kimi-$mode-watermark-leaves-session-unchanged" '0|ok|second turn answer' \
+    "$(printf '%s|%s' \
+        "$(sed -n 's/.* rc=\([^ ]*\).* outcome=\([^ ]*\).*/\1|\2/p' <<<"$kimi_withheld_end")" \
+        "$(sed -n '/^--prose--$/,$p' <<<"$kimi_withheld" | tail -1)")"
+done
+
+kimi_refusal_plan() ( # kimi_refusal_plan moved|empty|survivor|malformed|spent
+  local mode="$1" udir="$TMP/kimi-refusal-$1-$RANDOM" sid head state
+  mkdir -p "$udir"
+  DUTY_DIR="$udir"
+  # shellcheck disable=SC1091
+  source "$SHARED/conf/agents/kimi.conf"
+  sid='dddddddd-0000-4000-8000-000000000004'
+  head="$(git -C "$SHARED/.." rev-parse HEAD)"
+  state="$(_session_resume_state build fixture/kimi-refusal)"
+  case "$mode" in
+    moved) head='1111111111111111111111111111111111111111' ;;
+    empty) productive=no ;;
+    survivor) left=1 ;;
+    malformed) sid='not-a-provider-id' ;;
+    spent) try=1 ;;
+  esac
+  printf 'kind=build\nkey=fixture/kimi-refusal\nsid=%s\nhead=%s\nwall=1\ntry=%s\nlog=12\noutcome=TIMEOUT\nproductive=%s\nleft=%s\n' \
+    "$sid" "$head" "${try:-0}" "${productive:-yes}" "${left:-0}" >"$state"
+  _session_resume_plan build fixture/kimi-refusal "$SHARED/.."
+  printf '%s|%s' "$_SESSION_RESUMED" "$([ -e "$state" ] && printf PRESENT || printf consumed)"
+)
+for mode in moved empty survivor malformed spent; do
+  t "kimi-$mode-resume-refusal-dispatches-fresh-and-consumes-stub" 'no|consumed' \
+    "$(kimi_refusal_plan "$mode")"
+done
+
 # The profile's own reader, driven directly — the kills the end-to-end cases
 # above cannot make, because they can only observe what reached the line.
 KIMI_SHARE_FIXTURE="$TMP/kimi-share"
@@ -495,6 +632,14 @@ kimi_direct() ( # kimi_direct SID
   source "$SHARED/conf/agents/kimi.conf"
   # shellcheck disable=SC2031  # the run harness above is a sibling subshell
   export KIMI_SHARE_DIR="$KIMI_SHARE_FIXTURE"
+  bot_cli_usage '' '' '' "$1"
+)
+kimi_resumed_direct() ( # kimi_resumed_direct SID
+  # shellcheck disable=SC1091
+  source "$SHARED/conf/agents/kimi.conf"
+  # shellcheck disable=SC2031  # the run harness above is a sibling subshell
+  export KIMI_SHARE_DIR="$KIMI_SHARE_FIXTURE"
+  bot_cli_resume_args "$1"
   bot_cli_usage '' '' '' "$1"
 )
 t kimi-profile-reads-the-artifact-by-id '11|22|33|44' \
@@ -551,6 +696,16 @@ cp "$KIMI_SHARE_FIXTURE/sessions/hash-one/aaaaaaaa-0000-4000-8000-000000000001/w
   "$KIMI_SHARE_FIXTURE/sessions/hash-two/aaaaaaaa-0000-4000-8000-000000000001/wire.jsonl"
 t kimi-profile-refuses-one-id-under-two-work-dirs 0 \
   "$(kimi_direct aaaaaaaa-0000-4000-8000-000000000001 | wc -l)"
+t kimi-resumed-profile-refuses-unknown-as-a-path-component 0 \
+  "$(kimi_resumed_direct unknown | wc -l)"
+t kimi-resumed-profile-refuses-dot-as-an-id 0 \
+  "$(kimi_resumed_direct . | wc -l)"
+t kimi-resumed-profile-refuses-dotdot-as-an-id 0 \
+  "$(kimi_resumed_direct .. | wc -l)"
+t kimi-resumed-profile-refuses-an-unsafe-character 0 \
+  "$(kimi_resumed_direct 'bad/id' | wc -l)"
+t kimi-resumed-profile-refuses-one-id-under-two-work-dirs 0 \
+  "$(kimi_resumed_direct aaaaaaaa-0000-4000-8000-000000000001 | wc -l)"
 # The artifact root is $KIMI_SHARE_DIR when set and ~/.kimi otherwise, and it
 # is NOT the credential home: a box whose credential lives in ~/.kimi-code
 # still writes its sessions under ~/.kimi.
@@ -584,6 +739,12 @@ t kimi-profile-declares-artifact-backed-usage declared "$r1"
 if bash -c '. "$1"; declare -F bot_cli_session_id_args >/dev/null' \
     _ "$SHARED/conf/agents/kimi.conf"; then r1=declared; else r1=MISSING; fi
 t kimi-profile-pins-the-session-id declared "$r1"
+if bash -c '. "$1"; declare -F bot_cli_resume_args >/dev/null' \
+    _ "$SHARED/conf/agents/kimi.conf"; then r1=declared; else r1=MISSING; fi
+t kimi-profile-resumes-the-session-id declared "$r1"
+t kimi-resume-hook-renders-the-observed-flag '--session|eeeeeeee-0000-4000-8000-000000000005' \
+  "$(bash -c '. "$1"; bot_cli_resume_args "$2"; printf "%s|%s" "${BOT_CLI_RESUME_ARGS[@]}"' \
+    _ "$SHARED/conf/agents/kimi.conf" eeeeeeee-0000-4000-8000-000000000005)"
 # The invocation gains the pin and NOTHING ELSE. `--print` is what would
 # change the capture shape, and #571 D6 is settled the other way: the artifact
 # is written without it, so it is not passed and neither is a stream format.
