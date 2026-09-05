@@ -465,14 +465,19 @@ esac
 # meets for the first time at `crew down --force` — a verb reached in an
 # incident — is not a prerequisite, it is a surprise.
 #
-# LAST, after the install has completed and said `done`. It REPORTS and never
-# refuses (#679 D14): a below-floor host still gets a working install, because
-# every verb that cares keeps its own consequence and most of them do not care.
-# Reporting before `done` would read as a failure the exit status contradicts.
+# It REPORTS and never refuses (#679 D14): a below-floor host still gets a
+# working install, because every verb that cares keeps its own consequence and
+# most of them do not care.
+#
+# ABOVE the `done` line and not after it. `done` is this installer's terminal
+# statement, and shared/test/artifact.sh asserts it is the last line across all
+# four install channels — a finding printed after it would contradict the word.
+# Findings belong in the body of the run, which is where report_engine_skew's
+# already are.
 #
 # Identical wording to `crew up`'s, because it is the identical call into the
 # identical reporter — the same property report_engine_skew has across this
 # file and `crew use`, and for the same reason.
-log "done ($INSTALLED_FROM, version $new_ver) — try: crew help"
-
 report_platform "$new_ver"
+
+log "done ($INSTALLED_FROM, version $new_ver) — try: crew help"
