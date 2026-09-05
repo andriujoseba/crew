@@ -72,11 +72,41 @@ state_dir="$LIFE_STATE"
 calls="$state_dir/calls"
 cmd="${1:-}"; shift || true
 case "$cmd" in
+  --version|-V)
+    # `box --version`'s real shape, `box <ver> (<root>)` (bin/box:27). The
+    # platform check parses field 2 out of it, so the whole line is reproduced
+    # rather than the bare number: a reader that accepted a bare number would
+    # pass a fixture no real box can produce.
+    printf 'box %s (/opt/box/versions/%s)\n' \
+      "${LIFE_BOX_VERSION:-0.10.0}" "${LIFE_BOX_VERSION:-0.10.0}"
+    ;;
+  root)
+    # The root door, which is `incus exec <inst> -- bash -l` — a login shell
+    # with NO command payload (bin/box:2792), so what crew hands it arrives on
+    # STDIN. That payload is crew's whole statement about how a box gets
+    # converged, and it is captured here for the same reason `new`'s argv is:
+    # the box transport boundary is the only place an offline test can stand.
+    name="$1"
+    printf 'root %s\n' "$name" >>"$calls"
+    cat >"$state_dir/root-script-$name"
+    [ "${LIFE_ROOT_FAIL:-}" != "$name" ] || exit 1
+    # A converged box carries rig's provenance manifest from here on, which is
+    # what the platform check reads back out of the guest.
+    printf '%s\n' "${LIFE_GUEST_RIG:-0.4.0}" >"$state_dir/rig-$name"
+    ;;
   list)
+    # LIFE_BOX_LIST overrides the fleet this host has, for the platform cases
+    # that need a host with NO boxes — which is a real state (a fresh install)
+    # and the one where there is no guest for rig to be read out of at all.
+    names="${LIFE_BOX_LIST-alpha beta offroster}"
     if [ "${1:-}" = --json ]; then
-      printf '[{"name":"alpha"},{"name":"beta"},{"name":"offroster"}]\n'
+      printf '['
+      sep=""
+      for n in $names; do printf '%s{"name":"%s"}' "$sep" "$n"; sep=","; done
+      printf ']\n'
     else
-      printf 'NAME\nalpha\nbeta\noffroster\n'
+      printf 'NAME\n'
+      for n in $names; do printf '%s\n' "$n"; done
     fi
     ;;
   exec)
@@ -136,6 +166,22 @@ case "$cmd" in
       printf '%s\n' "$free"
     elif [[ "$script" == *'duty-snapshot.*'* ]]; then
       printf 'cleanup %s\n' "$name" >>"$calls"
+    elif [[ "$script" == *'/etc/rig/manifest'* ]]; then
+      # rig's provenance manifest, read where rig RUNS — inside the guest
+      # (#679 D15). A box converged during this run has its own recorded
+      # version; every other box answers LIFE_GUEST_RIG, whose three special
+      # spellings are the three findings that are not "a number":
+      #   none    the box answers and carries no manifest — rig never converged
+      #   absent  the box does not answer at all — crew knows nothing about it
+      # The two must never collapse (crew#220 rule 5), which is why `probe=ok`
+      # is emitted on its own line before anything else is read.
+      version="${LIFE_GUEST_RIG:-0.4.0}"
+      [ ! -s "$state_dir/rig-$name" ] || version="$(cat "$state_dir/rig-$name")"
+      [ "$version" != absent ] || exit 1
+      printf 'probe=ok\n'
+      if [ "$version" != none ]; then
+        printf 'schema=1\nbootstrapped_by=%s\nconverged_by=%s\n' "$version" "$version"
+      fi
     else
       exit 2
     fi
@@ -245,6 +291,10 @@ run_crew() {
     LIFE_READY_FAILS="${LIFE_READY_FAILS:-0}" \
     LIFE_CLONE_SIZING="${LIFE_CLONE_SIZING:-yes}" \
     LIFE_BOX_RESOURCES="${LIFE_BOX_RESOURCES:-}" \
+    LIFE_BOX_VERSION="${LIFE_BOX_VERSION:-0.10.0}" \
+    LIFE_GUEST_RIG="${LIFE_GUEST_RIG:-0.4.0}" \
+    LIFE_ROOT_FAIL="${LIFE_ROOT_FAIL:-}" \
+    LIFE_BOX_LIST="${LIFE_BOX_LIST-alpha beta offroster}" \
     LIFE_PROBE_BIN="$PROBE_BIN" LIFE_NO_FLOCK_BIN="$NO_FLOCK_BIN" \
     CREW_DRAIN_POLL_SECONDS=0 CREW_RESTART_READY_POLL_SECONDS=0 \
     CREW_RESTART_READY_ATTEMPTS=3 PATH="${LIFE_PATH:-$SHIM:$PATH}" bash "$CLI" "$@"
@@ -719,6 +769,13 @@ t hostjob-usage-error-writes-no-log '' "$(job_log)"
 #
 # Its own fleet definition, so the roster rows these cases need do not enter
 # the --all iterations above and shift their counts.
+# The declared platform, read out of the declaration rather than pinned here,
+# for the same reason the role sizes below are read out of reviewer.conf: these
+# cases are ABOUT the declaration, and a fixture holding its own copy of the
+# number is the second statement of it that #679 D11 exists to remove.
+# shellcheck source=shared/lib/platform.sh
+source "$ROOT/shared/lib/platform.sh"
+
 CONF_NEW="$TMP/conf-new"
 mkdir -p "$CONF_NEW"
 cp "$CONF/fleet.conf" "$CONF/repos.txt" "$CONF/notify-repos.txt" \
@@ -739,12 +796,76 @@ read -r EXP_CPU EXP_MEM EXP_DISK <<<"$(
 reset_case
 LIFE_CONF="$CONF_NEW" capture new gamma
 t new-fresh-mint-exits-zero 0 "$RC"
-t new-fresh-mint-carries-the-role-size \
-  "new --name gamma --template claude-box --cpu $EXP_CPU --memory $EXP_MEM --disk $EXP_DISK" \
+# RENAMED from new-fresh-mint-carries-the-role-size (#679 D5). The old name was
+# true of what it asserted and said nothing about the half that was broken: the
+# argv it pinned was `--template claude-box`, a spelling box 0.10.0 refuses
+# outright, so a green suite proved crew still emitted a command no supported
+# box would run. These names say which contract is being guarded, so the next
+# reader sees a deliberate statement rather than an edited string.
+t new-fresh-mint-is-blank-and-names-no-template \
+  "new --name gamma --user claude --cpu $EXP_CPU --memory $EXP_MEM --disk $EXP_DISK" \
   "$(grep '^new ' "$STATE/calls")"
-t new-fresh-mint-is-the-reviewer-at-builder-parity \
-  "new --name gamma --template claude-box --cpu 4 --memory 8GiB --disk 60GiB" \
+t new-fresh-mint-sizes-the-reviewer-at-builder-parity \
+  "new --name gamma --user claude --cpu 4 --memory 8GiB --disk 60GiB" \
   "$(grep '^new ' "$STATE/calls")"
+
+# The criterion in the issue's own words: no --template on ANY path, asserted
+# over the RECORDED ARGV and not by reading the source. A source grep would pass
+# on a file that built the flag out of two variables.
+t new-fresh-mint-emits-no-template-flag 0 \
+  "$(grep -c -- '--template' "$STATE/calls" || true)"
+
+# Step 3 of the sequence, at the only boundary an offline test can stand at:
+# `box root` takes no argv, so what crew hands the guest arrives on stdin, and
+# that script IS crew's statement about how a box gets converged.
+t new-fresh-mint-opens-the-root-door 1 "$(grep -c '^root gamma$' "$STATE/calls" || true)"
+t new-fresh-mint-bootstraps-the-agents-rig-role \
+  "rig bootstrap claude-box" \
+  "$(grep -E '^rig bootstrap ' "$STATE/root-script-gamma" || true)"
+# D10's second half, and it is the half a careless implementation gets wrong:
+# the tenant is named ONCE, at the mint, and the bootstrap inherits it. A
+# --user on the bootstrap would be rig being told a tenant it can already see.
+t new-fresh-mint-bootstrap-names-no-user 0 \
+  "$(grep -c -- '--user' "$STATE/root-script-gamma" || true)"
+# The rig a mint installs is the one crew DECLARES, not whatever is latest: a
+# mint is not the place to take a lottery ticket on another tool's release.
+t new-fresh-mint-pins-the-declared-rig 1 \
+  "$(grep -c "RIG_REF=$CREW_PLATFORM_RIG_MIN" "$STATE/root-script-gamma" || true)"
+
+# The role mapping is ASSERTED and not merely present — one case per profile,
+# because a hardcoded `claude-box` passes the gamma case above and is wrong for
+# three quarters of the fleet.
+cat >"$CONF_NEW/fleet.roster" <<'EOF'
+gamma claude reviewer
+delta claude reviewer goldbox/gold
+epsilon claude builder
+zeta codex reviewer
+eta grok reviewer
+theta kimi reviewer
+EOF
+for profile in claude:gamma codex:zeta grok:eta kimi:theta; do
+  prof_agent="${profile%%:*}"; prof_box="${profile##*:}"
+  reset_case
+  LIFE_CONF="$CONF_NEW" capture new "$prof_box"
+  t "new-fresh-mint-$prof_agent-tenant-is-the-agents-own-name" \
+    "new --name $prof_box --user $prof_agent --cpu 4 --memory 8GiB --disk 60GiB" \
+    "$(grep '^new ' "$STATE/calls")"
+  t "new-fresh-mint-$prof_agent-bootstraps-its-own-rig-role" \
+    "rig bootstrap $prof_agent-box" \
+    "$(grep -E '^rig bootstrap ' "$STATE/root-script-$prof_box" || true)"
+done
+
+# A mint that created a box and then failed to converge it says so, names the
+# box as left standing, and fails — the alternative is a guest that looks hired
+# and carries no vendor CLI, which is the defect crew#220 exists to close.
+reset_case
+LIFE_CONF="$CONF_NEW" LIFE_ROOT_FAIL=gamma capture new gamma
+t new-fresh-mint-unconverged-fails 1 "$RC"
+case "$OUT" in
+  *"was minted but rig did not converge it as claude-box"*"box root gamma"*) r1=named ;;
+  *) r1="$OUT" ;;
+esac
+t new-fresh-mint-unconverged-names-the-repair named "$r1"
 
 # D5, the half that lands — and it lands in TWO figures, not three. box 0.10.0
 # takes --cpu and --memory on a copy unconditionally, but --disk only where the
@@ -856,8 +977,141 @@ t new-clone-sized-unreadable-claims-nothing-applied 0 \
 # parity is reviewer→builder, not a new tier for both.
 reset_case
 LIFE_CONF="$CONF_NEW" capture new epsilon
-t new-builder-mint-unchanged \
-  "new --name epsilon --template claude-box --cpu 4 --memory 8GiB --disk 60GiB" \
+t new-builder-mint-is-blank-at-its-own-figures \
+  "new --name epsilon --user claude --cpu 4 --memory 8GiB --disk 60GiB" \
   "$(grep '^new ' "$STATE/calls")"
+
+# --- the platform declaration (#679 Part 2) ---------------------------------
+# The check REPORTS and never refuses (D14), so every case here reads the
+# output and the exit status separately: a finding that changed an exit status
+# would be the refusal D14 forbids, wearing a report's clothes.
+#
+# `crew up --dry-run` is the surface, because it is the read form of the verb —
+# it needs no operator configuration, so the check can be exercised without the
+# fixture standing up a whole configured host to reach it.
+
+# A host AT the floor is silent. Not "quiet", not "one reassuring line": no
+# output at all, because a check that speaks on a healthy fleet is a check
+# operators learn to scroll past.
+reset_case
+LIFE_CONF="$CONF_NEW" capture up --dry-run
+t platform-at-the-floor-is-silent 0 "$(grep -c 'platform check' <<<"$OUT" || true)"
+t platform-at-the-floor-exits-zero 0 "$RC"
+
+# ...and so is a host ABOVE it. This is D13 — floors, not equality — and 0.10.1
+# is not a hypothetical: it exists on box's main today, so an equality pin would
+# make an error of a fleet nothing is wrong with.
+reset_case
+LIFE_CONF="$CONF_NEW" LIFE_BOX_VERSION=0.10.1 capture up --dry-run
+t platform-above-the-floor-is-silent 0 "$(grep -c 'platform check' <<<"$OUT" || true)"
+# The -dev of a version ABOVE the floor is above it too. Both tools ship -dev
+# spellings on main, and a comparison that read 0.10.1-dev as below 0.10.0 would
+# fire on every host tracking either tree.
+reset_case
+LIFE_CONF="$CONF_NEW" LIFE_BOX_VERSION=0.10.1-dev capture up --dry-run
+t platform-above-the-floor-dev-is-silent 0 "$(grep -c 'platform check' <<<"$OUT" || true)"
+
+# A box BELOW the floor is a finding, and the finding names ALL FIVE figures
+# (D16): crew's own version, box found and wanted, rig found and wanted. A
+# message naming only the offending half makes the reader go looking for the
+# other, and this triple is the thing the fleet had been reasoning about without
+# ever writing it down.
+reset_case
+LIFE_CONF="$CONF_NEW" LIFE_BOX_VERSION=0.9.1 capture up --dry-run
+PLATFORM_BELOW="$OUT"
+t platform-below-the-floor-reports 1 "$(grep -c 'platform check' <<<"$OUT" || true)"
+t platform-below-the-floor-does-not-refuse 0 "$RC"
+# Anchored to the check's OWN line: `crew up --dry-run` prints the engine
+# version once per roster row, so a bare count of `crew@<ver>` passes on a
+# report that never names it.
+t platform-below-the-floor-names-crews-own-version 1 \
+  "$(grep -cF "platform check — this crew is crew@$(head -1 "$ROOT/VERSION")" <<<"$OUT" || true)"
+t platform-below-the-floor-names-box-found-and-wanted 1 \
+  "$(grep -cF "box: 0.9.1 found, $CREW_PLATFORM_BOX_MIN wanted" <<<"$OUT" || true)"
+t platform-below-the-floor-names-rig-found-and-wanted 1 \
+  "$(grep -cF "rig: 0.4.0 found, $CREW_PLATFORM_RIG_MIN wanted" <<<"$OUT" || true)"
+
+# A missing rig is a FINDING, not a crash and not a silent pass. `none` here is
+# a box that answered and carries no /etc/rig/manifest — a guest rig was
+# supposed to have converged and did not.
+reset_case
+LIFE_CONF="$CONF_NEW" LIFE_GUEST_RIG=none capture up --dry-run
+t platform-missing-rig-reports 1 "$(grep -c 'platform check' <<<"$OUT" || true)"
+t platform-missing-rig-does-not-crash 0 "$RC"
+t platform-missing-rig-names-the-box 1 \
+  "$(grep -c 'alpha carries no /etc/rig/manifest' <<<"$OUT" || true)"
+t platform-missing-rig-still-names-all-five 1 \
+  "$(grep -cF "rig: none found, $CREW_PLATFORM_RIG_MIN wanted" <<<"$OUT" || true)"
+
+# A rig BELOW the floor is the other rig finding, and it names which guest.
+reset_case
+LIFE_CONF="$CONF_NEW" LIFE_GUEST_RIG=0.3.2 capture up --dry-run
+# Per GUEST, and named: rig is a per-box fact, so three below-floor boxes are
+# three findings and each says which box it is about.
+t platform-below-floor-rig-reports 1 \
+  "$(grep -c 'alpha was converged by 0.3.2, below the floor' <<<"$OUT" || true)"
+t platform-below-floor-rig-names-every-guest 3 \
+  "$(grep -c 'was converged by 0.3.2, below the floor' <<<"$OUT" || true)"
+
+# A host with no boxes says nothing about rig, and that is not an omission: rig
+# runs INSIDE the guest (D15), so a host with no guest has nothing to look in,
+# and the next mint is what puts one there. The box half is still checked.
+reset_case
+LIFE_CONF="$CONF_NEW" LIFE_BOX_LIST= capture up --dry-run
+t platform-no-boxes-is-silent 0 "$(grep -c 'platform check' <<<"$OUT" || true)"
+reset_case
+LIFE_CONF="$CONF_NEW" LIFE_BOX_LIST= LIFE_BOX_VERSION=0.9.1 capture up --dry-run
+t platform-no-boxes-still-checks-the-host-half 1 \
+  "$(grep -cF "box: 0.9.1 found, $CREW_PLATFORM_BOX_MIN wanted" <<<"$OUT" || true)"
+t platform-no-boxes-says-so-rather-than-inventing-a-rig 1 \
+  "$(grep -cF 'rig: no boxes found' <<<"$OUT" || true)"
+
+# D14, and this is what a careless implementation breaks. The two call sites
+# keep their OWN consequences and the version decides neither: `down --force`
+# refuses because there is no down --force to degrade to, and clone sizing warns
+# and continues because a clone carrying its source's size is still a clone.
+# Asserted at a below-floor box, where a version-driven check would be loudest.
+reset_case
+LIFE_CONF="$CONF_NEW" LIFE_FORCE_HELP=no LIFE_BOX_VERSION=0.9.1 capture down --force
+t platform-down-force-still-refuses-below-the-floor 1 "$RC"
+case "$OUT" in
+  *"crew down --force requires box $CREW_PLATFORM_BOX_MIN or later"*"this host's box has no down --force"*) r1=unchanged ;;
+  *) r1="$OUT" ;;
+esac
+t platform-down-force-message-is-unchanged unchanged "$r1"
+# ...and the refusal is the CAPABILITY's, never the version's: a box at the
+# floor whose help does not carry --force is still refused.
+reset_case
+LIFE_CONF="$CONF_NEW" LIFE_FORCE_HELP=no LIFE_BOX_VERSION=0.10.0 capture down --force
+t platform-down-force-refuses-on-capability-not-version 1 "$RC"
+# ...and the converse, which is the half a version check would get wrong: a box
+# BELOW the declared floor whose help DOES carry --force is not refused.
+# (`crew down` takes no box names — it is the roster-wide verb — so the case is
+# the bare --force, and the roster it reads names no box that exists.)
+reset_case
+LIFE_CONF="$CONF_NEW" LIFE_BOX_VERSION=0.9.1 capture down --force
+t platform-down-force-allowed-on-capability-below-the-floor 0 "$RC"
+t platform-down-force-below-the-floor-is-not-refused 0 \
+  "$(grep -c 'requires box' <<<"$OUT" || true)"
+
+# Clone sizing degrades and continues — it never refuses — with the box below
+# the floor. `crew new delta` clones, and LIFE_CLONE_SIZING=old is the box whose
+# help does not offer the flags.
+reset_case
+LIFE_CONF="$CONF_NEW" LIFE_CLONE_SIZING=old LIFE_BOX_VERSION=0.9.1 capture new delta
+t platform-clone-sizing-degrades-rather-than-refusing 0 "$RC"
+t platform-clone-sizing-still-mints 1 "$(grep -c '^new --name delta --from ' "$STATE/calls" || true)"
+t platform-clone-sizing-note-reads-the-declaration 1 \
+  "$(grep -cF "predates $CREW_PLATFORM_BOX_MIN clone sizing" <<<"$OUT" || true)"
+
+# D8's fence, read from the side that proves it held: the clone argv is
+# byte-identical to what it was before this change. A --user or a dropped flag
+# creeping onto this path is invisible to every other case here.
+reset_case
+LIFE_CONF="$CONF_NEW" capture new delta
+t platform-clone-argv-is-byte-identical \
+  "new --name delta --from goldbox/gold --cpu 4 --memory 8GiB" \
+  "$(grep '^new ' "$STATE/calls")"
+t platform-clone-opens-no-root-door 0 "$(grep -c '^root ' "$STATE/calls" || true)"
 
 suite_finish
