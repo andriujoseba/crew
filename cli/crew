@@ -562,9 +562,9 @@ EOF
 THE LIFECYCLE — two verbs around one human step in the middle
 
   create  crew new / crew create-all — infrastructure only. The box is minted
-          from its agent's box template (rig converges the vendor CLI) and
-          sized by the role profile. It has no engine and no cron: it does
-          nothing at all until it is hired.
+          blank at the role profile's size, then rig converges it into its
+          agent's <agent>-box role (the vendor CLI). It has no engine and no
+          cron: it does nothing at all until it is hired.
   login   BY HAND, once per box, ever. 'crew auth' was removed until the
           fleet is proven — vendor logins are flaky and half-automating a
           step you still babysit buys a second thing to debug:
@@ -2390,10 +2390,30 @@ cmd_new() {
   box_exists "$name" && die "'$name' already exists (crew hire $name to put it on duty)"
 
   create_box "$name" "$agent" "$role" "$from"
+  # WHAT THIS SENTENCE MAY CLAIM IS DECIDED BY WHICH PATH JUST RAN (#679 D2,
+  # and the fence triage widened onto this line on 2026-09-05). It used to read
+  # "vendor CLI converging via the $agent-box template", and that was wrong
+  # three ways at once. There is no box template any more — box 0.10.0 retired
+  # the four agent spellings outright. <agent>-box is RIG's role, not box's
+  # template, which is D2's whole distinction. And box_mint_fresh returns only
+  # AFTER `rig bootstrap` has completed (shared/lib/box-mint.sh), so by the time
+  # this prints, convergence is finished rather than in flight.
+  #
+  # The third error is the one a rewording alone still gets wrong: this same
+  # response prints on the CLONE path, where there was no template, no rig and
+  # no bootstrap at all — the box was copied from a gold snapshot that already
+  # carried whatever it carried. So the sentence is BRANCHED rather than
+  # corrected, and the clone half makes no claim about rig whatsoever.
+  local minted
+  if [ -n "$from" ]; then
+    minted="copied from $from"
+  else
+    minted="vendor CLI converged by rig into the $agent-box role"
+  fi
   cat <<EOF
 
-$name is created — vendor CLI converging via the $agent-box template; no
-engine, no cron: it does nothing until hired. Next, once per box, ever:
+$name is created — $minted.
+No engine, no cron: it does nothing until hired. Next, once per box, ever:
 
   box shell $name        # then, inside the box:
                          #   gh auth login
