@@ -423,20 +423,114 @@ unset LIFE_DOWN_FAIL
 HOST_CRONTAB="$ROOT/shared/host-crontab.example"
 host_cron_lines="$(grep -vE '^[[:space:]]*(#|$)' "$HOST_CRONTAB" || true)"
 t hostcron-example-exists yes "$([ -f "$HOST_CRONTAB" ] && echo yes || echo no)"
-t hostcron-has-exactly-two-job-lines 2 \
+t hostcron-schedules-the-daily-restart-alone 1 \
   "$(printf '%s\n' "$host_cron_lines" | grep -c '[^[:space:]]' || true)"
 t hostcron-no-flock-in-any-line 0 \
   "$(printf '%s\n' "$host_cron_lines" | grep -c 'flock' || true)"
 t hostcron-no-redirect-in-any-line 0 \
   "$(printf '%s\n' "$host_cron_lines" | grep -c '[>|]' || true)"
+# This one keeps its literal spaces and its narrow fields on purpose, and the
+# asymmetry with the reset pattern below is the point: it asserts a line is
+# PRESENT, so a stricter read can only turn it red. The reset assertions assert
+# an ABSENCE, where every shape the pattern does not know is a silent pass —
+# which is why they were widened to cron's real separator and this was not.
 t hostcron-daily-line-is-restart-all 1 \
   "$(printf '%s\n' "$host_cron_lines" | grep -cE '^[0-9]+ [0-9]+ \* \* \* .*crew restart --all$' || true)"
-t hostcron-weekly-line-is-reset-all 1 \
-  "$(printf '%s\n' "$host_cron_lines" | grep -cE '^[0-9]+ [0-9]+ \* \* [0-6] .*crew reset --all$' || true)"
-# The weekly line inherits #589's refusal and must never be handed a way past
-# it: --force on the scheduled reset is the silent fleet-wide downgrade D4
-# exists to prevent, and it would arrive here as a one-word edit.
-t hostcron-weekly-line-carries-no-force 0 \
+# #678 — THE WEEKLY RESET IS DEFERRED TO 0.1.4, AND THE ABSENCE IS THE
+# ASSERTION. `crew reset --all` restores each box to its `armed` checkpoint,
+# and that restore has no carve-out for $DUTY_DIR: it takes duty.log, and it
+# clears the resume breaker with no push, against #314's invariant that only a
+# push clears it. The count above cannot carry this on its own — a file that
+# lost the DAILY line instead would also hold one job line — so the shape is
+# asserted from both ends, the right line present and the wrong one absent.
+#
+# One pattern serves both reset assertions, because they ask the same question
+# of two different inputs and must not drift apart. It matches the SCHEDULE
+# PREFIX a cron entry starts with, in both forms cron accepts: five fields, or
+# one of the @-special strings. `@weekly $HOME/.local/bin/crew reset --all` is
+# a job line, and a five-field pattern alone reads it as prose
+# (@claude-bot-andresmgsl, #683).
+#
+# Fields 1-3 stay numeric-and-star deliberately, and that is load-bearing
+# rather than lazy: the commented-out assertion below runs this same pattern
+# over the file's PROSE with the comment marker stripped, and admitting names
+# in the leading fields would make an ordinary English sentence of five words
+# followed by `crew reset` — which this file's own deferral block very nearly
+# is — match as a cron entry. Fields 4 and 5 admit names because cron does
+# (`0 5 * * SUN`), and no sentence opens with two numbers and a star.
+#
+# THE SEPARATOR IS BLANK, NOT SPACE, and the entry may be indented. cron
+# splits fields on runs of spaces OR TABS, so a literal ` +' let
+# `# @weekly<TAB>… crew reset --all` (@codex-bot-andresmgsl, #683) and
+# `#<TAB>10<TAB>5<TAB>*<TAB>*<TAB>0<TAB>… crew reset --all`
+# (@claude-bot-andresmgsl, #683) past this pattern entirely — 141/0, nothing
+# died, so the weekly reset was one uncomment away with the guard green. Both
+# branches take [[:blank:]]+, including the separator after an @-special, and
+# `^[[:blank:]]*' admits the indented entry cron also accepts. Widening the
+# separator does not widen what counts as a schedule: [[:blank:]] is what was
+# already meant by a space, so the numeric-fields reasoning above is untouched
+# and the file's own prose still does not match.
+#
+# AND THE SAME IS TRUE ONE TOKEN TO THE RIGHT. The command is split on blanks
+# by the shell exactly as the fields are by cron, so while the tail read a
+# literal `crew reset' the widening stopped at the schedule and
+# `# 10 5 * * 0 … crew<TAB>reset --all` was still 141/0 — nothing died, the
+# same one-uncomment-from-live hole in a different position
+# (@claude-bot-andresmgsl, #683). `crew[[:blank:]]+reset' closes it. No braces
+# here: no parameter expansion precedes the bracket, so SC1087 does not arise.
+cron_num='[0-9*][0-9,*/-]*'
+cron_named='[0-9A-Za-z*][0-9A-Za-z,*/-]*'
+cron_at='@(reboot|yearly|annually|monthly|weekly|daily|midnight|hourly)'
+# The braces are required, not style: `$cron_num[[:blank:]]' reads as an array
+# subscript to shellcheck, which is SC1087 at ERROR severity and reds ci-shell.
+cron_five="${cron_num}[[:blank:]]+${cron_num}[[:blank:]]+${cron_num}[[:blank:]]+"
+cron_five="${cron_five}${cron_named}[[:blank:]]+${cron_named}[[:blank:]]+"
+cron_entry="^[[:blank:]]*(${cron_five}|${cron_at}[[:blank:]]+).*crew[[:blank:]]+reset"
+# Read over the job lines, by the shape of a cron entry rather than by two
+# leading integers: `*/10 5 * * 0 … crew reset --all` is a reset job line, and
+# an `^[0-9]+ [0-9]+` pattern let it through while the assertion's NAME claimed
+# otherwise (@claude-bot-andresmgsl, #683). The count above would have caught
+# it; a guard that leans on a neighbour is one edit from catching nothing.
+t hostcron-schedules-no-reset-job-line 0 \
+  "$(printf '%s\n' "$host_cron_lines" | grep -cE "$cron_entry" || true)"
+# AND IT MUST NOT BE REINSTATABLE BY UNCOMMENTING. This is the one assertion
+# here that reads the whole file rather than the job lines, because a
+# commented-out job line is invisible to every assertion above it and a
+# crontab is the one file nobody diffs. It reads the SHAPE and not the verb:
+# comments that NAME `crew reset` are wanted — the deferral is argued in them,
+# and the verb is still available on demand — so what is banned is a comment
+# whose text is a cron ENTRY — a schedule prefix and the reset behind it, in
+# either of the forms cron accepts.
+#
+# AND THE MARKERS REPEAT. `#+' strips one RUN of them, so `# # 10 5 * * 0 …
+# crew reset --all' left a `#' standing in front of the schedule fields, where
+# `cron_entry''s `^[[:blank:]]*' cannot reach it — 141/0, nothing died, the
+# same one-uncomment-from-live shape two keystrokes further out
+# (@claude-bot-andresmgsl, #683; criterion 3, amended by triage 2026-09-05).
+# `([[:space:]]*#+)+' strips every run and the whitespace between them, which
+# is what the assertion's name has claimed all along. It cannot over-reach: the
+# group only repeats where what follows a marker run is whitespace and more
+# markers, so a comment that merely NAMES the verb is untouched.
+t hostcron-has-no-commented-out-reset-job-line 0 \
+  "$(sed -E 's/^([[:space:]]*#+)+[[:space:]]*//' "$HOST_CRONTAB" \
+     | grep -cE "$cron_entry" || true)"
+# The deferral is only reversible on purpose if the file says where the
+# argument lives. D2 requires the comment block to name this issue and the
+# collector that returns the line.
+# Presence, not a count: the prose is entitled to cite either number more than
+# once, and pinning a tally would make a second mention a red check. Bounded on
+# the right, though — a bare `#678` is a prefix of `#6789`, so an unrelated
+# citation would satisfy a substring read (@claude-bot-andresmgsl, #683).
+t hostcron-deferral-names-its-issue yes \
+  "$(grep -qE '#678([^0-9]|$)' "$HOST_CRONTAB" && echo yes || echo no)"
+t hostcron-deferral-names-what-returns-it yes \
+  "$(grep -qE '#328([^0-9]|$)' "$HOST_CRONTAB" && echo yes || echo no)"
+# #589's refusal must never be handed a way past it: --force on a scheduled
+# reset is the silent fleet-wide downgrade the interlock exists to prevent,
+# and it would arrive as a one-word edit. The guard outlives the line it was
+# written for — a reinstated reset carrying --force is exactly the edit it has
+# to catch — so it is renamed to the job lines it actually reads.
+t hostcron-no-job-line-carries-force 0 \
   "$(printf '%s\n' "$host_cron_lines" | grep -c -- '--force' || true)"
 
 capture help
@@ -596,8 +690,12 @@ t hostjob-rotate-contender-rotates-nothing \
   'rc=4 marker=1 rotated=0 skip=1' "$r1"
 
 # A lock that cannot be taken is not a lock. Without flock on PATH the verb
-# REFUSES rather than running unlocked — the fail-open here is a weekly reset
-# rolling a fleet back underneath a restart that is mid-cycle.
+# REFUSES rather than running unlocked — the fail-open here is an on-demand
+# `crew reset --all` rolling a fleet back underneath a restart that is
+# mid-cycle. The LOCK is what this guards and this merge does not touch it:
+# both verbs still contend for it. What changed is only who calls the reset —
+# an operator at a prompt rather than a weekly cron entry (#678), and #328
+# returns the schedule on 0.1.4 without moving a line of this.
 reset_case
 LIFE_PATH="$SHIM:$NO_HOST_FLOCK_BIN" capture restart --all
 t hostjob-no-flock-refuses 1 "$RC"
