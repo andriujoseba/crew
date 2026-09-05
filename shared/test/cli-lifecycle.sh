@@ -429,6 +429,11 @@ t hostcron-no-flock-in-any-line 0 \
   "$(printf '%s\n' "$host_cron_lines" | grep -c 'flock' || true)"
 t hostcron-no-redirect-in-any-line 0 \
   "$(printf '%s\n' "$host_cron_lines" | grep -c '[>|]' || true)"
+# This one keeps its literal spaces and its narrow fields on purpose, and the
+# asymmetry with the reset pattern below is the point: it asserts a line is
+# PRESENT, so a stricter read can only turn it red. The reset assertions assert
+# an ABSENCE, where every shape the pattern does not know is a silent pass —
+# which is why they were widened to cron's real separator and this was not.
 t hostcron-daily-line-is-restart-all 1 \
   "$(printf '%s\n' "$host_cron_lines" | grep -cE '^[0-9]+ [0-9]+ \* \* \* .*crew restart --all$' || true)"
 # #678 — THE WEEKLY RESET IS DEFERRED TO 0.1.4, AND THE ABSENCE IS THE
@@ -453,10 +458,26 @@ t hostcron-daily-line-is-restart-all 1 \
 # followed by `crew reset` — which this file's own deferral block very nearly
 # is — match as a cron entry. Fields 4 and 5 admit names because cron does
 # (`0 5 * * SUN`), and no sentence opens with two numbers and a star.
+#
+# THE SEPARATOR IS BLANK, NOT SPACE, and the entry may be indented. cron
+# splits fields on runs of spaces OR TABS, so a literal ` +' let
+# `# @weekly<TAB>… crew reset --all` (@codex-bot-andresmgsl, #683) and
+# `#<TAB>10<TAB>5<TAB>*<TAB>*<TAB>0<TAB>… crew reset --all`
+# (@claude-bot-andresmgsl, #683) past this pattern entirely — 141/0, nothing
+# died, so the weekly reset was one uncomment away with the guard green. Both
+# branches take [[:blank:]]+, including the separator after an @-special, and
+# `^[[:blank:]]*' admits the indented entry cron also accepts. Widening the
+# separator does not widen what counts as a schedule: [[:blank:]] is what was
+# already meant by a space, so the numeric-fields reasoning above is untouched
+# and the file's own prose still does not match.
 cron_num='[0-9*][0-9,*/-]*'
 cron_named='[0-9A-Za-z*][0-9A-Za-z,*/-]*'
 cron_at='@(reboot|yearly|annually|monthly|weekly|daily|midnight|hourly)'
-cron_entry="^($cron_num +$cron_num +$cron_num +$cron_named +$cron_named +|$cron_at +).*crew reset"
+# The braces are required, not style: `$cron_num[[:blank:]]' reads as an array
+# subscript to shellcheck, which is SC1087 at ERROR severity and reds ci-shell.
+cron_five="${cron_num}[[:blank:]]+${cron_num}[[:blank:]]+${cron_num}[[:blank:]]+"
+cron_five="${cron_five}${cron_named}[[:blank:]]+${cron_named}[[:blank:]]+"
+cron_entry="^[[:blank:]]*(${cron_five}|${cron_at}[[:blank:]]+).*crew reset"
 # Read over the job lines, by the shape of a cron entry rather than by two
 # leading integers: `*/10 5 * * 0 … crew reset --all` is a reset job line, and
 # an `^[0-9]+ [0-9]+` pattern let it through while the assertion's NAME claimed
