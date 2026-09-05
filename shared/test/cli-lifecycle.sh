@@ -470,6 +470,14 @@ t hostcron-daily-line-is-restart-all 1 \
 # separator does not widen what counts as a schedule: [[:blank:]] is what was
 # already meant by a space, so the numeric-fields reasoning above is untouched
 # and the file's own prose still does not match.
+#
+# AND THE SAME IS TRUE ONE TOKEN TO THE RIGHT. The command is split on blanks
+# by the shell exactly as the fields are by cron, so while the tail read a
+# literal `crew reset' the widening stopped at the schedule and
+# `# 10 5 * * 0 … crew<TAB>reset --all` was still 141/0 — nothing died, the
+# same one-uncomment-from-live hole in a different position
+# (@claude-bot-andresmgsl, #683). `crew[[:blank:]]+reset' closes it. No braces
+# here: no parameter expansion precedes the bracket, so SC1087 does not arise.
 cron_num='[0-9*][0-9,*/-]*'
 cron_named='[0-9A-Za-z*][0-9A-Za-z,*/-]*'
 cron_at='@(reboot|yearly|annually|monthly|weekly|daily|midnight|hourly)'
@@ -477,7 +485,7 @@ cron_at='@(reboot|yearly|annually|monthly|weekly|daily|midnight|hourly)'
 # subscript to shellcheck, which is SC1087 at ERROR severity and reds ci-shell.
 cron_five="${cron_num}[[:blank:]]+${cron_num}[[:blank:]]+${cron_num}[[:blank:]]+"
 cron_five="${cron_five}${cron_named}[[:blank:]]+${cron_named}[[:blank:]]+"
-cron_entry="^[[:blank:]]*(${cron_five}|${cron_at}[[:blank:]]+).*crew reset"
+cron_entry="^[[:blank:]]*(${cron_five}|${cron_at}[[:blank:]]+).*crew[[:blank:]]+reset"
 # Read over the job lines, by the shape of a cron entry rather than by two
 # leading integers: `*/10 5 * * 0 … crew reset --all` is a reset job line, and
 # an `^[0-9]+ [0-9]+` pattern let it through while the assertion's NAME claimed
