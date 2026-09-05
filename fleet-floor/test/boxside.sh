@@ -211,6 +211,11 @@ BS_VITALS_NEW="$BS_VITALS_NEW finding=swap-configured-inactive:configured_mb=819
   printf '%s\n' "$BS_VITALS_NEW"
   echo "$BS_NOW heavy-duty/rig: build duty (ready unclaimed=1, whole rounds owed=0)"; } \
   >> "$BS_H/duty/duty.log"
+# Keep the newest record outside the transported 600-line tail. Binary safety
+# must not turn the whole-file selection rule into a cheaper, incomplete scan.
+for BS_FILLER in $(seq 1 601); do
+  printf 'fixture noise %s\n' "$BS_FILLER"
+done >> "$BS_H/duty/duty.log"
 
 # VERBATIM, and the NEWEST. Byte-for-byte equality is the assertion, not "it
 # contains the fields": a probe that reformatted the line would put the floor
