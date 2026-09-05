@@ -501,8 +501,18 @@ t hostcron-schedules-no-reset-job-line 0 \
 # and the verb is still available on demand — so what is banned is a comment
 # whose text is a cron ENTRY — a schedule prefix and the reset behind it, in
 # either of the forms cron accepts.
+#
+# AND THE MARKERS REPEAT. `#+' strips one RUN of them, so `# # 10 5 * * 0 …
+# crew reset --all' left a `#' standing in front of the schedule fields, where
+# `cron_entry''s `^[[:blank:]]*' cannot reach it — 141/0, nothing died, the
+# same one-uncomment-from-live shape two keystrokes further out
+# (@claude-bot-andresmgsl, #683; criterion 3, amended by triage 2026-09-05).
+# `([[:space:]]*#+)+' strips every run and the whitespace between them, which
+# is what the assertion's name has claimed all along. It cannot over-reach: the
+# group only repeats where what follows a marker run is whitespace and more
+# markers, so a comment that merely NAMES the verb is untouched.
 t hostcron-has-no-commented-out-reset-job-line 0 \
-  "$(sed -E 's/^[[:space:]]*#+[[:space:]]*//' "$HOST_CRONTAB" \
+  "$(sed -E 's/^([[:space:]]*#+)+[[:space:]]*//' "$HOST_CRONTAB" \
      | grep -cE "$cron_entry" || true)"
 # The deferral is only reversible on purpose if the file says where the
 # argument lives. D2 requires the comment block to name this issue and the
@@ -680,8 +690,12 @@ t hostjob-rotate-contender-rotates-nothing \
   'rc=4 marker=1 rotated=0 skip=1' "$r1"
 
 # A lock that cannot be taken is not a lock. Without flock on PATH the verb
-# REFUSES rather than running unlocked — the fail-open here is a weekly reset
-# rolling a fleet back underneath a restart that is mid-cycle.
+# REFUSES rather than running unlocked — the fail-open here is an on-demand
+# `crew reset --all` rolling a fleet back underneath a restart that is
+# mid-cycle. The LOCK is what this guards and this merge does not touch it:
+# both verbs still contend for it. What changed is only who calls the reset —
+# an operator at a prompt rather than a weekly cron entry (#678), and #328
+# returns the schedule on 0.1.4 without moving a line of this.
 reset_case
 LIFE_PATH="$SHIM:$NO_HOST_FLOCK_BIN" capture restart --all
 t hostjob-no-flock-refuses 1 "$RC"

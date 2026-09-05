@@ -216,8 +216,8 @@ still runs on demand — and it is also what has to stay true before the weekly
 line can come back on `0.1.4`.
 
 A restore to a checkpoint cut **before** the last `crew upgrade` is a silent
-engine downgrade of the whole fleet, with nothing red anywhere — and
-unattended, on a schedule, it is that every week. Every verb that installs an
+engine downgrade of the whole fleet, with nothing red anywhere — and on a
+schedule it would be that every week, which is the shape `0.1.4` restores. Every verb that installs an
 engine — `crew hire`, `crew up`,
 `crew upgrade` — marks the checkpoint stale before installing, and the reset
 refuses any box whose mark is set:

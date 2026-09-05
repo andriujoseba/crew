@@ -1350,17 +1350,21 @@ t reapnow-does-not-read-the-stamp 0 \
 
 # --- #590 D4: THE WEEKLY LINE INHERITS THIS REFUSAL AND MUST NOT WEAKEN IT ---
 #
-# Everything above proves the interlock refuses. What the schedule adds is that
-# nobody is watching when it does, so the refusal has to survive into the host
-# job log intact — the word, the two versions, and the repair — and the run has
-# to end there rather than doing something else instead. These cases live in
-# THIS suite and not in cli-lifecycle.sh because the checkpoint rig is here;
-# duplicating it to assert a `crew reset` contract would give the fleet two
-# fixtures of one thing that could drift apart.
+# Everything above proves the interlock refuses. What a FLEET-WIDE run adds is
+# that nobody is watching each box while it goes, so the refusal has to survive
+# into the host job log intact — the word, the two versions, and the repair —
+# and the run has to end there rather than doing something else instead. These
+# cases live in THIS suite and not in cli-lifecycle.sh because the checkpoint
+# rig is here; duplicating it to assert a `crew reset` contract would give the
+# fleet two fixtures of one thing that could drift apart.
 #
-# THE SCHEDULED SHAPE, `reset --all`, deliberately: `--force` does not exist on
-# this path and the weekly line passes no flag that could stand in for one, so
-# the fixture drives exactly what cron will.
+# THE UNATTENDED SHAPE, `reset --all`, deliberately: `--force` does not exist on
+# this path and no caller passes a flag that could stand in for one, so the
+# fixture drives exactly what an operator's fleet-wide reset does. #678 defers
+# the weekly cron entry to 0.1.4 (#328), so today that caller is a prompt and
+# not a schedule — which changes who types it, not one byte of what it runs, so
+# this fixture is the right shape under both and needs no rework when #328
+# lands.
 reset_case
 rm -f "$HOSTLOG"
 arm alpha
@@ -1398,7 +1402,7 @@ t reset-weekly-refusal-is-the-runbooks-sample \
 t reset-weekly-refusal-restores-nothing-for-that-box 0 "$(calls_of 'restore alpha')"
 # NO FALLBACK LABEL. `bootstrapped` and `pristine` both exist on a real box and
 # both would "work"; either would return a creds-free, unhired box and read as
-# a successful weekly maintenance. The assertion is over every restore call the
+# a successful fleet-wide reset. The assertion is over every restore call the
 # run made, not over alpha's, because a fallback would arrive as a second call.
 t reset-weekly-refusal-restores-no-other-label 0 \
   "$(grep -cE '^restore .*(bootstrapped|pristine)' "$STATE/calls" || true)"
@@ -1406,8 +1410,8 @@ t reset-weekly-refusal-restores-no-other-label 0 \
 # what makes the refusal a per-box outcome rather than an aborted run.
 t reset-weekly-refusal-does-not-abort-the-run 1 "$(calls_of 'restore beta armed')"
 
-# THE LOG IS THE OPERATOR'S ONLY SURFACE HERE, because the cron line carries no
-# redirect and nobody read Sunday's mail. The refusal, its repair and the
+# THE LOG IS THE OPERATOR'S ONLY SURFACE HERE, because a fleet-wide run prints
+# per-box detail nobody reads box by box. The refusal, its repair and the
 # boundary must all be in it.
 case "$(cat "$HOSTLOG" 2>/dev/null || true)" in
   *'reset run start'*'alpha: REFUSED'*'Repair with: crew reset --cut alpha'*'reset run end: a box FAILED or was REFUSED (exit 1)'*) r1=logged ;;
@@ -1415,9 +1419,11 @@ case "$(cat "$HOSTLOG" 2>/dev/null || true)" in
 esac
 t reset-weekly-refusal-reaches-the-job-log logged "$r1"
 
-# The repair, driven: a re-cut clears the mark and the next weekly run restores
-# the box it refused. This is the ordering rule shared/docs/host-maintenance.md
-# states, executed rather than asserted in prose.
+# The repair, driven: a re-cut clears the mark and the next `reset --all`
+# restores the box it refused. This is the ordering rule
+# shared/docs/host-maintenance.md states, executed rather than asserted in
+# prose — and the rule is now anchored to the next RESET rather than to a
+# deadline, because #678 leaves nothing scheduling one.
 : >"$STATE/calls"
 capture reset --cut alpha
 : >"$STATE/calls"
