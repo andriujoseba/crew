@@ -543,15 +543,21 @@ kimi_resume_run() ( # kimi_resume_run normal|missing|unreadable|larger
   # shellcheck disable=SC2030  # every mode owns an isolated artifact root
   KIMI_SHARE_DIR="$udir/share"
   export KIMI_RESUME_ARGV KIMI_RESUME_COUNT KIMI_RESUME_MODE KIMI_SHARE_DIR
-  run_session build "fixture/kimi-$mode" "$SHARED/.." 1 'first prompt' || true
-  first_return=$?
+  if run_session build "fixture/kimi-$mode" "$SHARED/.." 1 'first prompt'; then
+    first_return=0
+  else
+    first_return=$?
+  fi
   wire="$(find "$KIMI_SHARE_DIR/sessions" -type f -name wire.jsonl -print -quit)"
   case "$mode" in
     missing) rm -f "$wire" ;;
     unreadable) chmod 000 "$wire" ;;
   esac
-  run_session build "fixture/kimi-$mode" "$SHARED/.." 5 'second prompt' || true
-  second_return=$?
+  if run_session build "fixture/kimi-$mode" "$SHARED/.." 5 'second prompt'; then
+    second_return=0
+  else
+    second_return=$?
+  fi
   printf '%s\n%s|%s\n' '--returns--' "$first_return" "$second_return"
   printf '%s\n' '--argv--'
   cat "$KIMI_RESUME_ARGV"
@@ -639,11 +645,33 @@ kimi_direct() ( # kimi_direct SID
 kimi_resumed_direct() ( # kimi_resumed_direct SID
   # shellcheck disable=SC1091
   source "$SHARED/conf/agents/kimi.conf"
-  # shellcheck disable=SC2031  # the run harness above is a sibling subshell
+  # shellcheck disable=SC2030,SC2031  # each helper owns its artifact root
   export KIMI_SHARE_DIR="$KIMI_SHARE_FIXTURE"
   bot_cli_resume_args "$1"
   bot_cli_usage '' '' '' "$1"
 )
+KIMI_TWO_RUN_FIXTURE="$TMP/kimi-two-run-share"
+KIMI_TWO_RUN_SID='eeeeeeee-0000-4000-8000-000000000005'
+mkdir -p "$KIMI_TWO_RUN_FIXTURE/sessions/hash-one/$KIMI_TWO_RUN_SID"
+printf '%s\n' \
+  '{"type": "metadata", "protocol_version": "1.10"}' \
+  '{"message":{"type":"StatusUpdate","payload":{"token_usage":{"input_other":100,"output":10,"input_cache_read":20,"input_cache_creation":30}}}}' \
+  '{"message":{"type":"StatusUpdate","payload":{"token_usage":{"input_other":200,"output":20,"input_cache_read":40,"input_cache_creation":60}}}}' \
+  >"$KIMI_TWO_RUN_FIXTURE/sessions/hash-one/$KIMI_TWO_RUN_SID/wire.jsonl"
+kimi_two_run_direct() (
+  # shellcheck disable=SC1091
+  source "$SHARED/conf/agents/kimi.conf"
+  # shellcheck disable=SC2030,SC2031  # each helper owns its artifact root
+  export KIMI_SHARE_DIR="$KIMI_TWO_RUN_FIXTURE"
+  bot_cli_resume_args "$KIMI_TWO_RUN_SID"
+  printf '%s\n' \
+    '{"message":{"type":"StatusUpdate","payload":{"token_usage":{"input_other":7,"output":3,"input_cache_read":5,"input_cache_creation":2}}}}' \
+    >>"$KIMI_TWO_RUN_FIXTURE/sessions/hash-one/$KIMI_TWO_RUN_SID/wire.jsonl"
+  bot_cli_usage '' '' '' "$KIMI_TWO_RUN_SID"
+)
+t kimi-two-run-fixture-reports-only-the-resumed-turn '7|3|5|2' \
+  "$(kimi_two_run_direct \
+    | jq -r '[.input_tokens, .output_tokens, .cache_read_input_tokens, .cache_creation_input_tokens] | join("|")')"
 t kimi-profile-reads-the-artifact-by-id '11|22|33|44' \
   "$(kimi_direct aaaaaaaa-0000-4000-8000-000000000001 \
     | jq -r '[.input_tokens, .output_tokens, .cache_read_input_tokens, .cache_creation_input_tokens] | join("|")')"
@@ -696,6 +724,20 @@ t kimi-concurrent-sessions-one-work-dir-each-carry-their-own '11|22::91|92' \
 mkdir -p "$KIMI_SHARE_FIXTURE/sessions/hash-two/aaaaaaaa-0000-4000-8000-000000000001"
 cp "$KIMI_SHARE_FIXTURE/sessions/hash-one/aaaaaaaa-0000-4000-8000-000000000001/wire.jsonl" \
   "$KIMI_SHARE_FIXTURE/sessions/hash-two/aaaaaaaa-0000-4000-8000-000000000001/wire.jsonl"
+kimi_resumed_two_match_direct() (
+  local wire sid='aaaaaaaa-0000-4000-8000-000000000001'
+  # shellcheck disable=SC1091
+  source "$SHARED/conf/agents/kimi.conf"
+  # shellcheck disable=SC2030,SC2031  # each helper owns its artifact root
+  export KIMI_SHARE_DIR="$KIMI_SHARE_FIXTURE"
+  bot_cli_resume_args "$sid"
+  for wire in "$KIMI_SHARE_FIXTURE"/sessions/*/"$sid"/wire.jsonl; do
+    printf '%s\n' \
+      '{"message":{"type":"StatusUpdate","payload":{"token_usage":{"input_other":7,"output":3,"input_cache_read":5,"input_cache_creation":2}}}}' \
+      >>"$wire"
+  done
+  bot_cli_usage '' '' '' "$sid"
+)
 t kimi-profile-refuses-one-id-under-two-work-dirs 0 \
   "$(kimi_direct aaaaaaaa-0000-4000-8000-000000000001 | wc -l)"
 t kimi-resumed-profile-refuses-unknown-as-a-path-component 0 \
@@ -707,7 +749,7 @@ t kimi-resumed-profile-refuses-dotdot-as-an-id 0 \
 t kimi-resumed-profile-refuses-an-unsafe-character 0 \
   "$(kimi_resumed_direct 'bad/id' | wc -l)"
 t kimi-resumed-profile-refuses-one-id-under-two-work-dirs 0 \
-  "$(kimi_resumed_direct aaaaaaaa-0000-4000-8000-000000000001 | wc -l)"
+  "$(kimi_resumed_two_match_direct | wc -l)"
 # The artifact root is $KIMI_SHARE_DIR when set and ~/.kimi otherwise, and it
 # is NOT the credential home: a box whose credential lives in ~/.kimi-code
 # still writes its sessions under ~/.kimi.
