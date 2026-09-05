@@ -109,7 +109,8 @@ platform_box_version() {
 }
 
 # platform_guest_rig_versions — one `<box>\t<version>` row per box that answers,
-# read from the provenance manifest rig writes inside the guest (crew#220):
+# read from the provenance file rig writes inside the guest, /etc/rig/manifest
+# (crew#220):
 #
 #     /etc/rig/manifest   schema=1
 #                         bootstrapped_by=0.4.0
@@ -119,8 +120,8 @@ platform_box_version() {
 # on a box nothing has re-converged, and where they differ the converging one is
 # the rig whose behaviour the box now carries.
 #
-# The version is empty for a box that answered with no manifest — a guest rig
-# never converged — and such a box still emits a row, because "answered, no rig"
+# The version is empty for a box that answered with no /etc/rig/manifest — a
+# guest rig never converged — and it still emits a row, because "answered, no rig"
 # and "did not answer" are different findings and collapsing them is exactly the
 # defect crew#220's rule 5 exists to prevent. A box that does not answer at all
 # emits nothing: crew knows nothing about it, and a platform report is not the
@@ -191,7 +192,7 @@ report_platform() { # CREW_VERSION
 
 # platform_rig_summary ROWS — the rig half of the found/wanted line. rig is a
 # per-guest fact and there are N guests, so "found" is the SET, deduplicated and
-# in a stable order; a box that answered with no manifest contributes `none`.
+# in a stable order; a box answering with no /etc/rig/manifest contributes `none`.
 # `no boxes` where there is no guest to look in at all — which is a statement
 # about the fleet and not about rig, and is why it is not a finding.
 platform_rig_summary() { # ROWS
