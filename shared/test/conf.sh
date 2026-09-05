@@ -540,6 +540,7 @@ kimi_resume_run() ( # kimi_resume_run normal|missing|unreadable|larger
   KIMI_RESUME_ARGV="$udir/argv"
   KIMI_RESUME_COUNT="$udir/count"
   KIMI_RESUME_MODE="$mode"
+  # shellcheck disable=SC2030  # every mode owns an isolated artifact root
   KIMI_SHARE_DIR="$udir/share"
   export KIMI_RESUME_ARGV KIMI_RESUME_COUNT KIMI_RESUME_MODE KIMI_SHARE_DIR
   run_session build "fixture/kimi-$mode" "$SHARED/.." 1 'first prompt' || true
@@ -631,7 +632,7 @@ printf '%s\n' \
 kimi_direct() ( # kimi_direct SID
   # shellcheck disable=SC1091
   source "$SHARED/conf/agents/kimi.conf"
-  # shellcheck disable=SC2031  # the run harness above is a sibling subshell
+  # shellcheck disable=SC2030,SC2031  # the run harness above is a sibling subshell
   export KIMI_SHARE_DIR="$KIMI_SHARE_FIXTURE"
   bot_cli_usage '' '' '' "$1"
 )
