@@ -990,6 +990,34 @@ t new-builder-mint-is-blank-at-its-own-figures \
 # it needs no operator configuration, so the check can be exercised without the
 # fixture standing up a whole configured host to reach it.
 
+# ONE declaration, and the criterion read literally (D11): the two floor values
+# appear exactly twice in the tree's executable sources — the two lines that
+# declare them — and nowhere else.
+#
+# NON-COMMENT LINES ONLY, and the line is drawn deliberately. cli/crew's probes
+# still explain in prose that box 0.10.0 is when `down --force` and clone sizing
+# ARRIVED, and that sentence is a different statement from the floor: it stays
+# true when the floor moves, because it is about box's history and not about
+# what crew requires. What D11 removes is a second live source of the number,
+# and a comment is not one.
+#
+# The literals come from the declaration rather than being spelled here, so a
+# bump does not have to remember this fixture — and so this guard cannot be the
+# third copy of the number it exists to forbid.
+PLATFORM_DECL_HITS="$(
+  cd "$ROOT" || exit 1
+  for f in install.sh dist/*.sh shared/bin/*.sh shared/lib/*.sh \
+           shared/lib/common/*.sh shared/install.sh cli/crew drill/*.sh \
+           shared/conf/fleet.defaults.conf shared/conf/agents/*.conf \
+           shared/conf/roles/*.conf; do
+    [ -f "$f" ] || continue
+    grep -vE '^[[:space:]]*#' "$f" 2>/dev/null \
+      | grep -cE "(${CREW_PLATFORM_BOX_MIN//./\\.}|${CREW_PLATFORM_RIG_MIN//./\\.})" \
+      | sed "s|^|$f |"
+  done | awk '$2 > 0 { print $1 ":" $2 }'
+)"
+t platform-declared-exactly-once "shared/lib/platform.sh:2" "$PLATFORM_DECL_HITS"
+
 # A host AT the floor is silent. Not "quiet", not "one reassuring line": no
 # output at all, because a check that speaks on a healthy fleet is a check
 # operators learn to scroll past.
