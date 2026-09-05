@@ -1141,4 +1141,43 @@ t platform-clone-argv-is-byte-identical \
   "$(grep '^new ' "$STATE/calls")"
 t platform-clone-opens-no-root-door 0 "$(grep -c '^root ' "$STATE/calls" || true)"
 
+# D12's other half, and the criterion is a COMPARISON rather than two separate
+# readings: `crew up` and the installer both report a below-floor box, and
+# their messages are IDENTICAL. So both surfaces are driven here, against the
+# same stub host at the same below-floor version, and the two blocks are
+# diffed. Asserting each one separately against a pinned string would pass on
+# two reporters that had drifted into two wordings a fixture happened to have
+# been updated for twice.
+#
+# The installer runs for real and offline, out of this tree into scratch — the
+# same thing shared/test/install-lifecycle.sh does — because the finding is
+# printed by a `report_platform` call in install.sh's own body, and a source
+# grep would not notice the day it stopped being reached.
+platform_block() { # TEXT — the report, from its first line to its last
+  awk '/platform check/,/built and tested against/' <<<"${1:-}"
+}
+
+reset_case
+LIFE_CONF="$CONF_NEW" LIFE_BOX_VERSION=0.9.1 capture up --dry-run
+up_block="$(platform_block "$OUT")"
+
+INSTALL_HOME="$TMP/install-home"
+mkdir -p "$INSTALL_HOME"
+install_out="$(
+  env HOME="$INSTALL_HOME" XDG_CONFIG_HOME="$INSTALL_HOME/xdg" CREW_YES=1 \
+    CREW_HOME="$INSTALL_HOME/share" CREW_BIN="$INSTALL_HOME/bin" \
+    LIFE_STATE="$STATE" LIFE_BOX_VERSION=0.9.1 LIFE_GUEST_RIG=0.4.0 \
+    LIFE_BOX_LIST="alpha beta offroster" \
+    PATH="$SHIM:$PATH" bash "$ROOT/install.sh" 2>&1 || true
+)"
+install_block="$(platform_block "$install_out")"
+t platform-installer-reports-a-below-floor-box 1 \
+  "$(grep -c 'platform check' <<<"$install_out" || true)"
+t platform-installer-and-up-report-identically "$up_block" "$install_block"
+# The installer still installs. D14 is not a rule about `crew` alone: a floor
+# that refused an install would be the same conversion of a report into a
+# refusal, at the surface where it costs the most.
+t platform-installer-still-finishes 1 \
+  "$(grep -c 'done (' <<<"$install_out" || true)"
+
 suite_finish
