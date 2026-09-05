@@ -320,6 +320,10 @@ sid_commit() {
 #   both      a profile that can pin and resume — `claude`'s shape
 #   claude    the shipped claude profile, including both classifiers
 #   pin-only  a CLI that can pin an id and cannot continue one (D6.6)
+#   observed  a CLI that emits an id after launch and resumes through a
+#             whole-command hook, Codex's #673 shape
+#   observed-missing / observed-malformed
+#             provider observations that must fail closed
 #   none      a profile with neither hook — the pre-#538 lane, unchanged
 #   refusing  hooks that are defined and render nothing, the contract
 #             `bot_cli_structured_cmd` already has
@@ -355,6 +359,21 @@ sid_run() (
       bot_cli_resume_args() { BOT_CLI_RESUME_ARGS=(--resume "$1"); } ;;
     pin-only)
       bot_cli_session_id_args() { BOT_CLI_SESSION_ID_ARGS=(--session-id "$1"); } ;;
+    observed | observed-missing | observed-malformed)
+      bot_cli_observed_session_id() {
+        case "$hooks" in
+          observed) printf '%s' '01a06ef6-ca2a-7fd0-a487-25913257471d' ;;
+          observed-malformed) printf '%s' '------------------------------------' ;;
+          observed-missing) return 1 ;;
+        esac
+      }
+      bot_cli_resume_cmd() {
+        local sid="${!#}"
+        local -a base=("${@:1:$#-1}")
+        local last=$(( ${#base[@]} - 1 ))
+        [ "$last" -ge 0 ] && [ "${base[last]}" = -p ] || return 1
+        BOT_CLI_RESUME_CMD=("${base[@]:0:last}" --resume "$sid" -p)
+      } ;;
     refusing)
       bot_cli_session_id_args() { BOT_CLI_SESSION_ID_ARGS=(); return 1; }
       bot_cli_resume_args() { BOT_CLI_RESUME_ARGS=(); return 1; } ;;
@@ -457,6 +476,44 @@ sid_refusing="$(sid_run refusing fixture/refusing 5 reply refusing)"
 t sid-refusing-hook-reports-unknown unknown "$(sid_shape "$(sid_of refusing START)")"
 t sid-refusing-hook-pins-nothing 0 \
   "$(sed -n '/^--argv--$/,$p' <<<"$sid_refusing" | grep -c -- '--session-id' || true)"
+
+# Codex cannot accept an engine-minted id on a fresh invocation. Its observed
+# id therefore belongs in the resume stub but not on either fresh record.
+sid_observed_fresh="$(sid_run observed-fresh fixture/observed-fresh 5 reply observed)"
+t sid-observed-fresh-start-stays-unknown unknown \
+  "$(sid_of observed-fresh START)"
+t sid-observed-fresh-end-stays-unknown unknown \
+  "$(sid_of observed-fresh END)"
+t sid-observed-fresh-invocation-is-not-pinned 0 \
+  "$(sed -n '/^--argv--$/,$p' <<<"$sid_observed_fresh" \
+    | grep -Ec -- '--session-id|--resume' || true)"
+
+sid_run observed fixture/observed 1 talk-hang observed >/dev/null
+SID_OBSERVED_STUB="$(sid_stub observed fixture_observed)"
+SID_OBSERVED_KILLED='01a06ef6-ca2a-7fd0-a487-25913257471d'
+t sid-observed-timeout-writes-a-stub present \
+  "$([ -s "$SID_OBSERVED_STUB" ] && printf present || printf MISSING)"
+t sid-observed-stub-carries-provider-id "$SID_OBSERVED_KILLED" \
+  "$(sid_stub_field "$SID_OBSERVED_STUB" sid)"
+sid_observed_resumed="$(sid_run observed fixture/observed 5 reply observed)"
+t sid-observed-whole-command-resumes-the-killed-thread same \
+  "$(sid_same \
+    "$(sid_argv_flag "$sid_observed_resumed" --resume)" "$SID_OBSERVED_KILLED")"
+t sid-observed-resume-start-carries-provider-id "$SID_OBSERVED_KILLED" \
+  "$(sid_of observed START)"
+t sid-observed-resume-end-carries-provider-id "$SID_OBSERVED_KILLED" \
+  "$(sid_of observed END)"
+t sid-observed-resume-consumes-its-stub gone \
+  "$([ -e "$SID_OBSERVED_STUB" ] && printf PRESENT || printf gone)"
+
+sid_run observed-missing fixture/observed-missing 1 talk-hang observed-missing >/dev/null
+t sid-missing-observed-id-writes-no-stub gone \
+  "$([ -e "$(sid_stub observed-missing fixture_observed-missing)" ] \
+    && printf PRESENT || printf gone)"
+sid_run observed-malformed fixture/observed-malformed 1 talk-hang observed-malformed >/dev/null
+t sid-malformed-observed-id-writes-no-stub gone \
+  "$([ -e "$(sid_stub observed-malformed fixture_observed-malformed)" ] \
+    && printf PRESENT || printf gone)"
 
 # --- the stub: written on 124, and on nothing else (D5) ------------------
 sid_run timeout fixture/tmo 1 talk-hang both >/dev/null

@@ -268,7 +268,9 @@ _SESSION_RESUME_OUTCOME=""
 # launch and therefore carries it on both records in the usual way (#673).
 _SESSION_OBSERVED_SID=""
 
-# _session_sid_valid SID — a v4-shaped UUID and nothing else. The shape is
+# _session_sid_valid SID — a UUID-shaped safe token and nothing else. The
+# version nibble is deliberately unconstrained: the kernel mint observed by
+# #538 is v4, while Codex 0.146.0 emits a v7-shaped thread id (#673). The shape is
 # checked with a glob and the alphabet with a substitution, so no `[[ =~ ]]`
 # and no fork. Two guards rather than one, and THE SECOND READS ONLY THE
 # POSITIONS THE FIRST LEFT FREE: the glob fixes the length and pins a dash at
