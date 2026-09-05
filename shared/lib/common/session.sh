@@ -261,6 +261,13 @@ SESSION_RESUME_MAX_TRIES=1
 # so the resumed prompt can say why the predecessor stopped.
 _SESSION_RESUME_OUTCOME=""
 
+# Set after a fresh, unpinned dispatch when the profile can read the identity
+# its provider emitted. This id belongs only to the resume stub: it was not
+# knowable at SESSION START, so both records for that fresh dispatch continue
+# to say sid=unknown. A resumed dispatch reads the value from the stub before
+# launch and therefore carries it on both records in the usual way (#673).
+_SESSION_OBSERVED_SID=""
+
 # _session_sid_valid SID — a v4-shaped UUID and nothing else. The shape is
 # checked with a glob and the alphabet with a substitution, so no `[[ =~ ]]`
 # and no fork. Two guards rather than one, and THE SECOND READS ONLY THE
@@ -472,7 +479,7 @@ _session_resume_read() {
 #     previous session still runs puts two live sessions on one key, and that
 #     counter is the only thing that can see it. `unknown` is not zero;
 #  5  the try count is below SESSION_RESUME_MAX_TRIES;
-#  6  the profile defines `bot_cli_resume_args`.
+#  6  the profile defines a fragment or whole-command resume hook.
 #
 # THE STUB IS CONSUMED ON EVERY PATH, resume and refusal alike. A stub that
 # survived its own refusal would be re-read on the next dispatch against the
@@ -502,7 +509,10 @@ _session_resume_plan() {
   [ "$productive" = yes ] || return 0
   [ "$survivor_count" != unknown ] && [ "$survivor_count" -eq 0 ] || return 0
   [ "$try" -lt "$SESSION_RESUME_MAX_TRIES" ] || return 0
-  declare -F bot_cli_resume_args >/dev/null 2>&1 || return 0
+  if ! declare -F bot_cli_resume_cmd >/dev/null 2>&1 \
+      && ! declare -F bot_cli_resume_args >/dev/null 2>&1; then
+    return 0
+  fi
   _SESSION_SID="$sid"
   _SESSION_RESUMED=yes
   _SESSION_TRY=$((try + 1))
@@ -537,13 +547,23 @@ _session_splice_cli_args() {
 # a fresh id is minted, and the session that runs is an ordinary one.
 _session_identity() {
   local kind="$1" key="$2" dir="$3"
+  _SESSION_OBSERVED_SID=""
   _session_resume_plan "$kind" "$key" "$dir"
   if [ "$_SESSION_RESUMED" = yes ]; then
-    BOT_CLI_RESUME_ARGS=()
-    if bot_cli_resume_args "$_SESSION_SID" \
-        && [ "${#BOT_CLI_RESUME_ARGS[@]}" -gt 0 ]; then
-      _session_splice_cli_args "${BOT_CLI_RESUME_ARGS[@]}"
-      return 0
+    if declare -F bot_cli_resume_cmd >/dev/null 2>&1; then
+      BOT_CLI_RESUME_CMD=()
+      if bot_cli_resume_cmd "${_SESSION_CLI_CMD[@]}" "$_SESSION_SID" \
+          && [ "${#BOT_CLI_RESUME_CMD[@]}" -gt 0 ]; then
+        _SESSION_CLI_CMD=("${BOT_CLI_RESUME_CMD[@]}")
+        return 0
+      fi
+    else
+      BOT_CLI_RESUME_ARGS=()
+      if bot_cli_resume_args "$_SESSION_SID" \
+          && [ "${#BOT_CLI_RESUME_ARGS[@]}" -gt 0 ]; then
+        _session_splice_cli_args "${BOT_CLI_RESUME_ARGS[@]}"
+        return 0
+      fi
     fi
     _SESSION_SID=""
     _SESSION_RESUMED=no
@@ -568,6 +588,23 @@ _session_identity() {
   # nothing on disk, so claiming it on the record would be worse than saying
   # the engine cannot tell.
   _SESSION_SID=unknown
+  return 0
+}
+
+# _session_observe_identity STRUCTURED_LOG SESSION_DIR PROSE_LOG — let an
+# unpinned provider declare the identity it emitted after a fresh dispatch.
+# The profile owns the structured-record selection; the engine owns the final
+# safe-token validation. Missing, malformed, ambiguous and refusing answers
+# all collapse to no observed id and therefore no resume stub.
+_session_observe_identity() {
+  local observed=""
+  _SESSION_OBSERVED_SID=""
+  [ "$_SESSION_RESUMED" = no ] || return 0
+  declare -F bot_cli_session_id_args >/dev/null 2>&1 && return 0
+  declare -F bot_cli_observed_session_id >/dev/null 2>&1 || return 0
+  observed="$(bot_cli_observed_session_id "$1" "$2" "$3")" || observed=""
+  _session_sid_valid "$observed" || return 0
+  _SESSION_OBSERVED_SID="$observed"
   return 0
 }
 
@@ -615,7 +652,7 @@ _session_resume_admitted() { # _session_resume_admitted RC VERDICT
 # dance would buy the same outcome through a second mechanism.
 _session_resume_record() {
   local kind="$1" key="$2" dir="$3" rc="$4" wall="$5" logb="$6" survivor_count="$7"
-  local verdict="$8" acted="$9" slog="${10}" productive=no state
+  local verdict="$8" acted="$9" slog="${10}" productive=no state record_sid
   state="$(_session_resume_state "$kind" "$key")"
   # TIMEOUT keeps its 124 invariant. MEMORY instead requires only a dirty end:
   # its raw status varies with which kernel/timeout signal reached reap first.
@@ -626,7 +663,10 @@ _session_resume_record() {
   # An id the engine does not hold names no transcript, so a stub carrying it
   # could never satisfy D6 anyway. Refuse to write one rather than leave a file
   # whose only possible future is being discarded.
-  [ "$_SESSION_SID" != unknown ] || { rm -f "$state" 2>/dev/null || true; return 0; }
+  record_sid="$_SESSION_SID"
+  [ "$record_sid" != unknown ] || record_sid="$_SESSION_OBSERVED_SID"
+  _session_sid_valid "$record_sid" \
+    || { rm -f "$state" 2>/dev/null || true; return 0; }
   # `acted` is resolved through the active shipped profile before this call.
   # Only a positive classification earns a resume: `no` did no durable work,
   # and `unknown` includes the incident's real 15-byte `Execution error` body.
@@ -637,7 +677,7 @@ _session_resume_record() {
   fi
   case "$wall" in '' | *[!0-9]*) wall=0 ;; esac
   printf 'kind=%s\nkey=%s\nsid=%s\nhead=%s\nwall=%s\ntry=%s\nlog=%s\noutcome=%s\nproductive=%s\nleft=%s\n' \
-    "$kind" "$key" "$_SESSION_SID" "$(_session_head "$dir")" "$wall" \
+    "$kind" "$key" "$record_sid" "$(_session_head "$dir")" "$wall" \
     "$_SESSION_TRY" "$logb" "$verdict" "$productive" "$survivor_count" \
     >"$state" 2>/dev/null || true
   return 0
@@ -819,6 +859,10 @@ $prompt"
     bot_cli_structured_prose "$structured_log" >>"$slog" 2>/dev/null \
       || cat "$structured_log" >>"$slog"
   fi
+  # Fresh providers that cannot accept an engine-minted id may declare the id
+  # they emitted in their structured record. It is intentionally observed
+  # after dispatch and before the resume stub is considered (#673).
+  _session_observe_identity "$structured_log" "$dir" "$slog"
   local dur=$((SECONDS - start)) verdict=ok acted reply_tail peak_rss mem_hit log_bytes
   local usage_suffix pool_suffix sid_suffix
   sid_suffix="$(_session_sid_suffix)"
