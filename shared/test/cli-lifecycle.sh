@@ -1281,6 +1281,10 @@ t platform-installer-still-finishes 1 \
 FRESH_STATE="$TMP/state-fresh"
 FRESH_HOME="$TMP/install-home-fresh"
 mkdir -p "$FRESH_STATE" "$FRESH_HOME/xdg"
+# Created empty rather than left to the stub, so the read below is a count of
+# zero rows and not a read of a missing path — which is the same answer for a
+# different reason and compares unequal to every expectation.
+: >"$FRESH_STATE/calls"
 fresh_out="$(
   env HOME="$FRESH_HOME" XDG_CONFIG_HOME="$FRESH_HOME/xdg" CREW_YES=1 \
     CREW_HOME="$FRESH_HOME/share" CREW_BIN="$FRESH_HOME/bin" \
@@ -1293,11 +1297,8 @@ t platform-first-install-still-checks-the-host-half 1 \
   "$(grep -cF "box: 0.9.1 found, $CREW_PLATFORM_BOX_MIN wanted" <<<"$fresh_out" || true)"
 t platform-first-install-invents-no-rig-verdict 1 \
   "$(grep -cF 'rig: no boxes found' <<<"$fresh_out" || true)"
-# `cat` first, so a calls file the installer never created reads as 0 rather
-# than as grep's empty output on a missing path — which compares unequal to
-# every expectation and would fail for the wrong reason.
 t platform-first-install-opens-no-guest 0 \
-  "$(cat "$FRESH_STATE/calls" 2>/dev/null | grep -c '^rig-probe ' || true)"
+  "$(grep -c '^rig-probe ' "$FRESH_STATE/calls" || true)"
 t platform-first-install-still-finishes 1 \
   "$(grep -c 'done (' <<<"$fresh_out" || true)"
 
