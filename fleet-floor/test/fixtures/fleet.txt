@@ -27,6 +27,9 @@ ff-nothired    running  nothired
 ff-noauth      running  noauth
 ff-hostile     running  hostile
 ff-garbage     running  garbage
+# An unclean stop left NUL bytes between an old run and the current one. The
+# current timestamp, credentials, session and vitals must all survive it.
+ff-binary-log  running  binary-log
 ff-absent      absent   working
 ff-wedged      running  wedged
 ff-firstrun    running  firstrun

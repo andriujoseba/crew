@@ -24,6 +24,7 @@ ff-nothired   kimi    builder
 ff-noauth     codex   triage
 ff-hostile    claude  reviewer
 ff-garbage    grok    triage
+ff-binary-log claude  builder
 ff-absent     kimi    triage
 ff-wedged     codex   builder
 ff-firstrun   claude  builder

@@ -237,6 +237,16 @@ t "suppressed overlap: active session remains working" working \
 t "suppressed overlap: stuck run remains working" working \
   "$(uf ff-supp-stuck "u['state']")"
 t "state: cron silent -> offline"  offline  "$(uf ff-silent  "u['state']")"
+t "binary log: a fresh tick after NUL bytes stays healthy" working \
+  "$(uf ff-binary-log "u['state']")"
+t "binary log: cron age follows the fresh trailing line" 30 \
+  "$(uf ff-binary-log "u['cron']['age']")"
+t "binary log: GitHub flow stays current" flowing \
+  "$(uf ff-binary-log "u['gh']")"
+t "binary log: vendor flow stays current" flowing \
+  "$(uf ff-binary-log "u['vendor']")"
+t "binary log: displayed last tick follows the fresh trailing line" True \
+  "$(uf ff-binary-log "__import__('time').time() - __import__('datetime').datetime.strptime(u['cron']['last'], '%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=__import__('datetime').timezone.utc).timestamp() < 60")"
 t "clock: three-hours-behind healthy box is not silent" False "$(uf ff-skew-behind "u['state'] == 'offline'")"
 t "clock: three-hours-ahead healthy box is not silent"  False "$(uf ff-skew-ahead  "u['state'] == 'offline'")"
 t "clock: cron age comes from box-side tickage" 110 "$(uf ff-skew-behind "u['cron']['age']")"
@@ -1038,6 +1048,8 @@ t "vitals: a malformed series point is dropped, never coerced" 1 \
 
 # Published on the unit, through the real collector and the real probe path.
 t "vitals: a complete record reaches the unit"  2 "$(uf ff-working "u['vitals']['fields']['cores']")"
+t "vitals: a record after NUL bytes remains the newest" 2 \
+  "$(uf ff-binary-log "u['vitals']['fields']['cores']")"
 t "vitals: the swap PAIR reaches the unit, not one half of it" "0/8192" \
   "$(uf ff-working "'%s/%s' % (u['vitals']['fields']['swap_active_mb'], u['vitals']['fields']['swap_configured_mb'])")"
 t "vitals: the backfilled series reaches the unit" 3 "$(uf ff-working "len(u['vitals']['series'])")"
