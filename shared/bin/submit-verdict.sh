@@ -68,11 +68,35 @@ if [ "${#HEAD_SHA}" -ne 40 ]; then
 fi
 [ -s "$BODY_FILE" ] || { glog "body file '$BODY_FILE' missing or empty"; exit 1; }
 
-# Freeze the body: the retry must be byte-identical even if the caller's
-# file changes underneath us.
-FROZEN="$(mktemp)"
-trap 'rm -f "$FROZEN"' EXIT
-cp "$BODY_FILE" "$FROZEN"
+# Freeze the body on crew's duty volume: the retry must be byte-identical even
+# if the caller's file changes underneath us, and a full /tmp must not spend a
+# completed review. The write itself is the writability check (not [ -w ],
+# which cannot detect ENOSPC).
+FROZEN_DIR="$DUTY_DIR/.submit-verdict"
+FROZEN=""
+frozen_filesystem() {
+  df -P "$FROZEN_DIR" 2>/dev/null | tail -n 1 || printf 'unavailable'
+}
+freeze_failed() {
+  glog "cannot freeze caller body '$BODY_FILE' in store '$FROZEN_DIR' (filesystem: $(frozen_filesystem)); not contacting GitHub"
+  exit 1
+}
+cleanup_frozen() {  # <exit-status>
+  local rc="$1"
+  trap - EXIT INT TERM HUP
+  [ -z "$FROZEN" ] || rm -f -- "$FROZEN"
+  exit "$rc"
+}
+trap 'cleanup_frozen $?' EXIT
+trap 'cleanup_frozen 130' INT
+trap 'cleanup_frozen 143' TERM
+trap 'cleanup_frozen 129' HUP
+
+mkdir -p "$FROZEN_DIR" || freeze_failed
+if ! FROZEN="$(mktemp "$FROZEN_DIR/verdict.XXXXXX")"; then
+  freeze_failed
+fi
+cp "$BODY_FILE" "$FROZEN" || freeze_failed
 
 ME="$(gh api user --jq .login)"
 
@@ -177,7 +201,7 @@ while :; do
   fi
 
   if [ "$attempt" -ge 2 ]; then
-    glog "HARD FAIL: verdict on $REPO#$NUM did not land after $attempt attempts (last rc=$rc) — NOT submitting again; next tick re-detects"
+    glog "HARD FAIL: verdict on $REPO#$NUM did not land after $attempt attempts (last rc=$rc); caller body remains at '$BODY_FILE' — NOT submitting again; next tick re-detects"
     exit 1
   fi
   glog "attempt $attempt did not land (rc=$rc); retrying once with the identical body"
