@@ -193,6 +193,12 @@ platform_roster_names() { # [ROSTER_FILE]
 # which runs on these same two surfaces today; one slow idiom shared beats a
 # second faster one invented for the neighbour of the job it already does. The
 # roster scoping above is what keeps the bound to the boxes crew owns.
+#
+# WHY THIS RETURNS NOTHING IS A SEPARATE QUESTION FROM WHAT IT RETURNED, and
+# platform_guest_read_blocker below is where it is answered. "no boxes" and
+# "could not look" are different sentences, and this function cannot tell them
+# apart on its own: it emits rows, and an empty set of rows is what both look
+# like from the outside.
 platform_guest_rig_versions() { # [ROSTER_FILE]
   command -v box >/dev/null 2>&1 || return 0
   command -v jq >/dev/null 2>&1 || return 0
@@ -213,6 +219,26 @@ platform_guest_rig_versions() { # [ROSTER_FILE]
   done < <(box list --json 2>/dev/null | jq -r '.[].name' 2>/dev/null || true)
 }
 
+# platform_guest_read_blocker — empty when the guests CAN be read, whether or
+# not there turn out to be any; otherwise the short reason none of them was.
+#
+# "NO BOXES" AND "COULD NOT LOOK" ARE DIFFERENT ANSWERS (#679 round 2). Without
+# this, a host with a full fleet and no `jq` was told `rig: no boxes found` —
+# the fleet reported as empty because the reader could not be run. The two
+# blockers are facts about the HOST, not about the fleet: without `box` there is
+# no way to enumerate guests at all, and `box list --json` is JSON, so without
+# `jq` the enumeration cannot be parsed.
+#
+# NEITHER IS A FINDING, and this function deliberately produces none. A missing
+# box is already the box half's own finding, and a missing jq is the installer's
+# business rather than the platform floor's — crew degrades on it everywhere
+# else too. What was wrong was the WORDING of the found/wanted line, so that is
+# all this corrects.
+platform_guest_read_blocker() {
+  command -v box >/dev/null 2>&1 || { printf 'no box on this host\n'; return 0; }
+  command -v jq >/dev/null 2>&1 || { printf 'no jq on this host\n'; return 0; }
+}
+
 # report_platform CREW_VERSION — the whole check, in the one wording both
 # surfaces print (#679 D12). Silent and rc 0 when everything is at or above its
 # floor; otherwise one block on stderr naming all five figures (#679 D16).
@@ -228,9 +254,20 @@ platform_guest_rig_versions() { # [ROSTER_FILE]
 # messages" is a statement about the two surfaces on ONE host, and on one host
 # those two answers are the same fleet definition — which is why the fixture
 # that diffs them gives both the same one rather than only the verb.
+#
+# THAT IDENTITY HOLDS PER ENVIRONMENT, NOT PER LOGIN (#679 round 2, and the
+# limit is written down here rather than left to be rediscovered). Both surfaces
+# resolve CREW_ROSTER → CREW_CONFIG_DIR → XDG, so they agree wherever they see
+# the same environment. An operator whose CREW_CONFIG_DIR is exported from a
+# shell rc and who then installs under `sudo` with a reset HOME gets the box
+# half identical and the rig half silent, because the installer is reading a
+# different environment rather than a different host. That is inherent to
+# environment-driven config and is not something this reporter can second-guess:
+# adopting $PWD or the shipped examples/ to paper over it is exactly the
+# guessing platform_roster_names refuses above.
 report_platform() { # CREW_VERSION [ROSTER_FILE]
   local crew_version="${1:-unknown}" roster="${2:-}"
-  local box_found rows name version line findings=""
+  local box_found box_shown rows rig_shown blocker name version line findings=""
   box_found="$(platform_box_version)"
 
   if [ -z "$box_found" ]; then
@@ -251,13 +288,26 @@ report_platform() { # CREW_VERSION [ROSTER_FILE]
 
   [ -n "${findings//[$'\n'[:space:]]/}" ] || return 0
 
+  # EACH HALF CARRIES ITS OWN VERB rather than the format string hardcoding
+  # `found`, and both reasons are round 2's. The box default used to be the
+  # phrase "not found", which rendered as `box: not found found, 0.10.0 wanted`
+  # on the most ordinary first install there is — crew installed before box. And
+  # the rig half has a third answer that is neither a version nor a count: it
+  # could not look, which "<something> found" cannot say at all.
+  box_shown="${box_found:-none} found"
+  rig_shown="$(platform_rig_summary "$rows") found"
+  blocker="$(platform_guest_read_blocker)"
+  if [ -n "$blocker" ] && [ -z "${rows//[$'\n'[:space:]]/}" ]; then
+    rig_shown="not read ($blocker)"
+  fi
+
   # All five, in every finding. The found/wanted pairs come first because they
   # are what the reader is here for; the per-box detail follows.
   printf 'crew: platform check — this crew is crew@%s\n' "$crew_version" >&2
-  printf 'crew:   box: %s found, %s wanted (on this host)\n' \
-    "${box_found:-not found}" "$CREW_PLATFORM_BOX_MIN" >&2
-  printf 'crew:   rig: %s found, %s wanted (inside the boxes)\n' \
-    "$(platform_rig_summary "$rows")" "$CREW_PLATFORM_RIG_MIN" >&2
+  printf 'crew:   box: %s, %s wanted (on this host)\n' \
+    "$box_shown" "$CREW_PLATFORM_BOX_MIN" >&2
+  printf 'crew:   rig: %s, %s wanted (inside the boxes)\n' \
+    "$rig_shown" "$CREW_PLATFORM_RIG_MIN" >&2
   while IFS= read -r line; do
     [ -n "$line" ] || continue
     printf 'crew:   · %s\n' "$line" >&2

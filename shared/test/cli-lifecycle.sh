@@ -1355,4 +1355,76 @@ t platform-first-install-opens-no-guest 0 \
 t platform-first-install-still-finishes 1 \
   "$(grep -c 'done (' <<<"$fresh_out" || true)"
 
+# TWO WORDINGS THE REPORT GOT WRONG ON HOSTS NOTHING IS WRONG WITH (#679 round
+# 2, claude-bot's non-blocking notes). Both are reachable, and neither was
+# fixtured — which is how they survived a round that measured everything else.
+#
+# THE PATH IS BUILT RATHER THAN STRIPPED. `command -v` answers out of PATH, so
+# the only way to make a tool absent is to hand the run a PATH that never had
+# it: $BARE carries the handful of binaries the reporter itself uses and neither
+# `box` nor `jq`. The two preconditions below assert that emptiness, because a
+# case that quietly found a jq would pass for the wrong reason and read exactly
+# like a working one.
+#
+# report_platform is driven directly rather than through a verb: `crew up` needs
+# a box to converge and the installer needs a whole tree, and what is under test
+# is one sentence the reporter prints. The two surfaces that call it are already
+# diffed against each other above.
+BARE="$TMP/bare-bin"
+mkdir -p "$BARE"
+for bare_tool in bash env awk sed grep head sort paste cut tr cat timeout; do
+  bare_path="$(command -v "$bare_tool" 2>/dev/null)" || continue
+  ln -sf "$bare_path" "$BARE/$bare_tool"
+done
+
+plat_probe() { # PATH — the report, both streams
+  # `$1` in the -c string is the CHILD shell's first positional — the path
+  # passed after the `_` — so the single quotes are the point, and expanding it
+  # here would substitute this function's own argument, the PATH.
+  # shellcheck disable=SC2016
+  env -i PATH="$1" HOME="$TMP" LIFE_STATE="$STATE" \
+    CREW_PLATFORM_BOX_MIN="$CREW_PLATFORM_BOX_MIN" \
+    LIFE_BOX_VERSION=0.9.1 LIFE_GUEST_RIG="$CREW_PLATFORM_RIG_MIN" \
+    LIFE_BOX_LIST="$PLAT_BOXES" CREW_CONFIG_DIR="$CONF_NEW" \
+    "$BARE/bash" -c '. "$1"; report_platform 0.0.0-probe' \
+    _ "$SHARED/lib/platform.sh" 2>&1 || true
+}
+
+t platform-nobox-probe-really-has-no-box "" \
+  "$(env -i PATH="$BARE" "$BARE/bash" -c 'command -v box || true')"
+t platform-nojq-probe-really-has-no-jq "" \
+  "$(env -i PATH="$SHIM:$BARE" "$BARE/bash" -c 'command -v jq || true')"
+
+# crew installed before box is the ordinary first install, not an exotic one,
+# and the box half's default used to be the PHRASE "not found" dropped into a
+# sentence that already said `found`.
+nobox_out="$(plat_probe "$BARE")"
+t platform-no-box-on-path-reports-none-found 1 \
+  "$(grep -cF "box: none found, $CREW_PLATFORM_BOX_MIN wanted" <<<"$nobox_out" || true)"
+t platform-no-box-on-path-does-not-say-found-twice 0 \
+  "$(grep -c 'not found found' <<<"$nobox_out" || true)"
+# ...and the finding under it is unchanged: this was a wording defect in the
+# found/wanted line and nothing else moves.
+t platform-no-box-on-path-still-names-the-finding 1 \
+  "$(grep -c 'box: not found on PATH' <<<"$nobox_out" || true)"
+# The rig half cannot look either, and says so rather than reporting a fleet.
+t platform-no-box-on-path-does-not-claim-an-empty-fleet 1 \
+  "$(grep -cF 'rig: not read (no box on this host)' <<<"$nobox_out" || true)"
+
+# `no boxes found` on a host with three boxes, because the reader could not be
+# run: box list is JSON and jq is what parses it. "No boxes" and "could not
+# look" are different answers, and reporting the fleet as empty is the more
+# expensive of the two to be wrong about.
+nojq_out="$(plat_probe "$SHIM:$BARE")"
+t platform-no-jq-says-the-guests-were-not-read 1 \
+  "$(grep -cF 'rig: not read (no jq on this host)' <<<"$nojq_out" || true)"
+t platform-no-jq-does-not-claim-an-empty-fleet 0 \
+  "$(grep -cF 'rig: no boxes found' <<<"$nojq_out" || true)"
+# The box half is the one that matters at install time and it is unaffected —
+# the degradation stays a degradation, and D14 is untouched by either wording.
+t platform-no-jq-still-reports-the-box-half 1 \
+  "$(grep -cF "box: 0.9.1 found, $CREW_PLATFORM_BOX_MIN wanted" <<<"$nojq_out" || true)"
+t platform-no-jq-does-not-refuse 1 \
+  "$(grep -c 'rather than refusing' <<<"$nojq_out" || true)"
+
 suite_finish
