@@ -1018,7 +1018,6 @@ t platform-above-the-floor-dev-is-silent 0 "$(grep -c 'platform check' <<<"$OUT"
 # ever writing it down.
 reset_case
 LIFE_CONF="$CONF_NEW" LIFE_BOX_VERSION=0.9.1 capture up --dry-run
-PLATFORM_BELOW="$OUT"
 t platform-below-the-floor-reports 1 "$(grep -c 'platform check' <<<"$OUT" || true)"
 t platform-below-the-floor-does-not-refuse 0 "$RC"
 # Anchored to the check's OWN line: `crew up --dry-run` prints the engine
@@ -1057,10 +1056,10 @@ t platform-below-floor-rig-names-every-guest 3 \
 # runs INSIDE the guest (D15), so a host with no guest has nothing to look in,
 # and the next mint is what puts one there. The box half is still checked.
 reset_case
-LIFE_CONF="$CONF_NEW" LIFE_BOX_LIST= capture up --dry-run
+LIFE_CONF="$CONF_NEW" LIFE_BOX_LIST='' capture up --dry-run
 t platform-no-boxes-is-silent 0 "$(grep -c 'platform check' <<<"$OUT" || true)"
 reset_case
-LIFE_CONF="$CONF_NEW" LIFE_BOX_LIST= LIFE_BOX_VERSION=0.9.1 capture up --dry-run
+LIFE_CONF="$CONF_NEW" LIFE_BOX_LIST='' LIFE_BOX_VERSION=0.9.1 capture up --dry-run
 t platform-no-boxes-still-checks-the-host-half 1 \
   "$(grep -cF "box: 0.9.1 found, $CREW_PLATFORM_BOX_MIN wanted" <<<"$OUT" || true)"
 t platform-no-boxes-says-so-rather-than-inventing-a-rig 1 \

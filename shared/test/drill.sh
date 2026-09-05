@@ -987,6 +987,7 @@ t drill-mint-names-no-retired-template 0 \
   "$(grep -c -- '--template' <<<"$DRILL_CODE" || true)"
 t drill-mint-spells-no-box-new-of-its-own 0 \
   "$(grep -cE '(^|[^_[:alnum:]])box new' <<<"$DRILL_CODE" || true)"
+# shellcheck disable=SC2016  # match the literal production shell source
 t drill-mint-calls-the-one-writer 1 \
   "$(grep -c 'box_mint_fresh "\$BOX_NAME" "\$AGENT"' <<<"$DRILL_CODE" || true)"
 # The log line named a template that no longer exists, which is the half a fix
@@ -1030,6 +1031,10 @@ mint_out="$(
   box_mint_fresh crew-drill-reviewer kimi 4 8GiB 60GiB 2>&1
 )"; mint_rc=$?
 t drill-mint-sequence-exits-zero 0 "$mint_rc"
+# A mint that worked says nothing: the repair advice below is for the box that
+# was created and then not converged, and printing it on the success path would
+# make it noise a reader learns to skip.
+t drill-mint-sequence-is-quiet-when-it-works "" "$mint_out"
 t drill-mint-sequence-is-blank-at-the-roles-size \
   "new --name crew-drill-reviewer --user kimi --cpu 4 --memory 8GiB --disk 60GiB" \
   "$(grep '^new ' "$MINT_STATE/calls")"
