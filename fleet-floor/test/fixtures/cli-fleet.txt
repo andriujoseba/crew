@@ -14,6 +14,9 @@
 # healthy box can tell a real fix from one that repairs the note alone.
 cli-neverticked running  neverticked
 cli-hired      running  working
+# Its duty log contains NUL bytes before its newest VITALS record. Unlike the
+# floor-only binary-log fixture, this row drives cli/crew's emitted reader.
+cli-binary     running  binary-log
 cli-idle       running  idle
 cli-suppressed running  suppressed
 cli-supp-silent running suppressed-silent

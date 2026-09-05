@@ -783,14 +783,14 @@ cut is skipped on a held lock however old, because the on-demand reaper takes
 that same lock and a checkpoint of a box that could not be reclaimed becomes
 the floor every later reset returns to.
 
-SCHEDULED AND ON-DEMAND USE. The host schedule fires 'crew restart' daily;
+SCHEDULED AND ON-DEMAND USE. The host schedule fires 'crew restart' daily.
 'crew reset' is run on demand. Both verbs carry what a caller with no terminal
 and nobody watching needs.
 
 They take one HOST MAINTENANCE LOCK between them on every invocation,
 non-blocking, so the two verbs can never overlap. The later one names the
-holder, touches no
-box, and exits 4. The lock is taken on every invocation and not only under
+holder, touches no box, and exits 4. The lock is taken on every invocation and
+not only under
 cron: an operator running this by hand during a scheduled run IS the collision
 it prevents. It needs 'flock' on PATH and refuses without it rather than
 running unlocked.

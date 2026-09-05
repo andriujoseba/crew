@@ -895,16 +895,39 @@ case "${1:-}" in
         # elsewhere. What matters here is that the marks are present, because
         # their absence is what the CLI reads as silence.
         [ "$sc" = "neverticked" ] && exit 1
-        echo "::crew-budget-end::"
-        printf '%s\n' \
-          'TICK_HEALTH window_s=86400 last_tick_age_s=300 ticks=3 busy=2' \
-          'TICK_HEALTH_KIND window_s=86400 kind=build skips=2 holds=budget:1,terminal-breaker:1 outcome=died-with-box streak=3'
-        echo "::crew-health-end::"
-        # The SAME record probe.sh answers the floor with, from the same
-        # reader. See vitals_record_of.
-        vitals_record_of "$sc"
-        echo "::crew-vitals-end::"
-        echo "$(now) duty run start"; echo "stub log for $name" ;;
+        if [ "$sc" = "binary-log" ]; then
+          # #688 — execute the script cli/crew actually sent. Every other
+          # scenario keeps the established paraphrase below byte-for-byte;
+          # only this fixture owns enough guest state to exercise grep's
+          # binary-file decision rather than merely asserting its spelling.
+          guest="$STATEDIR/$name.guest"
+          mkdir -p "$guest/duty/lib"
+          printf '%s\n' \
+            'load_conf() { :; }' \
+            'session_budget_report() { :; }' \
+            "tick_health_report() { printf '%s\\n' 'TICK_HEALTH window_s=86400 last_tick_age_s=300 ticks=3 busy=2' 'TICK_HEALTH_KIND window_s=86400 kind=build skips=2 holds=budget:1,terminal-breaker:1 outcome=died-with-box streak=3'; }" \
+            >"$guest/duty/lib/common.sh"
+          {
+            printf '%s\n' 'VITALS ts=2026-01-01T00:00:00Z cores=1 load1=9.99'
+            printf '\0\0\0\n'
+            vitals_record_of "$sc"
+            echo "$(now) duty run start"
+            echo "stub log for $name"
+          } >"$guest/duty/duty.log"
+          HOME="$guest" bash -c "$script"
+          : >"$STATEDIR/$name.vitals-script-ran"
+        else
+          echo "::crew-budget-end::"
+          printf '%s\n' \
+            'TICK_HEALTH window_s=86400 last_tick_age_s=300 ticks=3 busy=2' \
+            'TICK_HEALTH_KIND window_s=86400 kind=build skips=2 holds=budget:1,terminal-breaker:1 outcome=died-with-box streak=3'
+          echo "::crew-health-end::"
+          # The SAME record probe.sh answers the floor with, from the same
+          # reader. See vitals_record_of.
+          vitals_record_of "$sc"
+          echo "::crew-vitals-end::"
+          echo "$(now) duty run start"; echo "stub log for $name"
+        fi ;;
       *tail*)
         # A box that has never ticked has NO ~/duty/duty.log, so the real
         # `tail -n 1 ~/duty/duty.log 2>/dev/null` prints nothing and exits 1 —

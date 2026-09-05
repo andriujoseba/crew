@@ -598,6 +598,22 @@ t hostcron-schedules-no-reset-job-line 0 \
 t hostcron-has-no-commented-out-reset-job-line 0 \
   "$(sed -E 's/^([[:space:]]*#+)+[[:space:]]*//' "$HOST_CRONTAB" \
      | grep -cE "$cron_entry" || true)"
+# #688 — the operator-facing reset help and the shipped schedule are two
+# readers of one fact. Compare them instead of pinning either answer: #328 can
+# restore the reset job in a later release, and that tree must red until its
+# help moves with it just as this one reds if the stale claim comes back.
+capture help reset
+help_flat="$(printf '%s\n' "$OUT" | tr '\n' ' ')"
+if grep -qE 'host schedule[^.]*reset' <<<"$help_flat"; then
+  help_schedules_reset=1
+else
+  help_schedules_reset=0
+fi
+cron_schedules_reset="$(printf '%s\n' "$host_cron_lines" | grep -cE "$cron_entry" || true)"
+t hostjob-reset-help-schedule-matches-shipped-example \
+  "$cron_schedules_reset" "$help_schedules_reset"
+case "$help_flat" in *'every invocation'*'two verbs can never overlap'*) r1=preserved ;; *) r1="$OUT" ;; esac
+t hostjob-reset-help-preserves-every-invocation-lock-guarantee preserved "$r1"
 # The deferral is only reversible on purpose if the file says where the
 # argument lives. D2 requires the comment block to name this issue and the
 # collector that returns the line.
