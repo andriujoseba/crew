@@ -191,6 +191,24 @@ case "$cmd" in
       #   absent  the box does not answer at all — crew knows nothing about it
       # The two must never collapse (crew#220 rule 5), which is why `probe=ok`
       # is emitted on its own line before anything else is read.
+      # Recorded, because "this guest was read" is itself a contract: a box on
+      # the host but not in the roster must be skipped BEFORE this door opens,
+      # not filtered out of the report afterwards (#679 round 1).
+      #
+      # Narrowed to the PLATFORM check's own wire, because TWO different reads
+      # of this file arrive at this branch: the platform check's
+      # (shared/lib/platform.sh) and `rig_report`'s convergence probe
+      # (cli/crew:1766-1777), which is roster-scoped already and is not what the
+      # off-roster case is about. A marker counting both reads 2 on one report
+      # and turns the assertion into a puzzle. `echo probe=ok` does not separate
+      # them — both carry it, deliberately, as crew#220 rule 5's marker — so the
+      # token is `cat /etc/rig/manifest`, which only the platform probe sends.
+      # The day that probe is rewritten this marker stops firing and
+      # platform-roster-box-is-opened-once reds, which is the correct failure:
+      # it says the read this suite is pinning changed shape.
+      case "$script" in
+        *'cat /etc/rig/manifest'*) printf 'rig-probe %s\n' "$name" >>"$calls" ;;
+      esac
       version="${LIFE_GUEST_RIG:-$CREW_PLATFORM_RIG_MIN}"
       [ ! -s "$state_dir/rig-$name" ] || version="$(cat "$state_dir/rig-$name")"
       [ "$version" != absent ] || exit 1
@@ -1049,13 +1067,24 @@ reset_case
 LIFE_CONF="$CONF_NEW" LIFE_BOX_VERSION=0.10.1-dev capture up --dry-run
 t platform-above-the-floor-dev-is-silent 0 "$(grep -c 'platform check' <<<"$OUT" || true)"
 
+# The host the rig half of these cases stands on, and it is a MIXED one on
+# purpose (#679 round 1). `gamma` and `delta` are rows of $CONF_NEW's roster
+# that exist as boxes — crew's own fleet. `offroster` is a box on the same host
+# that crew was never asked about, which is `box new --name ada --user ada` from
+# box's own README and is the state any operator reaches the first time they
+# mint anything of their own. `epsilon` is the third roster row and has no box,
+# so the intersection is proved from both sides at once: a roster row without a
+# box is not a guest, and a guest outside the roster is not crew's.
+PLAT_BOXES="gamma delta offroster"
+
 # A box BELOW the floor is a finding, and the finding names ALL FIVE figures
 # (D16): crew's own version, box found and wanted, rig found and wanted. A
 # message naming only the offending half makes the reader go looking for the
 # other, and this triple is the thing the fleet had been reasoning about without
 # ever writing it down.
 reset_case
-LIFE_CONF="$CONF_NEW" LIFE_BOX_VERSION=0.9.1 capture up --dry-run
+LIFE_CONF="$CONF_NEW" LIFE_BOX_LIST="$PLAT_BOXES" LIFE_BOX_VERSION=0.9.1 \
+  capture up --dry-run
 t platform-below-the-floor-reports 1 "$(grep -c 'platform check' <<<"$OUT" || true)"
 t platform-below-the-floor-does-not-refuse 0 "$RC"
 # Anchored to the check's OWN line: `crew up --dry-run` prints the engine
@@ -1066,29 +1095,66 @@ t platform-below-the-floor-names-crews-own-version 1 \
 t platform-below-the-floor-names-box-found-and-wanted 1 \
   "$(grep -cF "box: 0.9.1 found, $CREW_PLATFORM_BOX_MIN wanted" <<<"$OUT" || true)"
 t platform-below-the-floor-names-rig-found-and-wanted 1 \
-  "$(grep -cF "rig: 0.4.0 found, $CREW_PLATFORM_RIG_MIN wanted" <<<"$OUT" || true)"
+  "$(grep -cF "rig: $CREW_PLATFORM_RIG_MIN found, $CREW_PLATFORM_RIG_MIN wanted" \
+     <<<"$OUT" || true)"
 
 # A missing rig is a FINDING, not a crash and not a silent pass. `none` here is
 # a box that answered and carries no /etc/rig/manifest — a guest rig was
 # supposed to have converged and did not.
 reset_case
-LIFE_CONF="$CONF_NEW" LIFE_GUEST_RIG=none capture up --dry-run
+LIFE_CONF="$CONF_NEW" LIFE_BOX_LIST="$PLAT_BOXES" LIFE_GUEST_RIG=none \
+  capture up --dry-run
 t platform-missing-rig-reports 1 "$(grep -c 'platform check' <<<"$OUT" || true)"
 t platform-missing-rig-does-not-crash 0 "$RC"
 t platform-missing-rig-names-the-box 1 \
-  "$(grep -c 'alpha carries no /etc/rig/manifest' <<<"$OUT" || true)"
+  "$(grep -c 'gamma carries no /etc/rig/manifest' <<<"$OUT" || true)"
 t platform-missing-rig-still-names-all-five 1 \
   "$(grep -cF "rig: none found, $CREW_PLATFORM_RIG_MIN wanted" <<<"$OUT" || true)"
+# ...and the box crew was never asked about is NOT that finding, on the run
+# where it would be loudest: `offroster` carries no manifest either, and the
+# whole difference between it and `gamma` is the roster.
+t platform-missing-rig-leaves-offroster-alone 0 \
+  "$(grep -c 'offroster carries no /etc/rig/manifest' <<<"$OUT" || true)"
 
 # A rig BELOW the floor is the other rig finding, and it names which guest.
 reset_case
-LIFE_CONF="$CONF_NEW" LIFE_GUEST_RIG=0.3.2 capture up --dry-run
-# Per GUEST, and named: rig is a per-box fact, so three below-floor boxes are
-# three findings and each says which box it is about.
+LIFE_CONF="$CONF_NEW" LIFE_BOX_LIST="$PLAT_BOXES" LIFE_GUEST_RIG=0.3.2 \
+  capture up --dry-run
+# Per GUEST, and named: rig is a per-box fact, so two below-floor guests are
+# two findings and each says which box it is about.
 t platform-below-floor-rig-reports 1 \
-  "$(grep -c 'alpha was converged by 0.3.2, below the floor' <<<"$OUT" || true)"
-t platform-below-floor-rig-names-every-guest 3 \
+  "$(grep -c 'gamma was converged by 0.3.2, below the floor' <<<"$OUT" || true)"
+t platform-below-floor-rig-names-every-guest 2 \
   "$(grep -c 'was converged by 0.3.2, below the floor' <<<"$OUT" || true)"
+
+# THE OFF-ROSTER BOX IS NOT READ AND NOT REPORTED (#679 round 1, claude-bot's
+# blocking finding). `crew up` promises that a box on this host but not in the
+# roster is `left alone` (cli/crew:2670) and `crew upgrade --all` already
+# intersects to the roster (cli/crew:4298); a platform check that enumerated
+# `box list` broke that promise twice over — it turned an operator's own box
+# into a finding on a fleet nothing is wrong with, and it opened a login shell
+# inside a guest crew has no mandate over to do it.
+#
+# Both halves are asserted, and the second is the one a "drop the finding" fix
+# would leave broken: the stub records every call it is given, so the absence of
+# any `exec offroster` row is the proof the box was skipped BEFORE the read and
+# not merely after it. The shape is lifecycle-all-leaves-offroster's, deliberately
+# — this is the same promise, kept by a second verb.
+# Anchored to the check's own finding lines (`crew:   · …`) rather than to the
+# whole run: `crew up` NAMES offroster elsewhere, in its `left alone` list, and
+# a bare grep would be asserting the opposite of the promise by accident.
+t platform-offroster-is-in-no-finding 0 \
+  "$(grep -c '^crew:   · .*offroster' <<<"$OUT" || true)"
+t platform-offroster-is-never-opened 0 \
+  "$(grep -c '^rig-probe offroster$' "$STATE/calls" || true)"
+# The 0 above is only worth something if the probe fires at all, and on a box
+# whose only difference from offroster is the roster row.
+t platform-roster-box-is-opened-once 1 \
+  "$(grep -c '^rig-probe gamma$' "$STATE/calls" || true)"
+# ...and the roster row that has no box is not invented into one: `epsilon` is
+# in $CONF_NEW's roster and is not on this host, so it is neither read nor named.
+t platform-roster-row-without-a-box-is-not-a-guest 0 \
+  "$(grep -c 'epsilon was converged' <<<"$OUT" || true)"
 
 # A host with no boxes says nothing about rig, and that is not an omission: rig
 # runs INSIDE the guest (D15), so a host with no guest has nothing to look in,
@@ -1167,8 +1233,18 @@ platform_block() { # TEXT — the report, from its first line to its last
   awk '/platform check/,/built and tested against/' <<<"${1:-}"
 }
 
+#
+# BOTH SURFACES ARE GIVEN THE SAME FLEET DEFINITION, and since #679's round 1
+# that is load-bearing rather than incidental. The rig half reads the guests
+# crew was asked about, so "identical" is a claim about two verbs on ONE host —
+# same box, same roster, same guests — and a fixture that gave `crew up` a
+# roster and the installer a bare scratch HOME would be diffing two different
+# machines and calling the difference a wording. `crew up` resolves $CONF_NEW
+# through CREW_CONFIG_DIR the way every case here does; the installer is handed
+# the same directory, and platform_roster_names resolves it identically.
 reset_case
-LIFE_CONF="$CONF_NEW" LIFE_BOX_VERSION=0.9.1 capture up --dry-run
+LIFE_CONF="$CONF_NEW" LIFE_BOX_LIST="$PLAT_BOXES" LIFE_BOX_VERSION=0.9.1 \
+  capture up --dry-run
 up_block="$(platform_block "$OUT")"
 
 INSTALL_HOME="$TMP/install-home"
@@ -1176,8 +1252,10 @@ mkdir -p "$INSTALL_HOME"
 install_out="$(
   env HOME="$INSTALL_HOME" XDG_CONFIG_HOME="$INSTALL_HOME/xdg" CREW_YES=1 \
     CREW_HOME="$INSTALL_HOME/share" CREW_BIN="$INSTALL_HOME/bin" \
-    LIFE_STATE="$STATE" LIFE_BOX_VERSION=0.9.1 LIFE_GUEST_RIG=0.4.0 \
-    LIFE_BOX_LIST="alpha beta offroster" \
+    CREW_CONFIG_DIR="$CONF_NEW" \
+    LIFE_STATE="$STATE" LIFE_BOX_VERSION=0.9.1 \
+    LIFE_GUEST_RIG="$CREW_PLATFORM_RIG_MIN" \
+    LIFE_BOX_LIST="$PLAT_BOXES" \
     PATH="$SHIM:$PATH" bash "$ROOT/install.sh" 2>&1 || true
 )"
 install_block="$(platform_block "$install_out")"
@@ -1189,5 +1267,38 @@ t platform-installer-and-up-report-identically "$up_block" "$install_block"
 # refusal, at the surface where it costs the most.
 t platform-installer-still-finishes 1 \
   "$(grep -c 'done (' <<<"$install_out" || true)"
+
+# THE FIRST INSTALL, which has no fleet definition at all — the state of every
+# host the moment before `crew init`, and the one the installer actually meets
+# most often. It is not a finding. The BOX half is still checked, because the
+# floor is a fact about this host and needs no roster to be true, and it is the
+# half the operator on box 0.9.x is here to be told about. The RIG half says
+# `no boxes` and invents no verdict: with nothing crew was asked about, there is
+# no guest it has any business opening, which is the same silence D15 already
+# gives a host with no boxes at all.
+#
+# Its own state dir, so the recorded calls below are this run's alone.
+FRESH_STATE="$TMP/state-fresh"
+FRESH_HOME="$TMP/install-home-fresh"
+mkdir -p "$FRESH_STATE" "$FRESH_HOME/xdg"
+fresh_out="$(
+  env HOME="$FRESH_HOME" XDG_CONFIG_HOME="$FRESH_HOME/xdg" CREW_YES=1 \
+    CREW_HOME="$FRESH_HOME/share" CREW_BIN="$FRESH_HOME/bin" \
+    LIFE_STATE="$FRESH_STATE" LIFE_BOX_VERSION=0.9.1 \
+    LIFE_GUEST_RIG="$CREW_PLATFORM_RIG_MIN" \
+    LIFE_BOX_LIST="$PLAT_BOXES" \
+    PATH="$SHIM:$PATH" bash "$ROOT/install.sh" 2>&1 || true
+)"
+t platform-first-install-still-checks-the-host-half 1 \
+  "$(grep -cF "box: 0.9.1 found, $CREW_PLATFORM_BOX_MIN wanted" <<<"$fresh_out" || true)"
+t platform-first-install-invents-no-rig-verdict 1 \
+  "$(grep -cF 'rig: no boxes found' <<<"$fresh_out" || true)"
+# `cat` first, so a calls file the installer never created reads as 0 rather
+# than as grep's empty output on a missing path — which compares unequal to
+# every expectation and would fail for the wrong reason.
+t platform-first-install-opens-no-guest 0 \
+  "$(cat "$FRESH_STATE/calls" 2>/dev/null | grep -c '^rig-probe ' || true)"
+t platform-first-install-still-finishes 1 \
+  "$(grep -c 'done (' <<<"$fresh_out" || true)"
 
 suite_finish
