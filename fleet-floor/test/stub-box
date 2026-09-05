@@ -179,7 +179,7 @@ lockheld_ping_of() {
 # over a real duty.log. What this buys is the two renderings.
 vitals_record_of() {
   case "$1" in
-    working|suppressed-working)
+    working|suppressed-working|binary-log)
       printf 'VITALS ts=%s cores=2 load1=0.41 mem_total_mb=3850 mem_shared_mb=103 mem_avail_mb=3128 swap_active_mb=0 swap_configured_mb=8192 disk_total_mb=29696 disk_used_mb=14254 disk_pct=48 disk_series=2026-08-01T12:50:01+00:00@9,2026-08-10T21:15:01+00:00@31,2026-08-27T18:35:01+00:00@48 platform=linux os=debian-13 finding=swap-configured-inactive:configured_mb=8192,active_mb=0 finding=cpu-profile-mismatch:want=4,got=2\n' \
         "$(now)" ;;
     idle)
@@ -201,13 +201,14 @@ vitals_record_of() {
 duty_log_of() {
   local sc="$1"
   case "$sc" in
-    working|suppressed-working|paused|noauth|skew-behind|skew-ahead|invalid-tickage)
+    working|suppressed-working|paused|noauth|skew-behind|skew-ahead|invalid-tickage|binary-log)
       # a closed session, then an open one: state must read WORKING
       echo "$(box_ago "$sc" 900) duty run start"
       echo "$(box_ago "$sc" 900) heavy-duty/crew: build duty (ready unclaimed=2, whole rounds owed=0)"
       echo "$(box_ago "$sc" 890) SESSION START kind=build key=heavy-duty/crew#601 timeout=7200s log=/h/duty/logs/20260726T090000Z-build-heavy-duty_crew_601.log"
       echo "$(box_ago "$sc" 600) SESSION END kind=build key=heavy-duty/crew#601 rc=0 dur=290s outcome=ok"
       echo "$(box_ago "$sc" 600) duty run end"
+      [ "$sc" = binary-log ] && printf '\0\0\0'
       echo "$(box_ago "$sc" 120) duty run start"
       echo "$(box_ago "$sc" 120) attention: heavy-duty/ceremony#12 — launching pickup session"
       echo "$(box_ago "$sc" 110) SESSION START kind=triage key=board timeout=2400s log=/h/duty/logs/b.log"

@@ -203,6 +203,10 @@ BS_VITALS_NEW="$BS_VITALS_NEW disk_pct=48 disk_series=2026-08-01T12:50:01+00:00@
 BS_VITALS_NEW="$BS_VITALS_NEW platform=linux os=debian-13"
 BS_VITALS_NEW="$BS_VITALS_NEW finding=swap-configured-inactive:configured_mb=8192,active_mb=0"
 { printf '%s\n' "$BS_VITALS_OLD"
+  # An unclean stop below the engine can leave NUL bytes in duty.log. The
+  # newest records after them remain authoritative; the probe reads the file
+  # as text instead of letting grep suppress every later match (#608).
+  printf '\0\0\0'
   echo "$BS_NOW duty run start"
   printf '%s\n' "$BS_VITALS_NEW"
   echo "$BS_NOW heavy-duty/rig: build duty (ready unclaimed=1, whole rounds owed=0)"; } \
@@ -213,6 +217,35 @@ BS_VITALS_NEW="$BS_VITALS_NEW finding=swap-configured-inactive:configured_mb=819
 # one word away from `crew status` and the criterion is that they cannot be.
 t "probe.sh: the newest vitals record is carried verbatim" \
   "$BS_VITALS_NEW" "$(bs_vitals "$BS_H/duty")"
+
+bs_tickage() {  # DUTY_DIR -> the numeric ::tickage value this probe emitted
+  HOME="$BS_H" DUTY_DIR="$1" \
+    bash "$BS_FLOOR/server/probe.sh" < "$BS_ROOT/shared/conf/agents/claude.conf" 2>/dev/null \
+    | sed -n 's/^::tickage //p' | head -1
+}
+BS_BINARY_FRESH_AGE="$(bs_tickage "$BS_H/duty")"
+case "$BS_BINARY_FRESH_AGE" in
+  ''|*[!0-9]*) r1=invalid ;;
+  *) [ "$BS_BINARY_FRESH_AGE" -le 10 ] && r1=fresh || r1=stale ;;
+esac
+t "probe.sh: a fresh timestamp after NUL bytes remains fresh" fresh "$r1"
+
+# The alarm remains intact: binary-safe means later records are visible, not
+# automatically healthy. With an old trailing timestamp the same damaged log
+# must still report an age beyond two five-minute tick boundaries.
+BS_BINARY_SILENT="$BS_TMP/binary-silent"
+cp -R "$BS_H/duty" "$BS_BINARY_SILENT"
+{
+  printf '%s duty run start\n' "$(date -u -d '@'$(( $(date +%s) - 4000 )) '+%Y-%m-%dT%H:%M:%SZ')"
+  printf '\0\0\0'
+  printf '%s duty run end\n' "$(date -u -d '@'$(( $(date +%s) - 3900 )) '+%Y-%m-%dT%H:%M:%SZ')"
+} > "$BS_BINARY_SILENT/duty.log"
+BS_BINARY_SILENT_AGE="$(bs_tickage "$BS_BINARY_SILENT")"
+case "$BS_BINARY_SILENT_AGE" in
+  ''|*[!0-9]*) r1=invalid ;;
+  *) [ "$BS_BINARY_SILENT_AGE" -ge 600 ] && r1=silent || r1=fresh ;;
+esac
+t "probe.sh: a genuinely stale timestamp after NUL bytes stays silent" silent "$r1"
 
 # The fixture log puts an OLDER record above the newest one and two ordinary
 # lines after it, so neither `tail -1` of the file nor the first match lands on

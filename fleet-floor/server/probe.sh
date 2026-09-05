@@ -109,7 +109,7 @@ emit now "$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
 #
 # Empty on every box whose engine predates the probe, which is every box for
 # the first tick after it lands. The collector renders that as no section.
-emit vitals "$(grep '^VITALS ' "$DUTY_DIR/duty.log" 2>/dev/null | tail -1)"
+emit vitals "$(grep -a '^VITALS ' "$DUTY_DIR/duty.log" 2>/dev/null | tail -1)"
 
 # The derivation is computed by the installed shared module, not independently
 # by the floor. Its delimited report is carried verbatim to the collector.
@@ -188,7 +188,7 @@ echo "::tickhealthend"
 # values are emitted here and must not disagree with themselves.
 tick_age=""
 if [ -r "$DUTY_DIR/duty.log" ]; then
-  last_ts="$(grep -oE '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z' \
+  last_ts="$(grep -a -oE '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z' \
     "$DUTY_DIR/duty.log" 2>/dev/null | tail -1)"
   if [ -n "$last_ts" ]; then
     last_epoch="$(date -u -d "$last_ts" +%s 2>/dev/null || echo)"
