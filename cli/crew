@@ -316,8 +316,9 @@ RESTART_READY_ATTEMPTS="${CREW_RESTART_READY_ATTEMPTS:-60}"
 RESTART_READY_POLL_S="${CREW_RESTART_READY_POLL_SECONDS:-2}"
 
 # --- host maintenance state (#590) -------------------------------------------
-# What a SCHEDULED caller of restart/reset needs, which neither verb owed on
-# its own: a lock so the daily and the weekly can never overlap, and a log,
+# What an unattended restart/reset caller needs, which neither verb owed on
+# its own: a lock so the scheduled restart and an on-demand reset can never
+# overlap, and a log,
 # because the cron line carries no redirect and its stdout goes to mail nobody
 # reads on Monday. Both live in the VERB and neither in the cron line — that is
 # shared/host-crontab.example's whole charter, inherited from the on-box side,
@@ -782,12 +783,13 @@ cut is skipped on a held lock however old, because the on-demand reaper takes
 that same lock and a checkpoint of a box that could not be reclaimed becomes
 the floor every later reset returns to.
 
-SCHEDULED USE. This verb and 'crew restart' are the two the host schedule
-fires (shared/host-crontab.example: restart daily, reset weekly), and both
-carry what a caller with no terminal and nobody watching needs.
+SCHEDULED AND ON-DEMAND USE. The host schedule fires 'crew restart' daily;
+'crew reset' is run on demand. Both verbs carry what a caller with no terminal
+and nobody watching needs.
 
-They take one HOST MAINTENANCE LOCK between them, non-blocking, so the daily
-and the weekly can never overlap. The later one names the holder, touches no
+They take one HOST MAINTENANCE LOCK between them on every invocation,
+non-blocking, so the two verbs can never overlap. The later one names the
+holder, touches no
 box, and exits 4. The lock is taken on every invocation and not only under
 cron: an operator running this by hand during a scheduled run IS the collision
 it prevents. It needs 'flock' on PATH and refuses without it rather than
@@ -2828,8 +2830,8 @@ cycle_box() {
 }
 
 # --- the host maintenance job (#590) ----------------------------------------
-# `crew restart` and `crew reset` are the two verbs a host schedule fires, and
-# everything below is what a caller with no terminal and nobody watching needs.
+# `crew restart` is host-scheduled and `crew reset` is run on demand; everything
+# below is what a caller with no terminal and nobody watching needs.
 #
 # THE EVIDENCE CONTRACT IS tick.sh's, ADOPTED RATHER THAN REINVENTED. That file
 # guarantees exactly one line per boundary in one of three shapes so that
@@ -2844,20 +2846,20 @@ cycle_box() {
 # job's stdout in the same file. The one deliberate difference from tick.sh:
 # the third shape is unconditional here rather than only on failure. tick.sh
 # can leave success implicit because its job writes `duty run start` itself and
-# a reader wants the exception; a weekly `reset --all` that refused every box
+# a reader wants the exception; an unattended `reset --all` that refused every box
 # is a fact somebody has to be able to read POSITIVELY, at the boundary, rather
 # than infer from the absence of a complaint.
 #
 # The lock is taken by BOTH verbs and on every invocation, not only under cron.
-# "A weekly reset and a daily restart can never overlap" is not a property that
-# can be conditional on how the caller was started: the operator who runs
+# "A reset and a restart can never overlap" is not a property that can be
+# conditional on how the caller was started: the operator who runs
 # `crew restart claude-builder` by hand at 05:10 on a Sunday is the collision,
 # and a lock that let them through would be decoration.
 need_flock() {
   command -v flock >/dev/null ||
     die "the host maintenance lock needs 'flock' (util-linux) on PATH, and it is not there.
-  crew restart and crew reset take that lock so a daily restart and a weekly
-  reset can never overlap on one fleet. Running either without it is exactly
+  crew restart and crew reset take that lock on every invocation so the two
+  verbs can never overlap on one fleet. Running either without it is exactly
   the fail-open the lock exists to prevent, so this refuses rather than
   proceeding unlocked."
 }
@@ -3562,7 +3564,7 @@ restore_box() { # NAME
   # snapshot on the box and says so), a re-pointed CREW_CONFIG_DIR, a host
   # config restored from a backup predating the cut. In every one of them the
   # checkpoint's version cannot be proved current, and D5's hazard is an
-  # unattended weekly caller downgrading an engine with nothing red anywhere.
+  # unattended --all caller downgrading an engine with nothing red anywhere.
   # So this refuses, in the same direction as the two reads either side of it:
   # an unreadable listing is not "no label", an unreadable lock is not "idle",
   # and an unreadable version is not "the versions agree". One arm covers
@@ -3904,7 +3906,7 @@ cmd_status() {
         env DUTY_DIR="$HOME/duty" bash -c \
           ". \"$HOME/duty/lib/common.sh\"; tick_health_report \"$HOME/duty/duty.log\"" 2>/dev/null
       echo "'"$STATUS_HEALTH_MARK"'"
-      grep "^VITALS " ~/duty/duty.log 2>/dev/null | tail -1
+      grep -a "^VITALS " ~/duty/duty.log 2>/dev/null | tail -1
       echo "'"$STATUS_VITALS_MARK"'"
       tail -n 5 ~/duty/duty.log 2>/dev/null
     ' 2>/dev/null | tr -d '\r' || true)"
@@ -3914,8 +3916,9 @@ cmd_status() {
     # inside one tick, and a window that loses the record on exactly the busy
     # box an operator is looking at is worse than a scan of a file tick.sh
     # already caps at 5 MB. fleet-floor/server/probe.sh selects it by the same
-    # rule for the floor, which is what makes "the two cannot disagree" a
-    # property of the code rather than a claim about it.
+    # whole-file, binary-safe rule for the floor. Keeping both sites on that
+    # rule is what makes "the two cannot disagree" a property of the code
+    # rather than a claim about it.
     budget="${probe%%"$STATUS_PROBE_MARK"*}"
     rest="${probe#*"$STATUS_PROBE_MARK"}"
     [ "$probe" != "$budget" ] || budget=""   # no mark: nothing answered
@@ -4354,8 +4357,8 @@ cmd_upgrade() {
     fi
     # D5's mark, BEFORE the upgrade that invalidates the checkpoint (#589). An
     # `armed` checkpoint cut before this moment restores an OLDER engine than
-    # the box is hired at, and an unattended weekly reset would perform that
-    # downgrade every week with nothing red anywhere. Marking first is what
+    # the box is hired at, and an unattended reset would perform that downgrade
+    # with nothing red anywhere. Marking first is what
     # makes the fact durable: a mark that could not be written stops the
     # upgrade instead of leaving a box whose checkpoint lies about it. It can
     # still not take the loop down — one box refuses, the rest carry on.
