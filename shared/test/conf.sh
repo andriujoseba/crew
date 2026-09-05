@@ -183,6 +183,50 @@ t codex-profile-carries-reasoning-separately '91|7' \
 t codex-profile-normalized-object-never-invents-cost false \
   "$(jq -r 'has("cost_usd")' <<<"$codex_normalized")"
 
+CODEX_THREAD_ID='01a06ef6-ca2a-7fd0-a487-25913257471d'
+CODEX_THREAD_STREAM="$TMP/codex-thread.jsonl"
+printf '%s\n' \
+  "{\"type\":\"thread.started\",\"thread_id\":\"$CODEX_THREAD_ID\"}" \
+  '{"type":"turn.started"}' >"$CODEX_THREAD_STREAM"
+# shellcheck disable=SC1091  # production profile under test
+t codex-profile-observes-one-thread-id "$CODEX_THREAD_ID" \
+  "$({ source "$SHARED/conf/agents/codex.conf"; \
+       bot_cli_observed_session_id "$CODEX_THREAD_STREAM"; })"
+printf '%s\n' \
+  "{\"type\":\"thread.started\",\"thread_id\":\"$CODEX_THREAD_ID\"}" \
+  '{"type":"thread.started","thread_id":"01999999-1111-7111-8111-111111111111"}' \
+  >"$CODEX_THREAD_STREAM"
+# shellcheck disable=SC1091  # production profile under test
+t codex-profile-refuses-ambiguous-thread-ids 0 \
+  "$({ source "$SHARED/conf/agents/codex.conf"; \
+       bot_cli_observed_session_id "$CODEX_THREAD_STREAM"; } | wc -c)"
+printf '%s\n' '{"type":"turn.started"}' >"$CODEX_THREAD_STREAM"
+# shellcheck disable=SC1091  # production profile under test
+t codex-profile-refuses-missing-thread-id 0 \
+  "$({ source "$SHARED/conf/agents/codex.conf"; \
+       bot_cli_observed_session_id "$CODEX_THREAD_STREAM"; } | wc -c)"
+
+codex_resume_render="$({
+  # shellcheck disable=SC1091  # production profile under test
+  source "$SHARED/conf/agents/codex.conf"
+  BOT_CLI_CMD=(codex exec --dangerously-bypass-approvals-and-sandbox)
+  bot_cli_model_cmd opus
+  _SESSION_CLI_CMD=("${BOT_CLI_MODEL_CMD[@]}")
+  _session_structured_cmd
+  bot_cli_resume_cmd "${_SESSION_CLI_CMD[@]}" "$CODEX_THREAD_ID"
+  printf '%s\n' "${BOT_CLI_RESUME_CMD[@]}"
+  [ -z "${CODEX_CLI_PROSE_LOG:-}" ] || rm -f "$CODEX_CLI_PROSE_LOG"
+})"
+t codex-resume-command-keeps-subcommand-options-id-order \
+  'codex exec resume --dangerously-bypass-approvals-and-sandbox --model opus --json --output-last-message <prose> <id>' \
+  "$(sed -E \
+      -e 's#^.*/crew-codex-prose\.[^/ ]+$#<prose>#' \
+      -e "s/^$CODEX_THREAD_ID$/<id>/" <<<"$codex_resume_render" | paste -sd ' ' -)"
+t codex-resume-command-keeps-json 1 \
+  "$(grep -cx -- '--json' <<<"$codex_resume_render" || true)"
+t codex-resume-command-keeps-model 1 \
+  "$(grep -cx -- '--model' <<<"$codex_resume_render" || true)"
+
 CODEX_NO_CACHE="$TMP/codex-no-cache.jsonl"
 printf '%s\n' \
   '{"type":"thread.started","thread_id":"thread/uncached"}' \

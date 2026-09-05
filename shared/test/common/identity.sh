@@ -316,7 +316,7 @@ t gitid-rotation-carries-observed-login andriujoseba "$GIT_IDENTITY_FAILURE_LOGI
 r1="$(git_identity_failure_message)"
 case "$r1" in *"git identity 'claude-bot-andresmgsl@users.noreply.github.com'"*"GitHub login 'andriujoseba'"*) r1=named ;; *) r1=WRONG ;; esac
 t gitid-mismatch-message-names-both-identities named "$r1"
-case "$(git_identity_failure_message)" in *cndgrr*) r1=BOX_LOGIN_LEAKED ;; *) r1=observed-only ;; esac
+case "$(git_identity_failure_message)" in *cndgrr*) r1='BOX_LOGIN_LEAKED' ;; *) r1='observed-only' ;; esac
 t gitid-mismatch-message-does-not-name-box-login observed-only "$r1"
 # The rotation guard is the CALLER's to invoke: install.sh passes no login
 # because it has no $ME, and its whole job is to write whatever gh now says.
