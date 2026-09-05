@@ -604,7 +604,7 @@ _session_observe_identity() {
   [ "$_SESSION_RESUMED" = no ] || return 0
   declare -F bot_cli_session_id_args >/dev/null 2>&1 && return 0
   declare -F bot_cli_observed_session_id >/dev/null 2>&1 || return 0
-  observed="$(bot_cli_observed_session_id "$1" "$2" "$3")" || observed=""
+  observed="$(bot_cli_observed_session_id "$1" "$2" "$3")" || observed="" # Decision-path empty fallback: a refusing observation means no identity and therefore no resume stub.
   _session_sid_valid "$observed" || return 0
   _SESSION_OBSERVED_SID="$observed"
   return 0
