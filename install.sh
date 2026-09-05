@@ -478,6 +478,15 @@ esac
 # Identical wording to `crew up`'s, because it is the identical call into the
 # identical reporter — the same property report_engine_skew has across this
 # file and `crew use`, and for the same reason.
+#
+# No roster argument, and that is the whole difference between the two callers:
+# `crew up` has already resolved a fleet definition and hands its $ROSTER down,
+# while the installer has none and lets platform_roster_names resolve from
+# CREW_ROSTER / CREW_CONFIG_DIR / XDG — the operator-owned locations, never
+# cli/crew's $PWD and examples/ conveniences. On one host those two resolutions
+# are the same fleet, which is what makes D12's "identical" a real comparison;
+# on a host with no fleet definition yet, which is most first installs, the rig
+# half is silent, exactly as D15 already leaves a host with no boxes.
 report_platform "$new_ver"
 
 log "done ($INSTALLED_FROM, version $new_ver) — try: crew help"

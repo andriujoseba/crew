@@ -35,8 +35,11 @@
 # read back out of the boxes, from the /etc/rig/manifest that rig itself writes
 # (crew#220). A host with no boxes therefore reports nothing about rig: there
 # is no guest to look in yet, and the next mint is what puts one there. A box
-# that EXISTS and carries no readable rig version is a finding, because that is
-# a guest rig was supposed to have converged and did not.
+# IN THE ROSTER that exists and carries no readable rig version is a finding,
+# because that is a guest rig was supposed to have converged and did not — and
+# the roster is what makes "was supposed to" true of it. A box on the host that
+# crew was never asked about is neither read nor reported; see
+# platform_roster_names for why that scope, and not `box list`, is the fleet.
 #
 # THE REPORT NAMES ALL FIVE, ALWAYS (#679 D16): crew's own version, the box
 # version found and wanted, and the rig version found and wanted. A message
@@ -108,6 +111,52 @@ platform_box_version() {
   platform_version_of "$(box --version 2>/dev/null | head -1 || true)"
 }
 
+# platform_roster_names [ROSTER_FILE] — the boxes THIS crew was asked about, one
+# name per line; empty when there is no fleet definition to read.
+#
+# A BOX ON THE HOST THAT IS NOT IN THE ROSTER IS NOT THIS CHECK'S BUSINESS
+# (#679, round 1). It is crew's settled position, and it is load-bearing enough
+# to have a flag behind it: `crew up` leaves such a box alone and says so in as
+# many words — `boxes on this host but not in the roster (left alone):`
+# (cli/crew:2670) — `crew upgrade --all` intersects `box list` with the roster
+# rather than reaching every box (cli/crew:4298), and `--allow-offroster` is the
+# deliberate override for the verbs that take one. A guest crew was never asked
+# about carries no /etc/rig/manifest for a reason that is not a defect, so
+# reporting it puts a finding on a healthy fleet the first time crew shares a
+# host with an operator's own box — `box new --name ada --user ada` is box's own
+# README example — and there would be no way to silence the line. That is the
+# failure this check exists to avoid, arriving through the back door.
+#
+# THE CALLER PASSES ITS OWN RESOLVED ROSTER WHERE IT HAS ONE. cli/crew resolves
+# a fleet definition at startup, with a cascade this file must not grow a second
+# and divergent answer to, so `crew up` hands its $ROSTER down. Only the
+# installer takes the fallback below, and the fallback deliberately reads the
+# OPERATOR-OWNED locations alone: cli/crew also falls back to $PWD and to the
+# shipped examples/, which are conveniences for running a command out of a
+# checkout rather than statements about which boxes this host owns, and an
+# installer that adopted them would report on a fleet that is not there.
+#
+# No fleet definition is not a finding either. That is the state of a host the
+# moment before its first `crew init`, and it lands on the same silence D15
+# already gives a host with no boxes: there is nothing crew was asked about, so
+# there is nothing to say about rig.
+platform_roster_names() { # [ROSTER_FILE]
+  local roster="${1:-}"
+  if [ -z "$roster" ]; then
+    if [ -n "${CREW_ROSTER:-}" ]; then
+      roster="$CREW_ROSTER"
+    elif [ -n "${CREW_CONFIG_DIR:-}" ]; then
+      roster="$CREW_CONFIG_DIR/fleet.roster"
+    else
+      roster="${XDG_CONFIG_HOME:-$HOME/.config}/crew/fleet.roster"
+    fi
+  fi
+  [ -r "$roster" ] || return 0
+  # `|| true` because a roster of nothing but comments is a real file and an
+  # empty match, and grep's rc 1 there would kill a caller under `set -e`.
+  { grep -vE '^[[:space:]]*(#|$)' "$roster" || true; } | awk '{print $1}'
+}
+
 # platform_guest_rig_versions — one `<box>\t<version>` row per box that answers,
 # read from the provenance file rig writes inside the guest, /etc/rig/manifest
 # (crew#220):
@@ -128,12 +177,31 @@ platform_box_version() {
 # surface that should be inventing a verdict for an unreachable box.
 #
 # 0644 both, so this read takes no sudo and must not grow one.
-platform_guest_rig_versions() {
+#
+# THE WALK IS THE ROSTER, NOT THE HOST. `box list` is still what enumerates —
+# crew reports on boxes that exist, not on roster rows that do not — but a name
+# the roster does not carry is skipped BEFORE the exec, so an off-roster box is
+# never opened, never mind reported. Skipping before rather than after is the
+# half that matters: `crew up`'s promise at cli/crew:2670 is that such a box is
+# left alone, and opening a login shell inside it to read its files is not
+# leaving it alone, however quietly the answer is then discarded.
+#
+# THE COST, since it is paid on an interactive path. The walk is sequential with
+# a 10s timeout per guest, so a report costs up to 10s × ROSTER boxes before
+# `crew up` or the installer does anything. That is the same shape and the same
+# bound as hired_engine_versions' walk beside it (shared/lib/version-skew.sh),
+# which runs on these same two surfaces today; one slow idiom shared beats a
+# second faster one invented for the neighbour of the job it already does. The
+# roster scoping above is what keeps the bound to the boxes crew owns.
+platform_guest_rig_versions() { # [ROSTER_FILE]
   command -v box >/dev/null 2>&1 || return 0
   command -v jq >/dev/null 2>&1 || return 0
-  local name answer version
+  local name answer version roster_names
+  roster_names="$(platform_roster_names "${1:-}")"
+  [ -n "$roster_names" ] || return 0
   while IFS= read -r name; do
     [ -n "$name" ] || continue
+    grep -qxF -- "$name" <<<"$roster_names" || continue
     answer="$(timeout 10 box exec "$name" -- bash -lc \
       'echo probe=ok; [ -r /etc/rig/manifest ] && cat /etc/rig/manifest' \
       </dev/null 2>/dev/null | tr -d '\r' || true)"
@@ -152,9 +220,17 @@ platform_guest_rig_versions() {
 # NEVER refuses and never returns non-zero: the consequence belongs to the call
 # site and the version never decides it (#679 D14). install.sh and `crew up`
 # both call this and both keep going.
-report_platform() { # CREW_VERSION
-  local crew_version="${1:-unknown}"
-  local box_found rows name version findings=""
+#
+# ROSTER_FILE is the fleet whose guests the rig half reads, and it is optional
+# only because one of the two surfaces has no resolver of its own: `crew up`
+# passes its already-resolved $ROSTER, the installer passes nothing and
+# platform_roster_names resolves from the environment. D12's "identical
+# messages" is a statement about the two surfaces on ONE host, and on one host
+# those two answers are the same fleet definition — which is why the fixture
+# that diffs them gives both the same one rather than only the verb.
+report_platform() { # CREW_VERSION [ROSTER_FILE]
+  local crew_version="${1:-unknown}" roster="${2:-}"
+  local box_found rows name version line findings=""
   box_found="$(platform_box_version)"
 
   if [ -z "$box_found" ]; then
@@ -163,7 +239,7 @@ report_platform() { # CREW_VERSION
     findings="${findings}box: below the floor — 'crew down --force' refuses, and a clone is not sized"$'\n'
   fi
 
-  rows="$(platform_guest_rig_versions)"
+  rows="$(platform_guest_rig_versions "$roster")"
   while IFS=$'\t' read -r name version; do
     [ -n "$name" ] || continue
     if [ -z "$version" ]; then

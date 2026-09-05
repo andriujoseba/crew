@@ -7,6 +7,21 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=shared/test/lib.sh
 source "$HERE/lib.sh"
 CLI="$ROOT/cli/crew"
+# The declared platform, read out of the declaration rather than pinned here,
+# for the same reason the role sizes further down are read out of reviewer.conf:
+# these cases are ABOUT the declaration, and a fixture holding its own copy of
+# the number is the second statement of it that #679 D11 exists to remove.
+#
+# SOURCED HERE, AT THE TOP, AND EXPORTED. The box stub below stands in for a
+# host at the floor, so the floor is what it must answer by default, and both
+# the stub and run_crew's env defaults are written before the first case runs —
+# fleet-floor/test/stub-box already reads the declaration for exactly this
+# reason and the two stubs should not disagree about where the number lives.
+# The D11 guard does not reach shared/test/, so a literal here is precisely the
+# copy that would rot quietly on the next bump (#679 round 1, kimi).
+# shellcheck source=shared/lib/platform.sh
+source "$ROOT/shared/lib/platform.sh"
+export CREW_PLATFORM_BOX_MIN CREW_PLATFORM_RIG_MIN
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 unset CREW_CONFIG_DIR CREW_EXPECT_OPERATOR_CONFIG
@@ -78,7 +93,8 @@ case "$cmd" in
     # rather than the bare number: a reader that accepted a bare number would
     # pass a fixture no real box can produce.
     printf 'box %s (/opt/box/versions/%s)\n' \
-      "${LIFE_BOX_VERSION:-0.10.0}" "${LIFE_BOX_VERSION:-0.10.0}"
+      "${LIFE_BOX_VERSION:-$CREW_PLATFORM_BOX_MIN}" \
+      "${LIFE_BOX_VERSION:-$CREW_PLATFORM_BOX_MIN}"
     ;;
   root)
     # The root door, which is `incus exec <inst> -- bash -l` — a login shell
@@ -92,7 +108,7 @@ case "$cmd" in
     [ "${LIFE_ROOT_FAIL:-}" != "$name" ] || exit 1
     # A converged box carries rig's provenance manifest from here on, which is
     # what the platform check reads back out of the guest.
-    printf '%s\n' "${LIFE_GUEST_RIG:-0.4.0}" >"$state_dir/rig-$name"
+    printf '%s\n' "${LIFE_GUEST_RIG:-$CREW_PLATFORM_RIG_MIN}" >"$state_dir/rig-$name"
     ;;
   list)
     # LIFE_BOX_LIST overrides the fleet this host has, for the platform cases
@@ -175,7 +191,7 @@ case "$cmd" in
       #   absent  the box does not answer at all — crew knows nothing about it
       # The two must never collapse (crew#220 rule 5), which is why `probe=ok`
       # is emitted on its own line before anything else is read.
-      version="${LIFE_GUEST_RIG:-0.4.0}"
+      version="${LIFE_GUEST_RIG:-$CREW_PLATFORM_RIG_MIN}"
       [ ! -s "$state_dir/rig-$name" ] || version="$(cat "$state_dir/rig-$name")"
       [ "$version" != absent ] || exit 1
       printf 'probe=ok\n'
@@ -291,8 +307,8 @@ run_crew() {
     LIFE_READY_FAILS="${LIFE_READY_FAILS:-0}" \
     LIFE_CLONE_SIZING="${LIFE_CLONE_SIZING:-yes}" \
     LIFE_BOX_RESOURCES="${LIFE_BOX_RESOURCES:-}" \
-    LIFE_BOX_VERSION="${LIFE_BOX_VERSION:-0.10.0}" \
-    LIFE_GUEST_RIG="${LIFE_GUEST_RIG:-0.4.0}" \
+    LIFE_BOX_VERSION="${LIFE_BOX_VERSION:-$CREW_PLATFORM_BOX_MIN}" \
+    LIFE_GUEST_RIG="${LIFE_GUEST_RIG:-$CREW_PLATFORM_RIG_MIN}" \
     LIFE_ROOT_FAIL="${LIFE_ROOT_FAIL:-}" \
     LIFE_BOX_LIST="${LIFE_BOX_LIST-alpha beta offroster}" \
     LIFE_PROBE_BIN="$PROBE_BIN" LIFE_NO_FLOCK_BIN="$NO_FLOCK_BIN" \
@@ -768,14 +784,8 @@ t hostjob-usage-error-writes-no-log '' "$(job_log)"
 # A test that minted a real box would prove the same thing about incus.
 #
 # Its own fleet definition, so the roster rows these cases need do not enter
-# the --all iterations above and shift their counts.
-# The declared platform, read out of the declaration rather than pinned here,
-# for the same reason the role sizes below are read out of reviewer.conf: these
-# cases are ABOUT the declaration, and a fixture holding its own copy of the
-# number is the second statement of it that #679 D11 exists to remove.
-# shellcheck source=shared/lib/platform.sh
-source "$ROOT/shared/lib/platform.sh"
-
+# the --all iterations above and shift their counts. (The declaration itself is
+# sourced at the top of this file, before the box stub is written.)
 CONF_NEW="$TMP/conf-new"
 mkdir -p "$CONF_NEW"
 cp "$CONF/fleet.conf" "$CONF/repos.txt" "$CONF/notify-repos.txt" \

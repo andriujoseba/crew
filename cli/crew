@@ -2575,7 +2575,12 @@ cmd_up() {
   # the roster read would put it behind one — a platform floor an operator
   # meets only once their configuration is complete is the surprise D12 is
   # about, one step further in.
-  report_platform "$(crew_version 2>/dev/null || echo unknown)"
+  #
+  # $ROSTER is handed down rather than re-resolved: the rig half reads the
+  # guests, and the guests it may read are the ones crew was asked about, which
+  # is the same scope `cmd_up` itself keeps and the same one `crew upgrade
+  # --all` intersects to. This resolution is the fleet's only one.
+  report_platform "$(crew_version 2>/dev/null || echo unknown)" "$ROSTER"
 
   # `up` takes no --ref, but hire_box now consumes the globals the caller
   # resolves — so it resolves HEAD once here, for the same reason and with the
