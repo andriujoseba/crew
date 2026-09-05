@@ -860,6 +860,59 @@ t new-fresh-mint-bootstrap-names-no-user 0 \
 t new-fresh-mint-pins-the-declared-rig 1 \
   "$(grep -c "RIG_REF=$CREW_PLATFORM_RIG_MIN" "$STATE/root-script-gamma" || true)"
 
+# THE TWO SURFACES AN OPERATOR READS WITHOUT OPENING THE SOURCE (#679 D2, and
+# the fence triage widened onto them on 2026-09-05 upholding codex-bot's
+# round-2 block). The argv above is only half the retirement: `crew help`'s
+# LIFECYCLE text and `crew new`'s success response both went on describing an
+# <agent>-box BOX TEMPLATE — a thing box 0.10.0 refuses and D2 makes rig's ROLE.
+# A tree that emits the right argv and then tells the operator it used a
+# template is still shipping the contradiction, one layer up, on the two
+# sentences most operators will ever read about this mint.
+#
+# THE EVIDENCE IS THE COMMANDS' OWN OUTPUT AND NOT THE SOURCE, in the
+# criterion's own words. A source grep passes on a sentence assembled out of two
+# variables, and it cannot tell the LIVE text apart from the comments beside it
+# that describe the retired form deliberately — cli/crew:1523 and
+# shared/lib/box-mint.sh:55 both say "template" on purpose and must keep saying
+# it, which is why a grep guard was not asked for and is not written here.
+#
+# TWO CASES AND NOT ONE, because the criterion says EITHER surface. A single
+# guard that reads only one of them passes half the criterion in silence and
+# reads exactly like a working one, so the issue's two probes drive them
+# separately and each names the case that dies.
+reset_case
+capture help
+t help-lifecycle-advertises-no-box-template 0 \
+  "$(grep -ci 'template' <<<"$OUT" || true)"
+t help-lifecycle-names-rigs-role-instead 1 \
+  "$(grep -cF 'rig converges it into its' <<<"$OUT" || true)"
+
+reset_case
+LIFE_CONF="$CONF_NEW" capture new gamma
+t new-response-advertises-no-box-template 0 \
+  "$(grep -ci 'template' <<<"$OUT" || true)"
+# ...and the tense is the other half of the same sentence's defect, which a
+# rewording that only drops the word "template" would leave in place.
+# box_mint_fresh returns only AFTER `rig bootstrap` has completed, so a response
+# saying the vendor CLI is "converging" describes a step that finished before it
+# printed — and an operator who reads it as in flight waits for something that
+# is not coming, or logs in to a box they believe is half built.
+t new-response-says-convergence-completed 1 \
+  "$(grep -cF "vendor CLI converged by rig into the claude-box role" <<<"$OUT" || true)"
+
+# THE CLONE PATH PRINTS THIS SAME RESPONSE, and on it there was no template, no
+# rig and no bootstrap at all — the box was copied from a gold snapshot and
+# carries whatever that snapshot carried. So the sentence is BRANCHED rather
+# than reworded, and this is the case that proves the branch is there: one
+# corrected sentence passes both cases above and still lies here.
+reset_case
+LIFE_CONF="$CONF_NEW" capture new delta
+t new-clone-response-says-only-that-it-was-copied \
+  "delta is created — copied from goldbox/gold." \
+  "$(grep -F 'delta is created' <<<"$OUT" || true)"
+t new-clone-response-makes-no-rig-claim 0 \
+  "$(grep -c 'converged by rig' <<<"$OUT" || true)"
+
 # The role mapping is ASSERTED and not merely present — one case per profile,
 # because a hardcoded `claude-box` passes the gamma case above and is wrong for
 # three quarters of the fleet.
