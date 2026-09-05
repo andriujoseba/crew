@@ -604,7 +604,7 @@ t hostcron-has-no-commented-out-reset-job-line 0 \
 # help moves with it just as this one reds if the stale claim comes back.
 capture help reset
 help_flat="$(printf '%s\n' "$OUT" | tr '\n' ' ')"
-if grep -qE 'host schedule[^.]*reset' <<<"$help_flat"; then
+if grep -qiE 'reset weekly|weekly reset|host-scheduled reset|scheduled reset|reset is .*schedul' <<<"$help_flat"; then
   help_schedules_reset=1
 else
   help_schedules_reset=0
