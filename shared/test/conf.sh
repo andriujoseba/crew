@@ -504,6 +504,7 @@ if [ ! -e "$KIMI_RESUME_COUNT" ]; then
   printf '%s\n' \
     '{"type":"metadata","protocol_version":"1.10"}' \
     '{"message":{"type":"StatusUpdate","payload":{"token_usage":{"input_other":100,"output":10,"input_cache_read":20,"input_cache_creation":30}}}}' \
+    '{"message":{"type":"StatusUpdate","payload":{"token_usage":null}}}' \
     '{"message":{"type":"StatusUpdate","payload":{"token_usage":{"input_other":200,"output":20,"input_cache_read":40,"input_cache_creation":60}}}}' \
     >"$wire"
   printf 'Used Shell (first)\nfirst turn reached tools\n'
