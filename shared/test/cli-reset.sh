@@ -1348,7 +1348,13 @@ t reapnow-sweeps-despite-the-stamp swept "$r1"
 t reapnow-does-not-read-the-stamp 0 \
   "$(grep -v '^[[:space:]]*#' "$REAPNOW" | grep -c 'reaper-last' | tr -d ' ')"
 
-# --- #590 D4: THE WEEKLY LINE INHERITS THIS REFUSAL AND MUST NOT WEAKEN IT ---
+# --- #590 D4: THE FLEET-WIDE RESET INHERITS THIS REFUSAL AND MUST NOT WEAKEN
+# IT --- and it is the RESET VERB that inherits it, under whatever calls it.
+# #590 D4 wrote this contract for the weekly cron entry; #678 defers that entry
+# to 0.1.4 (#328), so the caller today is an operator at a keyboard. The
+# contract is unchanged by that, which is the whole point of stating it against
+# the verb: it holds for the hand-run fleet-wide reset now and for the
+# scheduled one when #328 returns it, with no rework here either way.
 #
 # Everything above proves the interlock refuses. What a FLEET-WIDE run adds is
 # that nobody is watching each box while it goes, so the refusal has to survive

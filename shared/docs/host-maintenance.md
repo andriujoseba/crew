@@ -217,10 +217,10 @@ line can come back on `0.1.4`.
 
 A restore to a checkpoint cut **before** the last `crew upgrade` is a silent
 engine downgrade of the whole fleet, with nothing red anywhere — and on a
-schedule it would be that every week, which is the shape `0.1.4` restores. Every verb that installs an
-engine — `crew hire`, `crew up`,
-`crew upgrade` — marks the checkpoint stale before installing, and the reset
-refuses any box whose mark is set:
+schedule it would be that every week, which is the shape `0.1.4` restores.
+Every verb that installs an engine — `crew hire`, `crew up`, `crew upgrade` —
+marks the checkpoint stale before installing, and the reset refuses any box
+whose mark is set:
 
 ```
   claude-builder: REFUSED — its armed checkpoint was cut at crew@0.1.2 and the
