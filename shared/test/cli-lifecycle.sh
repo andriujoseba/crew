@@ -599,19 +599,37 @@ t hostcron-has-no-commented-out-reset-job-line 0 \
   "$(sed -E 's/^([[:space:]]*#+)+[[:space:]]*//' "$HOST_CRONTAB" \
      | grep -cE "$cron_entry" || true)"
 # #688 — the operator-facing reset help and the shipped schedule are two
-# readers of one fact. Compare them instead of pinning either answer: #328 can
+# readers of one fact. Compare them instead of pinning either answer: #694 can
 # restore the reset job in a later release, and that tree must red until its
 # help moves with it just as this one reds if the stale claim comes back.
 help_reset_claims_schedule() {
-  local flattened normalized direct cadenced
+  local flattened normalized sentence action
   flattened="$(printf '%s\n' "$1" | tr '\n' ' ')"
   normalized="$(sed -E "s/['\"\`]/ /g; s/[[:space:]]+/ /g" \
     <<<"$flattened")"
-  direct='(host[[:space:]]+)?schedule[^.!?]*(fires|runs|executes|invokes)[[:space:]]+(the[[:space:]]+verb[[:space:]]+)?(crew[[:space:]]+)?reset([^[:alnum:]]|$)'
-  cadenced='((host[[:space:]]+)?schedule|cron)[^.!?]*crew[[:space:]]+reset[[:space:]]+(daily|weekly|nightly|hourly|every[[:space:]]+(day|morning|night|monday|tuesday|wednesday|thursday|friday|saturday|sunday))'
-  grep -qiE 'reset weekly|weekly reset|host-scheduled reset|scheduled reset|reset is .*schedul' \
-    <<<"$flattened" \
-    || grep -qiE "${direct}|${cadenced}" <<<"$normalized"
+  action='fire[sd]?|run|runs|execut(e[sd]?|ing)|invok(e[sd]?|ing)|schedul(e[sd]?|ing)'
+
+  # A claim is local to one sentence. The source, action and reset may appear
+  # in any order (including a shared or passive predicate), but prose that
+  # explicitly keeps reset on demand is not a scheduled-reset claim.
+  while IFS= read -r sentence; do
+    if grep -qiE \
+      'reset weekly|weekly reset|host-scheduled reset|scheduled reset|reset is [^;]*schedul' \
+      <<<"$sentence"; then
+      return 0
+    fi
+    if grep -qiE '(^|[^[:alnum:]])((host[[:space:]]+)?schedule|cron)([^[:alnum:]]|$)' \
+        <<<"$sentence" \
+      && grep -qiE '(^|[^[:alnum:]])crew[[:space:]]+reset([^[:alnum:]]|$)' \
+        <<<"$sentence" \
+      && grep -qiE "(^|[^[:alnum:]])(${action})([^[:alnum:]]|$)" \
+        <<<"$sentence" \
+      && ! grep -qiE 'crew[[:space:]]+reset[^;]*(on[[:space:]]+demand|not[[:space:]]+scheduled)' \
+        <<<"$sentence"; then
+      return 0
+    fi
+  done < <(sed -E 's/[.!?]+/\n/g' <<<"$normalized")
+  return 1
 }
 
 t hostjob-reset-help-detector-catches-punctuated-scheduled-verb 1 \
@@ -622,9 +640,25 @@ t hostjob-reset-help-detector-catches-shared-schedule-predicate 1 \
   "$(help_reset_claims_schedule \
     "The host schedule runs 'crew restart' daily and 'crew reset' every Sunday at 05:10." \
     && echo 1 || echo 0)"
+t hostjob-reset-help-detector-catches-shared-predicate-without-cadence 1 \
+  "$(help_reset_claims_schedule \
+    "The host schedule fires 'crew restart' and 'crew reset'." \
+    && echo 1 || echo 0)"
+t hostjob-reset-help-detector-catches-bare-day-passive-predicate 1 \
+  "$(help_reset_claims_schedule \
+    "'crew restart' is fired daily by the host schedule; 'crew reset' is fired on Sundays." \
+    && echo 1 || echo 0)"
+t hostjob-reset-help-detector-catches-cron-source-after-reset 1 \
+  "$(help_reset_claims_schedule \
+    "crew reset runs from cron on Sundays." \
+    && echo 1 || echo 0)"
 t hostjob-reset-help-detector-keeps-on-demand-reset-unscheduled 0 \
   "$(help_reset_claims_schedule \
     "The host schedule fires 'crew restart' daily. 'crew reset' is run on demand." \
+    && echo 1 || echo 0)"
+t hostjob-reset-help-detector-keeps-unquoted-on-demand-reset-unscheduled 0 \
+  "$(help_reset_claims_schedule \
+    "crew reset is run on demand. An operator may invoke it during a scheduled run." \
     && echo 1 || echo 0)"
 capture help reset
 help_flat="$(printf '%s\n' "$OUT" | tr '\n' ' ')"
