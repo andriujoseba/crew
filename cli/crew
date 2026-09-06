@@ -317,12 +317,12 @@ RESTART_READY_POLL_S="${CREW_RESTART_READY_POLL_SECONDS:-2}"
 
 # --- host maintenance state (#590) -------------------------------------------
 # What an unattended restart/reset caller needs, which neither verb owed on
-# its own: a lock and a log, so the scheduled restart and an on-demand reset
-# can never overlap,
-# because the cron line carries no redirect and its stdout goes to mail nobody
-# reads on Monday. Both live in the VERB and neither in the cron line — that is
-# shared/host-crontab.example's whole charter, inherited from the on-box side,
-# where locking and redirecting in the crontab drifted five ways.
+# its own: a lock, so the scheduled restart and an on-demand reset can never
+# overlap; and a log, because the cron line carries no redirect and its stdout
+# goes to mail nobody reads on Monday. Both live in the VERB and neither in the
+# cron line — the whole charter of shared/host-crontab.example, inherited from
+# the on-box side, where locking and redirecting in the crontab drifted five
+# ways.
 #
 # Under XDG_STATE_HOME because that is what it is: host-side runtime evidence,
 # not configuration. The explicit override exists for fixtures and for an

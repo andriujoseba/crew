@@ -602,9 +602,33 @@ t hostcron-has-no-commented-out-reset-job-line 0 \
 # readers of one fact. Compare them instead of pinning either answer: #328 can
 # restore the reset job in a later release, and that tree must red until its
 # help moves with it just as this one reds if the stale claim comes back.
+help_reset_claims_schedule() {
+  local flattened normalized direct cadenced
+  flattened="$(printf '%s\n' "$1" | tr '\n' ' ')"
+  normalized="$(sed -E "s/['\"\`]/ /g; s/[[:space:]]+/ /g" \
+    <<<"$flattened")"
+  direct='(host[[:space:]]+)?schedule[^.!?]*(fires|runs|executes|invokes)[[:space:]]+(the[[:space:]]+verb[[:space:]]+)?(crew[[:space:]]+)?reset([^[:alnum:]]|$)'
+  cadenced='((host[[:space:]]+)?schedule|cron)[^.!?]*crew[[:space:]]+reset[[:space:]]+(daily|weekly|nightly|hourly|every[[:space:]]+(day|morning|night|monday|tuesday|wednesday|thursday|friday|saturday|sunday))'
+  grep -qiE 'reset weekly|weekly reset|host-scheduled reset|scheduled reset|reset is .*schedul' \
+    <<<"$flattened" \
+    || grep -qiE "${direct}|${cadenced}" <<<"$normalized"
+}
+
+t hostjob-reset-help-detector-catches-punctuated-scheduled-verb 1 \
+  "$(help_reset_claims_schedule \
+    "The host schedule fires 'crew restart' daily and fires 'crew reset' weekly." \
+    && echo 1 || echo 0)"
+t hostjob-reset-help-detector-catches-shared-schedule-predicate 1 \
+  "$(help_reset_claims_schedule \
+    "The host schedule runs 'crew restart' daily and 'crew reset' every Sunday at 05:10." \
+    && echo 1 || echo 0)"
+t hostjob-reset-help-detector-keeps-on-demand-reset-unscheduled 0 \
+  "$(help_reset_claims_schedule \
+    "The host schedule fires 'crew restart' daily. 'crew reset' is run on demand." \
+    && echo 1 || echo 0)"
 capture help reset
 help_flat="$(printf '%s\n' "$OUT" | tr '\n' ' ')"
-if grep -qiE 'reset weekly|weekly reset|host-scheduled reset|scheduled reset|reset is .*schedul' <<<"$help_flat"; then
+if help_reset_claims_schedule "$OUT"; then
   help_schedules_reset=1
 else
   help_schedules_reset=0
