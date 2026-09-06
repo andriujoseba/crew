@@ -609,7 +609,11 @@ if grep -qiE 'reset weekly|weekly reset|host-scheduled reset|scheduled reset|res
 else
   help_schedules_reset=0
 fi
-cron_schedules_reset="$(printf '%s\n' "$host_cron_lines" | grep -cE "$cron_entry" || true)"
+if printf '%s\n' "$host_cron_lines" | grep -qE "$cron_entry"; then
+  cron_schedules_reset=1
+else
+  cron_schedules_reset=0
+fi
 t hostjob-reset-help-schedule-matches-shipped-example \
   "$cron_schedules_reset" "$help_schedules_reset"
 case "$help_flat" in *'every invocation'*'two verbs can never overlap'*) r1=preserved ;; *) r1="$OUT" ;; esac

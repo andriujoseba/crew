@@ -317,8 +317,8 @@ RESTART_READY_POLL_S="${CREW_RESTART_READY_POLL_SECONDS:-2}"
 
 # --- host maintenance state (#590) -------------------------------------------
 # What an unattended restart/reset caller needs, which neither verb owed on
-# its own: a lock so the scheduled restart and an on-demand reset can never
-# overlap, and a log,
+# its own: a lock and a log, so the scheduled restart and an on-demand reset
+# can never overlap,
 # because the cron line carries no redirect and its stdout goes to mail nobody
 # reads on Monday. Both live in the VERB and neither in the cron line — that is
 # shared/host-crontab.example's whole charter, inherited from the on-box side,
@@ -787,13 +787,11 @@ SCHEDULED AND ON-DEMAND USE. The host schedule fires 'crew restart' daily.
 'crew reset' is run on demand. Both verbs carry what a caller with no terminal
 and nobody watching needs.
 
-They take one HOST MAINTENANCE LOCK between them on every invocation,
-non-blocking, so the two verbs can never overlap. The later one names the
-holder, touches no box, and exits 4. The lock is taken on every invocation and
-not only under
-cron: an operator running this by hand during a scheduled run IS the collision
-it prevents. It needs 'flock' on PATH and refuses without it rather than
-running unlocked.
+They take one HOST MAINTENANCE LOCK between them, non-blocking, on every
+invocation, so the two verbs can never overlap. The later one names the holder,
+touches no box, and exits 4. The lock is not limited to cron: an operator
+running this by hand during a scheduled run IS the collision it prevents. It
+needs 'flock' on PATH and refuses without it rather than running unlocked.
 
 Every run writes its boundary and its whole output to
   $HOST_JOB_LOG
@@ -2846,9 +2844,9 @@ cycle_box() {
 # job's stdout in the same file. The one deliberate difference from tick.sh:
 # the third shape is unconditional here rather than only on failure. tick.sh
 # can leave success implicit because its job writes `duty run start` itself and
-# a reader wants the exception; an unattended `reset --all` that refused every box
-# is a fact somebody has to be able to read POSITIVELY, at the boundary, rather
-# than infer from the absence of a complaint.
+# a reader wants the exception; an unattended `reset --all` that refused every
+# box is a fact somebody has to be able to read POSITIVELY, at the boundary,
+# rather than infer from the absence of a complaint.
 #
 # The lock is taken by BOTH verbs and on every invocation, not only under cron.
 # "A reset and a restart can never overlap" is not a property that can be
@@ -4358,10 +4356,10 @@ cmd_upgrade() {
     # D5's mark, BEFORE the upgrade that invalidates the checkpoint (#589). An
     # `armed` checkpoint cut before this moment restores an OLDER engine than
     # the box is hired at, and an unattended reset would perform that downgrade
-    # with nothing red anywhere. Marking first is what
-    # makes the fact durable: a mark that could not be written stops the
-    # upgrade instead of leaving a box whose checkpoint lies about it. It can
-    # still not take the loop down — one box refuses, the rest carry on.
+    # with nothing red anywhere. Marking first makes the fact durable: a mark
+    # that could not be written stops the upgrade instead of leaving a box whose
+    # checkpoint lies about it. It can still not take the loop down — one box
+    # refuses, the rest carry on.
     if ! checkpoint_stale_gate "$b" "$want"; then
       echo "  upgrade REFUSED on $b — its engine is unchanged"
       continue
