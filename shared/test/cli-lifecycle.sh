@@ -609,7 +609,7 @@ if grep -qiE 'reset weekly|weekly reset|host-scheduled reset|scheduled reset|res
 else
   help_schedules_reset=0
 fi
-if printf '%s\n' "$host_cron_lines" | grep -qE "$cron_entry"; then
+if grep -qE "$cron_entry" <<<"$host_cron_lines"; then
   cron_schedules_reset=1
 else
   cron_schedules_reset=0
