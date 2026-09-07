@@ -16,6 +16,19 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=shared/test/lib.sh
 source "$HERE/lib.sh"
 CLI="$ROOT/cli/crew"
+# A literal here pins the fixture to one release rung instead of to the verb;
+# #659's 0.1.3 cut exposed that collision. Derive both roles from the tree so
+# they stay distinct from its engine version and from each other.
+ENGINE_VERSION="$(head -1 "$ROOT/VERSION" | tr -d '\r\n')"
+BOX_STAMP_VERSION="${ENGINE_VERSION}-box-stamp-fixture"
+CHECKPOINT_VERSION="${ENGINE_VERSION}-checkpoint-fixture"
+if [ "$BOX_STAMP_VERSION" = "$ENGINE_VERSION" ] ||
+   [ "$CHECKPOINT_VERSION" = "$ENGINE_VERSION" ] ||
+   [ "$BOX_STAMP_VERSION" = "$CHECKPOINT_VERSION" ]; then
+  printf 'fixture version collision: engine=%s box=%s checkpoint=%s\n' \
+    "$ENGINE_VERSION" "$BOX_STAMP_VERSION" "$CHECKPOINT_VERSION" >&2
+  exit 1
+fi
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 unset CREW_CONFIG_DIR CREW_EXPECT_OPERATOR_CONFIG
@@ -272,7 +285,8 @@ run_crew() {
     RST_INSTALL_FAIL="${RST_INSTALL_FAIL:-}" \
     RST_AGENT_alpha="${RST_AGENT_alpha-claude}" RST_AGENT_beta="${RST_AGENT_beta-codex}" \
     RST_AGENT_offroster="${RST_AGENT_offroster-claude}" \
-    RST_STAMP_alpha="${RST_STAMP_alpha-0.1.3}" RST_STAMP_beta="${RST_STAMP_beta-0.1.3}" \
+    RST_STAMP_alpha="${RST_STAMP_alpha-$BOX_STAMP_VERSION}" \
+    RST_STAMP_beta="${RST_STAMP_beta-$BOX_STAMP_VERSION}" \
     RST_PCT_BEFORE="${RST_PCT_BEFORE:-40}" RST_PCT_AFTER="${RST_PCT_AFTER:-40}" \
     RST_LARGE="${RST_LARGE-13G /swapfile;13G /swapfile-drill;19G /var;6.9G /home;}" \
     RST_INFO_BROKEN="${RST_INFO_BROKEN:-}" RST_REAP_FAIL="${RST_REAP_FAIL:-}" \
@@ -301,7 +315,7 @@ arm() {
   mkdir -p "$CONF/checkpoints"
   {
     printf '# crew reset checkpoint record for %s (#589 D5). Written by the fixture.\n' "$1"
-    printf 'CHECKPOINT_VERSION=%s\n' "${2:-0.1.3}"
+    printf 'CHECKPOINT_VERSION=%s\n' "${2:-$CHECKPOINT_VERSION}"
     printf 'CHECKPOINT_CUT_AT=2026-09-02T00:00:00Z\n'
     printf 'CHECKPOINT_STALE=\n'
   } >"$CONF/checkpoints/$1.conf"
@@ -412,7 +426,7 @@ t reset-cut-reclaims-before-measuring $'reap alpha\nroot-df alpha' \
 t reset-cut-takes-the-snapshot 1 "$(calls_of 'snapshot alpha armed')"
 case "$OUT" in *'reclaiming before measuring'*'reaper: transcripts reclaimed 12345 bytes'*) r1=forwarded ;; *) r1="$OUT" ;; esac
 t reset-cut-forwards-the-sweep-evidence forwarded "$r1"
-case "$OUT" in *'alpha: armed cut at crew@0.1.3; root filesystem 60% used'*) r1=reported ;; *) r1="$OUT" ;; esac
+case "$OUT" in *"alpha: armed cut at crew@$BOX_STAMP_VERSION; root filesystem 60% used"*) r1=reported ;; *) r1="$OUT" ;; esac
 t reset-cut-reports-the-post-reclaim-figure reported "$r1"
 
 reset_case
@@ -468,7 +482,7 @@ t reset-cut-reaper-other-status-claims-neither-named-cause quiet "$r1"
 
 reset_case
 capture reset --cut alpha
-t reset-cut-records-the-version 'CHECKPOINT_VERSION=0.1.3' \
+t reset-cut-records-the-version "CHECKPOINT_VERSION=$BOX_STAMP_VERSION" \
   "$(grep '^CHECKPOINT_VERSION=' "$CONF/checkpoints/alpha.conf")"
 t reset-cut-records-no-stale-mark 'CHECKPOINT_STALE=' \
   "$(grep '^CHECKPOINT_STALE=' "$CONF/checkpoints/alpha.conf")"
@@ -596,7 +610,7 @@ capture reset alpha
 t reset-restores-and-starts 0 "$RC"
 t reset-stops-before-restoring $'down alpha\nrestore alpha armed --force\nstart alpha' \
   "$(grep -E '^(down|restore|start) alpha' "$STATE/calls")"
-case "$OUT" in *'alpha: restored to armed (crew@0.1.3) and started'*) r1=reported ;; *) r1="$OUT" ;; esac
+case "$OUT" in *"alpha: restored to armed (crew@$BOX_STAMP_VERSION) and started"*) r1=reported ;; *) r1="$OUT" ;; esac
 t reset-restore-is-reported reported "$r1"
 
 reset_case
@@ -618,7 +632,7 @@ capture reset --cut alpha
 : >"$STATE/calls"
 RST_STAMP_alpha=0.1.4 capture reset alpha
 t reset-refuses-a-version-mismatch 1 "$RC"
-case "$OUT" in *'cut at crew@0.1.3 and the box now runs crew@0.1.4'*'crew reset --cut alpha'*) r1=named ;; *) r1="$OUT" ;; esac
+case "$OUT" in *"cut at crew@$BOX_STAMP_VERSION and the box now runs crew@0.1.4"*'crew reset --cut alpha'*) r1=named ;; *) r1="$OUT" ;; esac
 t reset-version-mismatch-names-both-and-the-repair named "$r1"
 t reset-version-mismatch-restores-nothing 0 "$(calls_of 'restore')"
 
@@ -637,7 +651,7 @@ t reset-upgrade-writes-the-stale-mark 1 \
 : >"$STATE/calls"
 capture reset alpha
 t reset-after-upgrade-is-refused 1 "$RC"
-case "$OUT" in *'was cut at crew@0.1.3 and the box was upgraded to crew@'*'silently downgrade the engine'*) r1=named ;; *) r1="$OUT" ;; esac
+case "$OUT" in *"was cut at crew@$BOX_STAMP_VERSION and the box was upgraded to crew@"*'silently downgrade the engine'*) r1=named ;; *) r1="$OUT" ;; esac
 t reset-stale-checkpoint-names-both-versions named "$r1"
 t reset-stale-checkpoint-restores-nothing 0 "$(calls_of 'restore')"
 # A re-cut clears the mark and the reset then proceeds.
@@ -767,12 +781,12 @@ t reset-unreadable-record-still-reaches-the-summary summarised "$r1"
 # The fleet path: alpha refuses, beta restores, both are counted.
 reset_case
 arm alpha
-arm beta
+arm beta "$BOX_STAMP_VERSION"
 chmod 000 "$CONF/checkpoints/alpha.conf"
 capture reset --all
 chmod 600 "$CONF/checkpoints/alpha.conf"
 t reset-all-unreadable-record-is-a-failure 1 "$RC"
-case "$OUT" in *'beta: restored to armed (crew@0.1.3) and started'*) r1=restored ;; *) r1="$OUT" ;; esac
+case "$OUT" in *"beta: restored to armed (crew@$BOX_STAMP_VERSION) and started"*) r1=restored ;; *) r1="$OUT" ;; esac
 t reset-all-unreadable-record-does-not-take-the-loop-down restored "$r1"
 t reset-all-unreadable-record-restores-exactly-the-other-box 1 "$(calls_of 'restore beta armed')"
 t reset-all-unreadable-record-restores-nothing-for-its-own-box 0 "$(calls_of 'restore alpha')"
@@ -895,7 +909,7 @@ t reset-checkpoint-field-unreadable-answers-empty 'REACHED []' "$CPF_OUT"
 reset_case
 arm alpha
 CPF_OUT="$(bash "$CPF_DRIVER" "$CONF" "$CPF_SRC" 2>/dev/null)" && CPF_RC=0 || CPF_RC=$?
-t reset-checkpoint-field-readable-still-answers 'REACHED [0.1.3]' "$CPF_OUT"
+t reset-checkpoint-field-readable-still-answers "REACHED [$CHECKPOINT_VERSION]" "$CPF_OUT"
 t reset-checkpoint-field-readable-does-not-abort 0 "$CPF_RC"
 
 # A missing record: the `[ -f ]` arm, which always returned 0 and still must.
@@ -913,11 +927,11 @@ t reset-checkpoint-field-missing-does-not-abort 0 "$CPF_RC"
 # trailing lines so the race is not a coin toss.
 reset_case
 arm alpha
-{ printf 'CHECKPOINT_VERSION=0.1.3\n'; for _ in $(seq 1 2000); do printf 'CHECKPOINT_VERSION=9.9.9\n'; done; } \
+{ printf 'CHECKPOINT_VERSION=%s\n' "$CHECKPOINT_VERSION"; for _ in $(seq 1 2000); do printf 'CHECKPOINT_VERSION=9.9.9\n'; done; } \
   >"$CONF/checkpoints/alpha.conf"
 CPF_OUT="$(bash "$CPF_DRIVER" "$CONF" "$CPF_SRC" 2>/dev/null)" && CPF_RC=0 || CPF_RC=$?
 t reset-checkpoint-field-duplicate-key-does-not-abort 0 "$CPF_RC"
-t reset-checkpoint-field-duplicate-key-takes-the-first 'REACHED [0.1.3]' "$CPF_OUT"
+t reset-checkpoint-field-duplicate-key-takes-the-first "REACHED [$CHECKPOINT_VERSION]" "$CPF_OUT"
 
 # --- D5: THE STALE MARK IS A PRECONDITION TO MOVING THE ENGINE --------------
 #
@@ -934,7 +948,7 @@ t reset-checkpoint-field-duplicate-key-takes-the-first 'REACHED [0.1.3]' "$CPF_O
 # current; marking first refuses the install instead, so the two stay in
 # agreement and nothing drifts.
 reset_case
-arm alpha
+arm alpha "$BOX_STAMP_VERSION"
 chmod 500 "$CONF/checkpoints"
 capture upgrade alpha
 chmod u+w "$CONF/checkpoints"
@@ -949,7 +963,7 @@ t reset-unwritable-stale-mark-claims-nothing quiet "$r1"
 # it guards did not happen.
 t reset-unwritable-stale-mark-installs-nothing 0 "$(calls_of 'install alpha')"
 t reset-unwritable-stale-mark-leaves-the-record-intact \
-  $'CHECKPOINT_VERSION=0.1.3\nCHECKPOINT_STALE=' \
+  "$(printf 'CHECKPOINT_VERSION=%s\nCHECKPOINT_STALE=' "$BOX_STAMP_VERSION")" \
   "$(grep -E '^CHECKPOINT_(VERSION|STALE)=' "$CONF/checkpoints/alpha.conf")"
 # And the box is still restorable, correctly: its engine never moved.
 : >"$STATE/calls"
@@ -1132,7 +1146,7 @@ t reset-unreadable-lock-is-a-busy-skip 3 "$RC"
 t reset-unreadable-lock-mutates-nothing 0 "$(grep -cE '^(snapshot|restore) ' "$STATE/calls" || true)"
 
 reset_case
-arm alpha
+arm alpha "$BOX_STAMP_VERSION"
 printf 'busy:3601\n' >"$STATE/probe-alpha"
 capture reset alpha --force-after 1
 t reset-force-after-proceeds 0 "$RC"
@@ -1202,7 +1216,7 @@ t reset-over-100-threshold-cuts-nothing 0 "$(calls_of 'snapshot')"
 # exported in their shell was having every restore die on a threshold the
 # restore never consults.
 reset_case
-arm alpha
+arm alpha "$BOX_STAMP_VERSION"
 CREW_RESET_CUT_MAX_USED_PCT=80% capture reset alpha
 t reset-malformed-threshold-does-not-block-a-restore 0 "$RC"
 t reset-malformed-threshold-restores 1 "$(calls_of 'restore alpha armed')"
@@ -1224,7 +1238,9 @@ t reset-no-target-is-a-usage-error 2 "$RC"
 # checkpoint of unknown version restores, blessing the D5 fail-open below in
 # a fixture that is not even about D5.
 reset_case
-arm alpha; arm beta; arm offroster
+arm alpha "$BOX_STAMP_VERSION"
+arm beta "$BOX_STAMP_VERSION"
+arm offroster "$BOX_STAMP_VERSION"
 capture reset --all
 t reset-all-restores-the-roster 2 "$(calls_of 'restore')"
 t reset-all-leaves-offroster 0 "$(grep -c 'offroster' "$STATE/calls" || true)"
@@ -1374,14 +1390,14 @@ t reapnow-does-not-read-the-stamp 0 \
 reset_case
 rm -f "$HOSTLOG"
 arm alpha
-arm beta
+arm beta "$BOX_STAMP_VERSION"
 : >"$STATE/calls"
 capture upgrade alpha
 : >"$STATE/calls"
 capture reset --all
 t reset-weekly-refusal-is-not-a-restore 1 "$RC"
 case "$OUT" in
-  *'alpha: REFUSED'*'was cut at crew@0.1.3 and the box was upgraded to crew@'*'Repair with: crew reset --cut alpha'*) r1=named ;;
+  *'alpha: REFUSED'*"was cut at crew@$CHECKPOINT_VERSION and the box was upgraded to crew@"*'Repair with: crew reset --cut alpha'*) r1=named ;;
   *) r1="$OUT" ;;
 esac
 t reset-weekly-refusal-names-the-repair named "$r1"
