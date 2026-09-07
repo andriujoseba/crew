@@ -67,11 +67,46 @@ every rebase, because the drilled tree moves under the record. Drill the
 candidate once, publish it as a tag, and the final's evidence anchors to an
 immutable published ref instead of to a tree that has since changed.
 
-**What it does not buy, stated so this is not read as more than it is:** the
-first rc round still drills a *mutable* candidate. `drill-recorded` gates the
-rc PR, so `drills/X.Y.Z-rc1.md` must exist before the merge that creates the
-`X.Y.Z-rc1` tag — the record is committed against a tree that is not yet
-tagged. That is heavy-duty/crew#490's problem, and it is unchanged here.
+**What it does not buy, stated so this is not read as more than it is:**
+`drill-recorded` gates the rc PR, so `drills/X.Y.Z-rc1.md` must exist and hold a
+record before the merge that creates the `X.Y.Z-rc1` tag. The ladder does not
+move that gate one commit earlier or later.
+
+**What the gate demands before that merge is the RECORD, not the ROUND**, and
+this paragraph used to conflate the two — it read *"the first rc round still
+drills a mutable candidate"*, which is a true premise with a false inference
+hanging off it. The premise is the one stated at the top of this file: *"The
+guard requires a **record**, not a passing result."* So a candidate's record can
+say what the tree is and what reading it is owed, and the round runs **after the
+merge, against the published `X.Y.Z-rcN` tag**, its readings appended to the
+same file before the promotion. Three things make the tag the right ref rather
+than merely an allowed one:
+
+- **The candidate is what the fleet can install.** The readings that gate a
+  promotion — a fleet upgraded to the candidate, a soak on a box running it —
+  cannot be taken before the tag exists, so ordering the drill ahead of the
+  merge splits one operator sitting into two across it.
+- **The tag pins what a branch cannot.** Since heavy-duty/crew#490 the round
+  resolves its ref to one commit and puts that SHA on the record either way; the
+  tag is what stops that SHA moving afterwards, which is this ladder's whole
+  downstream claim one paragraph up.
+- **The append is unobstructed.** The merge door re-arms `main` as
+  `X.Y.Z-rc(N+1)-dev`, and `drill-recorded` asserts nothing on a `-dev` tree, so
+  writing the round's readings into the record later is not gated at all.
+
+**Name the candidate's ref when the round is run.** `drill/rehearsal-all.sh`
+defaults to `INSTALL_REF="${CREW_DRILL_REF:-main}"`, and `main` is the re-armed
+`X.Y.Z-rc(N+1)-dev` from the moment the cut lands — so a bare invocation after
+the merge drills a tree that is *not* the candidate, and says so only in the
+summary's `## drilled source:` line. Pass `--ref X.Y.Z-rcN`. A tag resolves
+through the same phase-0 path a branch does and lands on the record as the
+resolved SHA.
+
+(heavy-duty/crew#490 closed `2026-08-26`; this paragraph previously deferred to
+it as an open problem. What survives of that deferral is the sentence above —
+the record is committed against a tree that is not yet tagged — which is a fact
+about the ordering rather than a defect awaiting a fix. Corrected under
+heavy-duty/crew#659's `0.1.3-rc1` cut, the first candidate this ladder ran.)
 
 ### The stamps-only test
 
