@@ -17,9 +17,10 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 source "$HERE/lib.sh"
 CLI="$ROOT/cli/crew"
 # A literal here pins the fixture to one release rung instead of to the verb;
-# #659's bare release cut exposed that collision. Derive both roles from the
-# tree so they stay distinct from its engine version and from each other.
-ENGINE_VERSION="$(head -1 "$ROOT/VERSION" | tr -d '\r\n')"
+# #659's bare release cut exposed that collision. Read the committed tree just
+# as the engine does, then derive both fixture roles from it. The suffixes make
+# today's values distinct; the guard remains a tripwire for a future derivation.
+ENGINE_VERSION="$(git -C "$ROOT" show HEAD:VERSION | tr -d '\r\n')"
 BOX_STAMP_VERSION="${ENGINE_VERSION}-box-stamp-fixture"
 CHECKPOINT_VERSION="${ENGINE_VERSION}-checkpoint-fixture"
 if [ "$BOX_STAMP_VERSION" = "$ENGINE_VERSION" ] ||
@@ -1050,18 +1051,29 @@ t reset-stopped-hired-box-never-reports-a-restore quiet "$r1"
 t reset-stopped-hired-box-restores-nothing 0 "$(calls_of 'restore')"
 t reset-stopped-hired-box-is-not-stopped-again 0 "$(calls_of 'down')"
 
-# A same-version `-dev` re-bake marks too. The version string cannot detect
-# that move — both sides read the same — and the image still holds the older
-# tree, so the comparison D5 falls back on could never catch it.
+# A same-version hire follows the release shape. A `-dev` tree re-bakes and
+# marks even though both sides read the same version; a non-dev tree takes the
+# documented already-hired skip. Deleting the `*-dev*` shortcut makes the dev
+# side skip too, so this case catches that mutation while staying rung-wide.
 reset_case
-arm alpha "${ENGINE_VERSION}-dev-rebake"
-RST_STAMP_alpha="${ENGINE_VERSION}-dev-rebake" capture hire alpha
-case "$OUT" in *"alpha's armed checkpoint is now STALE"*) r1=marked ;; *) r1="$OUT" ;; esac
-t reset-same-version-dev-rebake-marks-the-checkpoint marked "$r1"
+arm alpha "$ENGINE_VERSION"
+RST_STAMP_alpha="$ENGINE_VERSION" capture hire alpha
+case "$ENGINE_VERSION" in
+  *-dev*)
+    case "$OUT" in *"alpha's armed checkpoint is now STALE"*) r1=marked ;; *) r1="$OUT" ;; esac
+    t reset-same-version-dev-rebake-marks-the-checkpoint marked "$r1"
+    expected_reset_rc=1 expected_restores=0
+    ;;
+  *)
+    case "$OUT" in *"version $ENGINE_VERSION matches, skipping"*) r1=skipped ;; *) r1="$OUT" ;; esac
+    t reset-same-version-release-hire-skips skipped "$r1"
+    expected_reset_rc=0 expected_restores=1
+    ;;
+esac
 : >"$STATE/calls"
-RST_STAMP_alpha="${ENGINE_VERSION}-dev-rebake" capture reset alpha
-t reset-after-a-same-version-rebake-is-refused 1 "$RC"
-t reset-after-a-same-version-rebake-restores-nothing 0 "$(calls_of 'restore')"
+RST_STAMP_alpha="$ENGINE_VERSION" capture reset alpha
+t reset-after-a-same-version-hire-follows-the-release-shape "$expected_reset_rc" "$RC"
+t reset-after-a-same-version-hire-restores-as-expected "$expected_restores" "$(calls_of 'restore')"
 
 # `crew up` is the routine caller, and it marks every roster box it hires.
 reset_case
