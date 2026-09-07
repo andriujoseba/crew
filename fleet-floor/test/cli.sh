@@ -963,6 +963,35 @@ else
 fi
 t "crew status <box>: a record-less detail view still costs three round trips" 3 "$CL_EXECN"
 
+# #688 — unlike every older scenario, the stub executes this detail view's
+# emitted script over a real fixture log. A stale record precedes NUL bytes and
+# the fresh record; GNU grep without -a suppresses both and this rendered
+# assertion fails, while a source-text assertion would prove no behaviour.
+crew_detail cli-binary
+t "crew status <box>: a NUL-bearing log still exits 0" 0 "$CL_RC"
+if grep -qx '  Cores: 2 · load1 0.41' "$CL_TMP/crew-out" &&
+   ! grep -q 'Cores: 1' "$CL_TMP/crew-out"; then
+  ok "crew status <box>: a NUL-bearing log renders its newest VITALS record"
+else
+  fail "crew status <box>: a NUL-bearing log renders its newest VITALS record" \
+       "$(cat "$CL_TMP/crew-out")"
+fi
+if [ -e "$CL_TMP/crew-state/cli-binary.vitals-script-ran" ]; then
+  ok "crew status <box>: the NUL-bearing case executes the emitted reader"
+else
+  fail "crew status <box>: the NUL-bearing case executes the emitted reader" \
+       "stub did not record script execution"
+fi
+if grep -qx 'tick health:' "$CL_TMP/crew-out" &&
+   grep -q 'stub log for cli-binary' "$CL_TMP/crew-out" &&
+   ! grep -qx 'budget:' "$CL_TMP/crew-out"; then
+  ok "crew status <box>: the NUL-bearing scenario preserves adjacent sections"
+else
+  fail "crew status <box>: the NUL-bearing scenario preserves adjacent sections" \
+       "$(cat "$CL_TMP/crew-out")"
+fi
+t "crew status <box>: the NUL-bearing detail view still costs three round trips" 3 "$CL_EXECN"
+
 # --- THE criterion: the two readers cannot disagree (#483 D1) --------------
 #
 # `crew status` and the floor render the same record, in two languages, from

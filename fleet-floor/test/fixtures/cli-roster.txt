@@ -12,6 +12,7 @@
 # the fixture would have passed a one-sided fix.
 cli-neverticked claude builder
 cli-hired      claude  builder
+cli-binary     claude  builder
 cli-idle       claude  reviewer
 cli-suppressed claude  builder
 cli-supp-silent claude  builder
