@@ -607,8 +607,8 @@ help_reset_claims_schedule() {
   flattened="$(printf '%s\n' "$1" | tr '\n' ' ')"
   normalized="$(sed -E "s/['\"\`]/ /g; s/[[:space:]]+/ /g" \
     <<<"$flattened")"
-  action='fire[sd]?|run|runs|execut(e[sd]?|ing)|invok(e[sd]?|ing)|schedul(e[sd]?|ing)|launch(es|ed|ing)?|call(s|ed|ing)?'
-  cadence='daily|weekly|each[[:space:]]+day|every[[:space:]]+(day|week|sun(day)?|mon(day)?|tues(day)?|wed(nesday)?|thurs(day)?|fri(day)?|sat(urday)?)'
+  action='fire[sd]?|run|runs|start(s|ed|ing)?|execut(e[sd]?|ing)|invok(e[sd]?|ing)|schedul(e[sd]?|ing)|launch(es|ed|ing)?|call(s|ed|ing)?'
+  cadence='daily|weekly|(each|every)[[:space:]]+(day|week|sun(day)?|mon(day)?|tues(day)?|wed(nesday)?|thurs(day)?|fri(day)?|sat(urday)?)'
   source='(host[[:space:]]+)?schedule|cron(tab)?|host[[:space:]]+job'
   # This reader is scoped to `crew help reset`, so "this verb" names reset.
   target='crew[[:space:]]+reset|this[[:space:]]+verb'
@@ -630,12 +630,12 @@ help_reset_claims_schedule() {
         <<<"$sentence"; then
       return 0
     fi
-    # A host that starts reset on a named cadence is also a scheduled source,
+    # A host that acts on reset at a named cadence is also a scheduled source,
     # even when the sentence does not call it a schedule, cron or host job.
     if grep -qiE '(^|[^[:alnum:]])host([^[:alnum:]]|$)' <<<"$sentence" \
       && grep -qiE "(^|[^[:alnum:]])(${target})([^[:alnum:]]|$)" \
         <<<"$sentence" \
-      && grep -qiE '(^|[^[:alnum:]])start(s|ed|ing)?([^[:alnum:]]|$)' \
+      && grep -qiE "(^|[^[:alnum:]])(${action})([^[:alnum:]]|$)" \
         <<<"$sentence" \
       && grep -qiE "(^|[^[:alnum:]])(${cadence})([^[:alnum:]]|$)" \
         <<<"$sentence"; then
@@ -672,6 +672,26 @@ t hostjob-reset-help-detector-catches-host-job-launch 1 \
 t hostjob-reset-help-detector-catches-host-automatic-start 1 \
   "$(help_reset_claims_schedule \
     "The host automatically starts 'crew restart' each day and 'crew reset --all' every Sunday." \
+    && echo 1 || echo 0)"
+t hostjob-reset-help-detector-catches-host-run-combined-claim 1 \
+  "$(help_reset_claims_schedule \
+    "The host runs 'crew restart' each day and 'crew reset --all' every Sunday. Both verbs carry what a caller with no terminal and nobody watching needs." \
+    && echo 1 || echo 0)"
+t hostjob-reset-help-detector-catches-host-run-each-weekday 1 \
+  "$(help_reset_claims_schedule \
+    "Each Sunday the host runs 'crew reset --all'; the restart runs daily." \
+    && echo 1 || echo 0)"
+t hostjob-reset-help-detector-catches-host-run-cadence 1 \
+  "$(help_reset_claims_schedule \
+    "The host runs 'crew reset --all' every Sunday." \
+    && echo 1 || echo 0)"
+t hostjob-reset-help-detector-catches-host-execute-cadence 1 \
+  "$(help_reset_claims_schedule \
+    "The host executes 'crew reset --all' every Sunday." \
+    && echo 1 || echo 0)"
+t hostjob-reset-help-detector-catches-host-fire-cadence 1 \
+  "$(help_reset_claims_schedule \
+    "The host fires 'crew reset --all' weekly." \
     && echo 1 || echo 0)"
 t hostjob-reset-help-detector-catches-reset-help-self-reference 1 \
   "$(help_reset_claims_schedule \
