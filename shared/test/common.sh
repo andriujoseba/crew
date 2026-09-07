@@ -9001,6 +9001,13 @@ cv_hire="$(cvxcrew hire crew-unconverged)"
 cv_detail="$(cvxcrew status crew-unconverged)"
 cv_table="$(cvxcrew status)"
 
+# Each site is asserted TWICE, and the pair is the point. Against the rendered
+# recovery, which is what catches a site that stopped calling the function and
+# started spelling the sequence itself; and against the DOOR as a literal,
+# which is what catches the function itself regressing — a site compared only
+# with `convergence_recovery`'s own output agrees with it whatever it renders,
+# `sudo` included, so that assertion alone is a tautology at exactly the moment
+# it matters.
 case "$cv_hire" in
   *"crew-unconverged: REFUSED"*"$cv_want"*) r1=prints-the-recovery ;;
   *) r1="$cv_hire" ;;
@@ -9016,6 +9023,14 @@ case "$cv_table" in
   *) r1="$cv_table" ;;
 esac
 t convergence-recovery-at-crew-status-table-note prints-the-recovery "$r1"
+
+for cv_site in hire:"$cv_hire" status-box:"$cv_detail" status-table:"$cv_table"; do
+  case "${cv_site#*:}" in
+    *"box root crew-unconverged "*) r1=root-door ;;
+    *) r1="${cv_site#*:}" ;;
+  esac
+  t "convergence-recovery-door-at-crew-${cv_site%%:*}" root-door "$r1"
+done
 
 # The criterion written over OUTPUT rather than over the source, and written
 # that way deliberately: the one remaining tree occurrence of this spelling is
