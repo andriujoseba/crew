@@ -8870,6 +8870,7 @@ cv_mint_url="$(grep -o 'https://[^ ]*' <<<"$cv_mint" | sed -n 1p)"
 t convergence-mint-rig-source-is-readable readable "${cv_mint_url:+readable}"
 cv_mint_ref="$(grep -o 'RIG_REF=[^ ]*' <<<"$cv_mint" | sed -n 1p)"
 t convergence-mint-rig-pin-is-readable readable "${cv_mint_ref:+readable}"
+# shellcheck disable=SC2016  # `$name` is the literal text being matched in box-mint.sh, not an expansion
 cv_mint_door="$(sed -n 's/.*| *\(box [a-z][a-z]*\) "\$name".*/\1/p' \
   "$ROOT/shared/lib/box-mint.sh" | sed -n 1p)"
 t convergence-mint-door-is-readable readable "${cv_mint_door:+readable}"
@@ -8935,9 +8936,10 @@ chmod +x "$FOLLOW_BIN/rig"
 SH
 CVEOF
 chmod +x "$CVFOLLOW/bin/box" "$CVFOLLOW/bin/curl"
+cv_nl=$'\n'
+cv_follow_line="$(convergence_recovery crew-unconverged kimi)"
 cv_follow_out="$(env -i PATH="$CVFOLLOW/bin" FOLLOW_BIN="$CVFOLLOW/bin" \
-  FOLLOW_GUEST="$CVFOLLOW/guest" bash -c \
-  "$(sed 's/ → /\n/g' <<<"$(convergence_recovery crew-unconverged kimi)")" 2>&1)"
+  FOLLOW_GUEST="$CVFOLLOW/guest" bash -c "${cv_follow_line// → /$cv_nl}" 2>&1)"
 # WHICH command supplies rig, named rather than assumed — and at the declared
 # pin, because an unpinned repair is a lottery ticket on another tool's release.
 case "$cv_follow_out" in
