@@ -8786,14 +8786,48 @@ case "$(convergence_detail "$(printf 'probe=ok\nmarker=role=workload-server root
 esac
 t convergence-detail-quotes-the-machine-marker named "$r1"
 
-# The recovery is the three commands `box` itself prints when the bootstrap
-# hook fails, and it names the box's OWN tenant — a generic one is a command
-# that fails when pasted.
-t convergence-recovery-names-the-tenant \
-  "box shell kimi-reviewer → sudo rig bootstrap kimi-box → box snapshot kimi-reviewer bootstrapped" \
-  "$(convergence_recovery kimi-reviewer kimi)"
+# THE RECOVERY IS CREW'S OWN MINT SEQUENCE, THROUGH THE ROOT DOOR (#700).
+#
+# It used to be asserted as "the three commands `box` itself prints when the
+# bootstrap hook fails". That premise died with box 0.10.0, which retired the
+# agent templates and their bootstrap hook; what box prints now is its own
+# retirement refusal, teaching a blank `box new` and then "converge it yourself
+# inside `box root <box>`". And the line the premise justified could not be run
+# on a box crew mints: box's one tenant seed creates the tenant UNPRIVILEGED
+# and calls the absence of a `sudo:` line deliberate, so `box shell` plus
+# `sudo rig bootstrap` failed before it started. This fixture pinned that line
+# verbatim, which is why nothing red — the same shape as #679's three
+# `--template claude-box` fixtures, where the fixture guaranteed the broken
+# contract survived green.
+#
+# The pin is READ from platform.sh rather than written here. The recovery
+# interpolates $CREW_PLATFORM_RIG_MIN exactly as box_mint_converge_script does,
+# and platform.sh's whole claim is that a floor bump is two lines and nothing
+# else — a suite that hardcoded 0.4.0 would make it three.
+CREW_PLATFORM_RIG_MIN="$(
+  # shellcheck source=shared/lib/platform.sh
+  . "$ROOT/shared/lib/platform.sh" && printf '%s' "$CREW_PLATFORM_RIG_MIN"
+)"
+t convergence-recovery-rig-pin-was-read pinned "${CREW_PLATFORM_RIG_MIN:+pinned}"
+cv_recovery="$(convergence_recovery kimi-reviewer kimi)"
+t convergence-recovery-is-the-mints-converge-through-the-root-door \
+  "box root kimi-reviewer → command -v rig >/dev/null || curl -fsSL https://raw.githubusercontent.com/heavy-duty/rig/main/install.sh | RIG_REF=$CREW_PLATFORM_RIG_MIN bash → rig bootstrap kimi-box → box snapshot kimi-reviewer bootstrapped" \
+  "$cv_recovery"
+
+# The door, the dead door, and the dead spelling, each on their own so they red
+# SEPARATELY — from each other and from the call-site cases below. A single
+# whole-string assertion tells a reader which string changed and never which
+# contract broke.
+case "$cv_recovery" in "box root kimi-reviewer "*) r1=root-door ;; *) r1="$cv_recovery" ;; esac
+t convergence-recovery-opens-the-root-door root-door "$r1"
+case "$cv_recovery" in *sudo*) r1=ADVISES_SUDO ;; *) r1=no-sudo ;; esac
+t convergence-recovery-never-advises-sudo no-sudo "$r1"
+case "$cv_recovery" in *"box shell"*) r1=ADVISES_BOX_SHELL ;; *) r1=no-box-shell ;; esac
+t convergence-recovery-never-advises-box-shell no-box-shell "$r1"
+
 # An off-roster box names no agent. A placeholder an operator can fill in beats
-# a malformed `rig bootstrap -box`.
+# a malformed `rig bootstrap -box`. #700 does not move this case, and that is
+# itself the assertion: the guarantee #220 exists for survives the door change.
 case "$(convergence_recovery adhoc-box "")" in
   *"rig bootstrap <agent>-box"*) r1=placeholder ;; *) r1=MALFORMED ;;
 esac
@@ -8804,6 +8838,191 @@ case "$(convergence_recovery kimi-reviewer kimi)" in
   *"crew hire"*) r1=ADVISES_HIRE ;; *) r1=bootstrap ;;
 esac
 t convergence-recovery-does-not-advise-crew-hire bootstrap "$r1"
+
+# --- D2: the recovery and the mint are bound MECHANICALLY (#700) ------------
+# The recovery is a statement ABOUT shared/lib/box-mint.sh's sequence, and
+# #679 D9 already refused two implementations of that sequence. Today they
+# agree only because a human keeps them agreeing, and they stopped agreeing the
+# moment the mint changed: that is the whole defect this issue closes, not a
+# typo in one string.
+#
+# The recovery cannot become a second CALLER of the mint helper — it is printed
+# into three layouts, one of them inline inside a table note, and a script does
+# not fit there — so what binds them is this cross-reader. It renders BOTH and
+# reds when they name a different door, a different rig supply or a different
+# bootstrap. Note which mint function each fact comes from: the bootstrap and
+# the rig install are box_mint_converge_script's, and the DOOR is
+# box_mint_fresh's, because that is the function that opens it — reading the
+# door out of the converge script would be reading it out of the one place it
+# is not.
+cv_mint="$(
+  # shellcheck source=shared/lib/box-mint.sh
+  . "$ROOT/shared/lib/box-mint.sh" && box_mint_converge_script kimi
+)"
+# The bootstrap is a bare top-level line ON PURPOSE — box_mint_converge_script
+# says so in as many words, so that a fixture can pin the exact invocation
+# rather than grep a paragraph for a substring. If it stops being one, that is
+# this assertion's red and not a silently empty needle two lines below, which
+# would match everything.
+cv_mint_boot="$(grep -m1 '^rig ' <<<"$cv_mint" || true)"
+t convergence-mint-bootstrap-is-still-a-bare-line readable "${cv_mint_boot:+readable}"
+cv_mint_url="$(grep -o 'https://[^ ]*' <<<"$cv_mint" | sed -n 1p)"
+t convergence-mint-rig-source-is-readable readable "${cv_mint_url:+readable}"
+cv_mint_ref="$(grep -o 'RIG_REF=[^ ]*' <<<"$cv_mint" | sed -n 1p)"
+t convergence-mint-rig-pin-is-readable readable "${cv_mint_ref:+readable}"
+cv_mint_door="$(sed -n 's/.*| *\(box [a-z][a-z]*\) "\$name".*/\1/p' \
+  "$ROOT/shared/lib/box-mint.sh" | sed -n 1p)"
+t convergence-mint-door-is-readable readable "${cv_mint_door:+readable}"
+
+# Two-sided on the door: the recovery's first two words against the verb the
+# mint pipes into. Either one moving alone reds it, which is what "mechanical"
+# means here — a guard that only reads the recovery is a second copy of the
+# same string and reds only when both are edited.
+t convergence-recovery-and-mint-agree-on-the-door "$cv_mint_door" \
+  "$(awk '{print $1, $2}' <<<"$cv_recovery")"
+case "$cv_recovery" in
+  *"$cv_mint_boot"*) r1=agree ;;
+  *) r1="mint=[$cv_mint_boot] recovery=[$cv_recovery]" ;;
+esac
+t convergence-recovery-and-mint-agree-on-the-bootstrap agree "$r1"
+case "$cv_recovery" in
+  *"curl -fsSL $cv_mint_url "*) r1=agree ;;
+  *) r1="mint=[$cv_mint_url] recovery=[$cv_recovery]" ;;
+esac
+t convergence-recovery-and-mint-agree-on-the-rig-source agree "$r1"
+t convergence-recovery-and-mint-agree-on-the-rig-pin "$cv_mint_ref" \
+  "$(grep -o 'RIG_REF=[^ ]*' <<<"$cv_recovery" | sed -n 1p)"
+
+# --- D3: FOLLOW the recovery from a guest with no rig at all (#700) ---------
+# convergence_detail reads the /etc/rig/role marker, and from its absence it
+# cannot tell a box where rig is present and `rig bootstrap` failed from a box
+# where the mint died at step 2 and there is no rig binary. The recovery prints
+# for both, so it has to be correct in the worse of the two — and the only way
+# to know that is to RUN it, not to read it.
+#
+# So the rendered line is split on its own arrows and executed. The sandbox is
+# `env -i` with nothing but this bin on PATH, which is load-bearing twice over:
+# this suite runs inside a rig-converged box, so a leaked PATH would find the
+# REAL rig and prove nothing about the absent case, and there is no `sudo` here
+# for the same reason there is none in box's tenant — a recovery that reached
+# for either dies here.
+CVFOLLOW="$TMP/recovery-follow"
+mkdir -p "$CVFOLLOW/bin" "$CVFOLLOW/guest/etc/rig"
+for cv_c in bash cat chmod; do ln -sf "$(command -v "$cv_c")" "$CVFOLLOW/bin/$cv_c"; done
+# The door, and the tenant behind the one this must never name again.
+cat >"$CVFOLLOW/bin/box" <<'CVEOF'
+#!/usr/bin/env bash
+case "$1" in
+  root)     printf 'root-door-opened %s\n' "$2" ;;
+  snapshot) printf 'snapshot %s %s\n' "$2" "$3" ;;
+  shell)    echo "box shell: the tenant is unprivileged — there is no sudo here" >&2; exit 1 ;;
+  *) echo "box: unknown verb '$1'" >&2; exit 2 ;;
+esac
+CVEOF
+# rig's installer, as much of it as this proves: it honours RIG_REF, and it is
+# the step that puts a `rig` binary where the NEXT step can find it. Nothing
+# else on this PATH can, which is what makes step 3 a real test of step 2.
+cat >"$CVFOLLOW/bin/curl" <<'CVEOF'
+#!/usr/bin/env bash
+cat <<'SH'
+printf 'rig-installed-at-ref %s\n' "${RIG_REF:-UNPINNED}"
+cat >"$FOLLOW_BIN/rig" <<'RIG'
+#!/usr/bin/env bash
+[ "$1" = bootstrap ] || { echo "rig: unknown verb '$1'" >&2; exit 2; }
+printf 'role=%s tenant=yes host=no\n' "$2" >"$FOLLOW_GUEST/etc/rig/role"
+RIG
+chmod +x "$FOLLOW_BIN/rig"
+SH
+CVEOF
+chmod +x "$CVFOLLOW/bin/box" "$CVFOLLOW/bin/curl"
+cv_follow_out="$(env -i PATH="$CVFOLLOW/bin" FOLLOW_BIN="$CVFOLLOW/bin" \
+  FOLLOW_GUEST="$CVFOLLOW/guest" bash -c \
+  "$(sed 's/ → /\n/g' <<<"$(convergence_recovery crew-unconverged kimi)")" 2>&1)"
+# WHICH command supplies rig, named rather than assumed — and at the declared
+# pin, because an unpinned repair is a lottery ticket on another tool's release.
+case "$cv_follow_out" in
+  *"rig-installed-at-ref $CREW_PLATFORM_RIG_MIN"*) r1=names-the-installer ;;
+  *) r1="$cv_follow_out" ;;
+esac
+t convergence-recovery-names-the-command-that-supplies-rig names-the-installer "$r1"
+# ...and the end state, read by the same function `crew hire` reads it with: a
+# box that was unconverged and had no rig is converged after following this.
+t convergence-recovery-followed-from-no-rig-reaches-converged converged \
+  "$(convergence_of "$(printf 'probe=ok\nmarker=%s\n' \
+    "$(cat "$CVFOLLOW/guest/etc/rig/role" 2>/dev/null || true)")")"
+
+# --- the three call sites, over each COMMAND's own output (#700) ------------
+# Asserted over the commands and not over the function, for the reason the
+# acceptance criterion gives: a call site that stopped calling
+# convergence_recovery would satisfy every assertion above in silence.
+#
+# The stub answers as the guest a failed mint leaves standing — it is up, it
+# answers the probe, and it has no marker, which is `incomplete`, the one state
+# all three of these sites print the recovery in. The probe is answered by the
+# stub rather than run on the host because /etc/rig/role is an ABSOLUTE path:
+# this suite runs inside a rig box, so a host-side read would find that box's
+# own marker and report the fixture converged.
+CVXROOT="$TMP/recovery-boxes"
+CVXSHIM="$TMP/recovery-bin"
+CVXCONF="$TMP/recovery-fleet"
+mkdir -p "$CVXROOT/crew-unconverged" "$CVXSHIM" "$CVXCONF"
+printf 'crew-unconverged kimi reviewer\n' >"$CVXCONF/fleet.roster"
+printf 'FLEET_BENCH="b"\nFLEET_TRIAGE="t"\nFLEET_HUMAN="h"\n' >"$CVXCONF/fleet.conf"
+printf 'owner/repo\n' >"$CVXCONF/repos.txt"
+cat >"$CVXSHIM/box" <<'CVEOF'
+#!/usr/bin/env bash
+case "$1" in
+  list) printf '[{"name":"crew-unconverged"}]\n' ;;
+  info) printf '[{"status":"running"}]\n' ;;
+  exec)
+    name="$2"; shift 3                       # past: exec <name> --
+    case "$3" in
+      *"/etc/rig/role"*) printf 'probe=ok\n' ;;   # answered; never converged
+      *) env -u DUTY_DIR HOME="$CVXROOT/$name" bash -c "$3" ;;
+    esac ;;
+  *) exit 2 ;;
+esac
+CVEOF
+chmod +x "$CVXSHIM/box"
+ln -sf "$(command -v jq)" "$CVXSHIM/jq"
+# Offline and deterministic. The one-repo-one-fleet check asks gh about the
+# board and degrades to a NOTE when it cannot; a suite that reached the network
+# for it would be spending somebody's live rate limit to render a note.
+printf '#!/usr/bin/env bash\nexit 1\n' >"$CVXSHIM/gh"
+chmod +x "$CVXSHIM/gh"
+cvxcrew() {
+  env CREW_CONFIG_DIR="$CVXCONF" CVXROOT="$CVXROOT" PATH="$CVXSHIM:$PATH" \
+    bash "$ROOT/cli/crew" "$@" </dev/null 2>&1
+}
+cv_want="$(convergence_recovery crew-unconverged kimi)"
+cv_hire="$(cvxcrew hire crew-unconverged)"
+cv_detail="$(cvxcrew status crew-unconverged)"
+cv_table="$(cvxcrew status)"
+
+case "$cv_hire" in
+  *"crew-unconverged: REFUSED"*"$cv_want"*) r1=prints-the-recovery ;;
+  *) r1="$cv_hire" ;;
+esac
+t convergence-recovery-at-crew-hire-refusal prints-the-recovery "$r1"
+case "$cv_detail" in
+  *"rig: INCOMPLETE"*"$cv_want"*) r1=prints-the-recovery ;;
+  *) r1="$cv_detail" ;;
+esac
+t convergence-recovery-at-crew-status-box-detail prints-the-recovery "$r1"
+case "$cv_table" in
+  *"INCOMPLETE — "*"$cv_want"*) r1=prints-the-recovery ;;
+  *) r1="$cv_table" ;;
+esac
+t convergence-recovery-at-crew-status-table-note prints-the-recovery "$r1"
+
+# The criterion written over OUTPUT rather than over the source, and written
+# that way deliberately: the one remaining tree occurrence of this spelling is
+# shared/lib/box-mint.sh:50, which narrates why it FAILS and is Untouched, so a
+# source grep would fight the sentence that was right.
+case "$cv_hire$cv_detail$cv_table" in
+  *"sudo rig bootstrap"*) r1=ADVISES_SUDO ;; *) r1=no-sudo ;;
+esac
+t convergence-no-command-output-advises-sudo-rig-bootstrap no-sudo "$r1"
 
 # --- convergence: rig's marker and manifest, as the real files (crew#220) ---
 # THE REAL TEXT, not a fixture format. Read on 2026-08-01 from inside a
