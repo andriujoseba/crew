@@ -1849,9 +1849,46 @@ convergence_detail() {
   fi
 }
 
-# convergence_recovery NAME AGENT — the three commands that fix it, which are
-# the ones `box` itself prints when the bootstrap hook fails. crew's job here
-# is to stop advising `crew hire` and start advising this.
+# convergence_recovery NAME AGENT — the commands that fix it, which are the
+# ones crew's OWN mint runs (shared/lib/box-mint.sh). crew's job here is to
+# stop advising `crew hire` and start advising this.
+#
+# It used to say these were "the three commands `box` itself prints when the
+# bootstrap hook fails". box 0.10.0 retired the agent templates and their
+# bootstrap hook, and what box prints now is its own retirement refusal, which
+# teaches a blank `box new` and then "converge it yourself inside
+# `box root <box>`". The premise went with the templates (#700).
+#
+# THE DOOR IS `box root`, NEVER `box shell` PLUS `sudo` (#700). This is not a
+# preference between two working paths: one of them does not exist. box's one
+# tenant seed creates the tenant UNPRIVILEGED and calls the absence of a
+# `sudo:` line deliberate in as many words (templates/tenant/user-data.yaml,
+# box#177 ruled on box#176), and rig's own commands/bootstrap-tenant.sh
+# requires root and names the same door. `box shell` enters as that tenant, so
+# `sudo rig bootstrap …` fails before it starts — shared/lib/box-mint.sh:50
+# says so about the identical spelling. `box root` authorizes through the
+# HOST's incus socket and needs no sudoers entry in the guest; it is the door
+# the mint itself uses and the one box's refusal teaches, so this makes three
+# surfaces agree rather than inventing a fourth answer.
+#
+# RIG MAY NOT BE IN THE GUEST AT ALL, and this prints in exactly the state
+# where that is possible (#700). Under #679 D4 crew installs rig from inside
+# the root door as step 2 of the mint, so a mint that failed at that step
+# leaves a box with no rig binary — and convergence_detail, which reads the
+# /etc/rig/role marker, cannot tell that apart from a box where rig IS present
+# and `rig bootstrap` merely failed. A recovery printed for both states has to
+# be correct in both, so it is written to the weaker one: it supplies rig when
+# absent exactly as box_mint_converge_script does, and that clause is a no-op
+# when rig is there. The pin is platform.sh's declaration and not a literal,
+# for the same reason the mint's is — a mint is not the place to take a lottery
+# ticket on another tool's release.
+#
+# The URL and the pin are duplicated from the mint's heredoc rather than shared
+# through a variable, because this is a human-readable line printed into three
+# layouts — one of them inline inside a table note — and a script does not fit
+# there (#700 D2). What keeps the two from drifting is not care: it is the
+# cross-reader guard in shared/test/common.sh, which renders both and reds when
+# they name a different door, a different rig supply or a different bootstrap.
 #
 # An off-roster box names no agent, and the recovery is still worth printing —
 # it renders the tenant as `<agent>-box` rather than a malformed `-box`, which
@@ -1859,8 +1896,8 @@ convergence_detail() {
 # fail if pasted.
 convergence_recovery() {
   local name="$1" agent="${2:-}"
-  printf 'box shell %s → sudo rig bootstrap %s-box → box snapshot %s bootstrapped\n' \
-    "$name" "${agent:-<agent>}" "$name"
+  printf 'box root %s → command -v rig >/dev/null || curl -fsSL https://raw.githubusercontent.com/heavy-duty/rig/main/install.sh | RIG_REF=%s bash → rig bootstrap %s-box → box snapshot %s bootstrapped\n' \
+    "$name" "$CREW_PLATFORM_RIG_MIN" "${agent:-<agent>}" "$name"
 }
 
 # hired_at NAME — the raw first-line engine stamp, if any. Keep this raw for
