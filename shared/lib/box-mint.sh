@@ -57,10 +57,16 @@
 # replaces it sets BOX_USER="dev". So the blank mint would silently rename every
 # guest tenant unless crew says otherwise. crew therefore passes `--user
 # <agent>` at the mint and names NO --user on the bootstrap — rig's <agent>-box
-# roles assume a matching tenant unless told, and here it matches. Preserving
-# the name keeps cli/crew's own convergence_recovery line true ("box shell <n> →
-# sudo rig bootstrap <agent>-box"), and keeps every snapshot, runbook and
-# operator habit built on it true.
+# roles assume a matching tenant unless told, and here it matches. THAT MATCH
+# is the load-bearing reason: `rig bootstrap <agent>-box` resolves its role
+# against a tenant of that name, so preserving it is what keeps every snapshot,
+# runbook and operator habit built on that name true. This clause used to rest
+# on keeping cli/crew's own convergence_recovery line true, and quoted that
+# line's `box shell` plus `sudo` spelling — a door the blank-seed tenant does
+# not have, as :50 above already says of the identical spelling. One file, two
+# sentences, one of them false. The quotation is gone and the recovery is
+# corrected in #700; D10's decision is untouched, and the reason above is the
+# one that was never the quotation's to carry.
 #
 # D3 — SIZING STAYS CREW'S AND STAYS EXPLICIT. box's refusal teaches
 # `--size medium`, but the role profiles carry BOX_CPU / BOX_MEMORY / BOX_DISK
