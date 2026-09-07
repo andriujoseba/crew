@@ -8818,11 +8818,11 @@ t convergence-recovery-is-the-mints-converge-through-the-root-door \
 # SEPARATELY — from each other and from the call-site cases below. A single
 # whole-string assertion tells a reader which string changed and never which
 # contract broke.
-case "$cv_recovery" in "box root kimi-reviewer "*) r1=root-door ;; *) r1="$cv_recovery" ;; esac
+case "$cv_recovery" in "box root kimi-reviewer "*) r1='root-door' ;; *) r1="$cv_recovery" ;; esac
 t convergence-recovery-opens-the-root-door root-door "$r1"
-case "$cv_recovery" in *sudo*) r1=ADVISES_SUDO ;; *) r1=no-sudo ;; esac
+case "$cv_recovery" in *sudo*) r1=ADVISES_SUDO ;; *) r1='no-sudo' ;; esac
 t convergence-recovery-never-advises-sudo no-sudo "$r1"
-case "$cv_recovery" in *"box shell"*) r1=ADVISES_BOX_SHELL ;; *) r1=no-box-shell ;; esac
+case "$cv_recovery" in *"box shell"*) r1=ADVISES_BOX_SHELL ;; *) r1='no-box-shell' ;; esac
 t convergence-recovery-never-advises-box-shell no-box-shell "$r1"
 
 # An off-roster box names no agent. A placeholder an operator can fill in beats
@@ -8943,7 +8943,7 @@ cv_follow_out="$(env -i PATH="$CVFOLLOW/bin" FOLLOW_BIN="$CVFOLLOW/bin" \
 # WHICH command supplies rig, named rather than assumed — and at the declared
 # pin, because an unpinned repair is a lottery ticket on another tool's release.
 case "$cv_follow_out" in
-  *"rig-installed-at-ref $CREW_PLATFORM_RIG_MIN"*) r1=names-the-installer ;;
+  *"rig-installed-at-ref $CREW_PLATFORM_RIG_MIN"*) r1='names-the-installer' ;;
   *) r1="$cv_follow_out" ;;
 esac
 t convergence-recovery-names-the-command-that-supplies-rig names-the-installer "$r1"
@@ -9009,24 +9009,24 @@ cv_table="$(cvxcrew status)"
 # `sudo` included, so that assertion alone is a tautology at exactly the moment
 # it matters.
 case "$cv_hire" in
-  *"crew-unconverged: REFUSED"*"$cv_want"*) r1=prints-the-recovery ;;
+  *"crew-unconverged: REFUSED"*"$cv_want"*) r1='prints-the-recovery' ;;
   *) r1="$cv_hire" ;;
 esac
 t convergence-recovery-at-crew-hire-refusal prints-the-recovery "$r1"
 case "$cv_detail" in
-  *"rig: INCOMPLETE"*"$cv_want"*) r1=prints-the-recovery ;;
+  *"rig: INCOMPLETE"*"$cv_want"*) r1='prints-the-recovery' ;;
   *) r1="$cv_detail" ;;
 esac
 t convergence-recovery-at-crew-status-box-detail prints-the-recovery "$r1"
 case "$cv_table" in
-  *"INCOMPLETE — "*"$cv_want"*) r1=prints-the-recovery ;;
+  *"INCOMPLETE — "*"$cv_want"*) r1='prints-the-recovery' ;;
   *) r1="$cv_table" ;;
 esac
 t convergence-recovery-at-crew-status-table-note prints-the-recovery "$r1"
 
 for cv_site in hire:"$cv_hire" status-box:"$cv_detail" status-table:"$cv_table"; do
   case "${cv_site#*:}" in
-    *"box root crew-unconverged "*) r1=root-door ;;
+    *"box root crew-unconverged "*) r1='root-door' ;;
     *) r1="${cv_site#*:}" ;;
   esac
   t "convergence-recovery-door-at-crew-${cv_site%%:*}" root-door "$r1"
@@ -9037,7 +9037,7 @@ done
 # shared/lib/box-mint.sh:50, which narrates why it FAILS and is Untouched, so a
 # source grep would fight the sentence that was right.
 case "$cv_hire$cv_detail$cv_table" in
-  *"sudo rig bootstrap"*) r1=ADVISES_SUDO ;; *) r1=no-sudo ;;
+  *"sudo rig bootstrap"*) r1=ADVISES_SUDO ;; *) r1='no-sudo' ;;
 esac
 t convergence-no-command-output-advises-sudo-rig-bootstrap no-sudo "$r1"
 
