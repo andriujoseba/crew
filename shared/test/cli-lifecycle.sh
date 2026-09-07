@@ -609,7 +609,7 @@ help_reset_claims_schedule() {
     <<<"$flattened")"
   action='fire[sd]?|run|runs|start(s|ed|ing)?|execut(e[sd]?|ing)|invok(e[sd]?|ing)|schedul(e[sd]?|ing)|launch(es|ed|ing)?|call(s|ed|ing)?'
   weekday='sun(day)?s?|mon(day)?s?|tues(day)?s?|wed(nesday)?s?|thurs(day)?s?|fri(day)?s?|sat(urday)?s?'
-  cadence="daily|nightly|hourly|weekly|monthly|${weekday}|(each|every)[[:space:]]+(day|night|week|month|hour|${weekday})|once[[:space:]]+(a|per)[[:space:]]+(day|week|month|hour)"
+  cadence="daily|nightly|hourly|weekly|monthly|${weekday}|(each|every)[[:space:]]+(day|night|morning|afternoon|evening|week|month|hour|${weekday})|once[[:space:]]+(a|per)[[:space:]]+(day|week|month|hour)"
   source='(host[[:space:]]+)?schedule|cron(tab)?|host[[:space:]]+job'
   # This reader is scoped to `crew help reset`, so "this verb" names reset.
   target='crew[[:space:]]+reset|this[[:space:]]+verb'
@@ -713,6 +713,10 @@ t hostjob-reset-help-detector-catches-host-nightly-cadence 1 \
 t hostjob-reset-help-detector-catches-host-every-night-cadence 1 \
   "$(help_reset_claims_schedule \
     "SCHEDULED USE. The host runs 'crew restart' daily. The host also runs 'crew reset --all' every night. Both verbs carry what a caller with no terminal and nobody watching needs." \
+    && echo 1 || echo 0)"
+t hostjob-reset-help-detector-catches-host-every-morning-cadence 1 \
+  "$(help_reset_claims_schedule \
+    "SCHEDULED USE. The host runs 'crew restart' daily. The host also runs 'crew reset --all' every morning. Both verbs carry what a caller with no terminal and nobody watching needs." \
     && echo 1 || echo 0)"
 t hostjob-reset-help-detector-catches-host-once-a-week-cadence 1 \
   "$(help_reset_claims_schedule \
