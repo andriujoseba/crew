@@ -17,8 +17,8 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 source "$HERE/lib.sh"
 CLI="$ROOT/cli/crew"
 # A literal here pins the fixture to one release rung instead of to the verb;
-# #659's 0.1.3 cut exposed that collision. Derive both roles from the tree so
-# they stay distinct from its engine version and from each other.
+# #659's bare release cut exposed that collision. Derive both roles from the
+# tree so they stay distinct from its engine version and from each other.
 ENGINE_VERSION="$(head -1 "$ROOT/VERSION" | tr -d '\r\n')"
 BOX_STAMP_VERSION="${ENGINE_VERSION}-box-stamp-fixture"
 CHECKPOINT_VERSION="${ENGINE_VERSION}-checkpoint-fixture"
@@ -1036,7 +1036,7 @@ t reset-after-a-hire-restores-nothing 0 "$(calls_of 'restore')"
 # THE STOPPED VARIANT — the one that was reachable and silent. `hired_at` is
 # read through `box exec`, so a stopped box answers nothing and the live
 # comparison read that silence as agreement; the transcript was `restored to
-# armed (crew@0.1.3) and started` at exit 0. A fleet with boxes down is
+# armed (crew@VERSION) and started` at exit 0. A fleet with boxes down is
 # exactly the state `crew reset --all` is for.
 reset_case
 arm alpha
@@ -1054,12 +1054,12 @@ t reset-stopped-hired-box-is-not-stopped-again 0 "$(calls_of 'down')"
 # that move — both sides read the same — and the image still holds the older
 # tree, so the comparison D5 falls back on could never catch it.
 reset_case
-arm alpha 0.1.3-dev
-RST_STAMP_alpha=0.1.3-dev capture hire alpha
+arm alpha "${ENGINE_VERSION}-dev-rebake"
+RST_STAMP_alpha="${ENGINE_VERSION}-dev-rebake" capture hire alpha
 case "$OUT" in *"alpha's armed checkpoint is now STALE"*) r1=marked ;; *) r1="$OUT" ;; esac
 t reset-same-version-dev-rebake-marks-the-checkpoint marked "$r1"
 : >"$STATE/calls"
-RST_STAMP_alpha=0.1.3-dev capture reset alpha
+RST_STAMP_alpha="${ENGINE_VERSION}-dev-rebake" capture reset alpha
 t reset-after-a-same-version-rebake-is-refused 1 "$RC"
 t reset-after-a-same-version-rebake-restores-nothing 0 "$(calls_of 'restore')"
 
@@ -1068,7 +1068,8 @@ reset_case
 arm alpha
 arm beta
 capture up
-t reset-up-marks-every-roster-box $'CHECKPOINT_STALE=0.1.3-dev\nCHECKPOINT_STALE=0.1.3-dev' \
+t reset-up-marks-every-roster-box \
+  "CHECKPOINT_STALE=$ENGINE_VERSION"$'\n'"CHECKPOINT_STALE=$ENGINE_VERSION" \
   "$(grep -h '^CHECKPOINT_STALE=' "$CONF/checkpoints/alpha.conf" "$CONF/checkpoints/beta.conf")"
 
 # A hire whose mark cannot be written installs nothing, exactly as an upgrade
