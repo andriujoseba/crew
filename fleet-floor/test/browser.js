@@ -981,13 +981,13 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
          && /triage lane, budget/.test(budgetUnit.current),
        budgetUnit ? budgetUnit.headline+' | '+budgetUnit.current : 'budget fixture not reached');
     // The exact-constant half of the engine assertion above. The stub stamps
-    // `crew@0.4.1 (deadbee)` (test/stub-box:84), so this is the one run where
+    // `crew@9.9.9-rc1 (deadbee)` (test/run.sh), so this is the one run where
     // provenance-stripping can be checked against a KNOWN input: the version
     // must render and the provenance token must not. A real fleet cannot make
     // this claim — its stamp carries whatever provenance it carries — which is
     // why the live block above asserts shape instead.
-    ok('render: the fixture engine renders 0.4.1 with its provenance stripped',
-       allSeen.some((u) => /Engine\s*0\.4\.1/.test(u.vitals)) &&
+    ok('render: the fixture engine renders 9.9.9-rc1 with its provenance stripped',
+       allSeen.some((u) => /Engine\s*9\.9\.9-rc1/.test(u.vitals)) &&
          allSeen.every((u) => !/deadbee/.test(u.vitals)),
        allSeen.map((u) => u.box + ': ' + u.vitals).join(' | '));
     /* The three verdicts must render as three verdicts (#159, #190). A tile

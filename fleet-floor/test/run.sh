@@ -101,6 +101,10 @@ fi
 # committed.
 export CREW_FLOOR_ROSTER="$HERE/fixtures/roster.txt"
 export FLOOR_TEST_VERSION="crew 9.8.7-fixture ($FLOOR)"
+# Exercise the same prerelease grammar used by candidate drills. The stub box
+# emits this as its installed engine stamp; browser.js then has to carry the
+# suffix all the way through the tile's integrity verdict.
+export FLOOR_TEST_ENGINE_VERSION="9.9.9-rc1"
 
 # ...and the suite's own operator fleet DEFINITION, which is a different thing
 # (#244). `crew floor` and floor.py now refuse under the examples fallback,
