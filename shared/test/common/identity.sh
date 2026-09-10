@@ -228,6 +228,7 @@ FIRSTTICK="$TMP/first-tick.sh"
     keep { print }
   ' "$DUTYSH"
 } >"$FIRSTTICK"
+# shellcheck disable=SC2016  # matching the literal source text, not expanding it
 t firsttick-fixture-carries-the-real-block called \
   "$(grep -Fq 'converge_git_identity "$ME"' "$FIRSTTICK" && echo called || echo MISSING)"
 FIRSTTICK_LOG="$TMP/first-tick.log"
