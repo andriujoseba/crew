@@ -190,13 +190,24 @@ t ghid-steady-state-is-silent "" "$(cat "$GHID_LOG5")"
 # exercises the recorders that exist now; a call added inside this function
 # tomorrow would pass all of them and reintroduce #708 exactly, because the
 # capture is a property of the call site and not of who is speaking.
+#
+# So the rule is an allowlist and fails closed: inside gh_identity, a line may
+# redirect to stderr, assign (a substitution captures its own output), be one
+# of the stdout-silent constructs the function is built from, or be the single
+# printf that IS the return value. Anything else — a bare echo, a second
+# printf, a tg_send, a recorder nobody has written yet — reds, without the
+# guard having to know its name.
+# shellcheck disable=SC2016  # matching literal identity.sh source text
 r1="$(awk '
   /^gh_identity\(\) \{/ { inside = 1; next }
   inside && /^\}/ { exit }
-  /^[[:space:]]*#/ { next }
-  inside && /(^|[[:space:];&|(])(note_auth_failure|clear_auth_failure|log|warn|alert)[[:space:]]/ && !/>&2/ {
-    print "WRITES-TO-STDOUT:" $0; exit
-  }
+  !inside { next }
+  /^[[:space:]]*(#|$)/ { next }
+  />&2/ { next }
+  /^[[:space:]]*(local[[:space:]]+)?[A-Za-z_][A-Za-z0-9_]*=/ { next }
+  /^[[:space:]]*(local|if|then|elif|else|fi|return|rm)([[:space:];]|$)/ { next }
+  /^[[:space:]]*printf .*"\$login"[[:space:]]*$/ && !returned { returned = 1; next }
+  { print "WRITES-TO-STDOUT:" $0; exit }
 ' "$SHARED/lib/common/identity.sh")"
 r1="${r1:-clean}"
 t ghid-nothing-in-gh-identity-writes-to-stdout clean "$r1"
