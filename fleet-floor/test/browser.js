@@ -48,10 +48,15 @@ const url = URL_ARG || 'http://127.0.0.1:8791/';
 const out = OUT_ARG || 'shots';
 
 let pass = 0;
+let skipped = 0;
 const fails = [];
 const ok = (name, cond, detail = '') => {
   if (cond) { pass++; console.log(`  ok   ${name}`); }
   else { fails.push(name); console.log(`  FAIL ${name}${detail ? '  — ' + String(detail).slice(0, 150) : ''}`); }
+};
+const skip = (name, detail = '') => {
+  skipped++;
+  console.log(`  skip ${name}${detail ? '  — ' + detail : ''}`);
 };
 const eq = (name, want, got) => ok(name, String(want) === String(got), `expected [${want}] got [${got}]`);
 
@@ -882,7 +887,7 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
     // searched loose in the vitals string, or the check would match on a
     // neighbouring field and report the wrong tier.
     ok('render: engine shows the version without provenance',
-       allSeen.some((u) => /Engine\s*\d+\.\d+\.\d+/.test(u.vitals)) &&
+       allSeen.some((u) => /Engine\s*\d+\.\d+\.\d+(?:-[A-Za-z0-9][A-Za-z0-9.-]*)?/.test(u.vitals)) &&
          allSeen.every((u) => !/Engine\s*(?:crew@|unknown)/.test(u.vitals)),
        allSeen.map((u) => u.box + ': ' + u.vitals).join(' | '));
     ok('render: the heartbeat is on screen',
@@ -903,14 +908,15 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
     //
     // Over the boxes that render a version, not all of them: an unreachable or
     // unhired box shows "—" and has no verdict to carry.
-    const stamped = allSeen.filter((u) => /Engine\s*\d+\.\d+\.\d+/.test(u.vitals));
+    const stamped = allSeen.filter((u) =>
+      /Engine\s*\d+\.\d+\.\d+(?:-[A-Za-z0-9][A-Za-z0-9.-]*)?/.test(u.vitals));
     ok('render: the engine tile carries its integrity verdict',
        stamped.length > 0 &&
          // No trailing \b: the grid's textContent runs one field straight into
          // the next label ("…0.4.1✓ currentUptime25h 30m"), so a word boundary
          // after the verdict never occurs and the check would red on a page
          // that renders it perfectly.
-         stamped.every((u) => /Engine\s*\d+\.\d+\.\d+\s*[✓⚠~]\s*(?:current|MODIFIED|unverified)/.test(u.vitals)),
+         stamped.every((u) => /Engine\s*\d+\.\d+\.\d+(?:-[A-Za-z0-9][A-Za-z0-9.-]*)?\s*[✓⚠~]\s*(?:current|MODIFIED|unverified)/.test(u.vitals)),
        stamped.map((u) => u.box + ': ' + (u.vitals.match(/Engine\s*(\S+ ?\S*)/) || [])[1]).join(' | '));
     /* ---- the gh check, SCOPED to boxes that could be flowing (#190) -------
        `flowing` — the ✓ — is a claim the collector makes only while the last
@@ -1514,7 +1520,7 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
      the box the collector calls wedged must get the force wording, and a box
      it calls reachable must NOT — even with a miss count above any constant
      the page could plausibly have kept. */
-  if (LIVE) {
+  if (LIVE && FIXTURE) {
     let say = null;
     for (let i = 0; i < 20; i++) {
       say = await page.evaluate(async () => {
@@ -1672,6 +1678,9 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
        said.failedGently === 'restart FAILED — ff-idle: boom', said.failedGently);
     ok('force: a force stop that itself failed is not reported as a kill',
        !/force-stopped/.test(said.failedToForce), said.failedToForce);
+  } else if (LIVE) {
+    skip('#486 force/mode fixture assertions',
+         'real fleet has no guaranteed ff-wedged box');
   }
 
   /* Checked HERE, before the fleet-wide action below: that action deliberately
@@ -1704,6 +1713,6 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
   }
 
   await browser.close();
-  console.log(`  -- browser: ${pass} ok, ${fails.length} failed`);
+  console.log(`  -- browser: ${pass} ok, ${skipped} skipped, ${fails.length} failed`);
   process.exit(fails.length ? 1 : 0);
 })().catch((e) => { console.error('HARNESS ERROR:', e.stack || e.message); process.exit(2); });
