@@ -108,6 +108,152 @@ check_vendor_credential
 t vendor-legacy-profile-silent absent \
   "$([ -f "$AUTHDIR/.auth-fail.vendor" ] && echo RAISED || echo absent)"
 
+# --- gh_identity's stdout is the login and nothing else (#708) --------------
+# `ME="$(gh_identity)"` is a command substitution, so whatever the function
+# writes to stdout BECOMES the box's own login. Both recorders it calls
+# announce themselves through log()/warn(), which write there — so on the
+# FIRST failing tick $ME was the WARN line itself: non-empty, duty.sh's
+# `cannot resolve own login` branch skipped, and converge_git_identity handed
+# a log line as its wanted login. Tick two behaved as documented because
+# note_auth_failure returns early, which is exactly why the defect survived to
+# a drill rather than to a fixture (drills/0.1.2.md finding 1).
+#
+# The two streams are read the way tick.sh separates them — stdout is the
+# value, stderr is what `2>&1` puts in duty.log — and BOTH halves come off one
+# call. Asserting only that $ME is empty would green a fix that deleted the
+# WARN, which is the same box going quiet by another route.
+GHID="$TMP/ghid"; mkdir -p "$GHID"
+DUTY_DIR="$GHID"
+GHID_ALERTS="$GHID/alerts"; : >"$GHID_ALERTS"
+alert() { printf '%s\n' "$*" >>"$GHID_ALERTS"; }
+# shellcheck disable=SC2317  # invoked indirectly, by gh_identity
+gh() { printf '%s\n' 'gh: HTTP 401: Bad credentials' >&2; return 4; }
+
+GHID_LOG1="$GHID/tick1.log"
+r1="$(gh_identity 2>"$GHID_LOG1")"
+t ghid-failed-credential-yields-no-login "" "$r1"
+case "$(cat "$GHID_LOG1")" in *'auth: gh rejected us'*) r1=warned ;; *) r1=SILENT ;; esac
+t ghid-failure-warn-reaches-the-log warned "$r1"
+case "$(cat "$GHID_LOG1")" in *'401'*'Bad credentials'*) r1=carried ;; *) r1=LOST ;; esac
+t ghid-failure-warn-carries-the-api-reason carried "$r1"
+t ghid-failure-writes-the-marker present \
+  "$([ -s "$GHID/.auth-fail.gh" ] && echo present || echo MISSING)"
+t ghid-failure-marker-is-one-line 1 "$(wc -l <"$GHID/.auth-fail.gh")"
+t ghid-failure-alerts-once 1 "$(grep -c '^🔑 ' "$GHID_ALERTS")"
+
+# The SECOND failing tick, with the marker already present. note_auth_failure
+# returns early there, so this is the branch that behaved correctly all along
+# — and the one that must not start returning a login now that the recorder
+# has moved. `$ME` is empty whenever `gh api user` fails, on every tick.
+GHID_LOG2="$GHID/tick2.log"
+FIRST="$(cat "$GHID/.auth-fail.gh")"
+r1="$(gh_identity 2>"$GHID_LOG2")"
+t ghid-second-failing-tick-yields-no-login "" "$r1"
+t ghid-second-failing-tick-is-silent "" "$(cat "$GHID_LOG2")"
+t ghid-second-failing-tick-keeps-the-first-record "$FIRST" "$(cat "$GHID/.auth-fail.gh")"
+t ghid-second-failing-tick-does-not-realert 1 "$(grep -c '^🔑 ' "$GHID_ALERTS")"
+
+# A successful call that returns an EMPTY login is a failure too — the `-z`
+# arm of the same branch, reached when the credential answers but names
+# nobody. It must not hand the tick an empty-but-announced identity either.
+rm -f "$GHID/.auth-fail.gh"
+# shellcheck disable=SC2317
+gh() { printf '\n'; }
+GHID_LOG3="$GHID/tick3.log"
+r1="$(gh_identity 2>"$GHID_LOG3")"
+t ghid-empty-login-yields-no-login "" "$r1"
+case "$(cat "$GHID_LOG3")" in *'auth: gh rejected us'*) r1=warned ;; *) r1=SILENT ;; esac
+t ghid-empty-login-warn-reaches-the-log warned "$r1"
+
+# The RESTORE path is the same defect on the tick a credential comes back:
+# clear_auth_failure's line was captured into $ME too, and a $ME carrying it
+# made converge_git_identity refuse as a rotation — the recovering tick
+# spending no session, with the restore line never reaching the log.
+# shellcheck disable=SC2317
+gh() { printf '%s\n' cndgrr; }
+GHID_LOG4="$GHID/tick4.log"
+r1="$(gh_identity 2>"$GHID_LOG4")"
+t ghid-restored-credential-yields-only-the-login cndgrr "$r1"
+case "$(cat "$GHID_LOG4")" in *'auth: gh is working again'*) r1=logged ;; *) r1=SILENT ;; esac
+t ghid-restore-line-reaches-the-log logged "$r1"
+t ghid-restore-clears-the-marker absent \
+  "$([ -f "$GHID/.auth-fail.gh" ] && echo PRESENT || echo absent)"
+t ghid-restore-alerts-once 1 "$(grep -c '^✅ ' "$GHID_ALERTS")"
+
+# The steady state — working credential, no marker — writes nothing at all.
+GHID_LOG5="$GHID/tick5.log"
+r1="$(gh_identity 2>"$GHID_LOG5")"
+t ghid-steady-state-yields-only-the-login cndgrr "$r1"
+t ghid-steady-state-is-silent "" "$(cat "$GHID_LOG5")"
+
+# The INVARIANT, not the two calls that hold it today. Every fixture above
+# exercises the recorders that exist now; a call added inside this function
+# tomorrow would pass all of them and reintroduce #708 exactly, because the
+# capture is a property of the call site and not of who is speaking.
+r1="$(awk '
+  /^gh_identity\(\) \{/ { inside = 1; next }
+  inside && /^\}/ { exit }
+  /^[[:space:]]*#/ { next }
+  inside && /(^|[[:space:];&|(])(note_auth_failure|clear_auth_failure|log|warn|alert)[[:space:]]/ && !/>&2/ {
+    print "WRITES-TO-STDOUT:" $0; exit
+  }
+' "$SHARED/lib/common/identity.sh")"
+r1="${r1:-clean}"
+t ghid-nothing-in-gh-identity-writes-to-stdout clean "$r1"
+
+# --- the first tick, driven through duty.sh's own source (#708 D2) ----------
+# Static greps cannot see this one: the bug is what a value CONTAINS at run
+# time, and every line of duty.sh involved is spelled correctly. So the real
+# block runs — from `ME="$(gh_identity)"` through the refusal — under a dead
+# credential, with stdout and stderr joined into one file exactly as tick.sh
+# joins them into duty.log.
+#
+# GIT_CONFIG_GLOBAL is scratch for the same reason the section below sets it:
+# on the pre-fix path this block reaches converge_git_identity, and a fixture
+# must not read (or, on some future path, write) the identity of whoever ran
+# the suite.
+FIRSTTICK_DIR="$TMP/first-tick"; mkdir -p "$FIRSTTICK_DIR"
+FIRSTTICK="$TMP/first-tick.sh"
+{
+  printf '%s\n' '#!/usr/bin/env bash' 'set -euo pipefail'
+  # shellcheck disable=SC2016  # writing literal fixture source
+  printf '%s\n' 'source "$SHARED/lib/common.sh"'
+  printf '%s\n' 'alert() { :; }' 'hostname() { printf fixture; }'
+  # shellcheck disable=SC2016  # writing literal fixture source
+  printf '%s\n' 'gh() { printf "%s\n" "gh: HTTP 401: Bad credentials" >&2; return 4; }'
+  printf '%s\n' 'boot_id=fixture-boot'
+  awk '
+    /^ME="\$\(gh_identity\)"$/ { keep=1 }
+    keep && /^# shellcheck source=\.\.\/lib\/duty-attention\.sh/ { exit }
+    keep { print }
+  ' "$DUTYSH"
+} >"$FIRSTTICK"
+t firsttick-fixture-carries-the-real-block called \
+  "$(grep -Fq 'converge_git_identity "$ME"' "$FIRSTTICK" && echo called || echo MISSING)"
+FIRSTTICK_LOG="$TMP/first-tick.log"
+DUTY_DIR="$FIRSTTICK_DIR" SHARED="$SHARED" GIT_CONFIG_GLOBAL="$TMP/gitconfig-708" \
+  bash "$FIRSTTICK" >"$FIRSTTICK_LOG" 2>&1
+t firsttick-ends-the-tick-cleanly 0 "$?"
+case "$(cat "$FIRSTTICK_LOG")" in
+  *'cannot resolve own login (gh auth dead?) — nothing to do this tick'*) r1=logged ;;
+  *) r1=MISSING ;;
+esac
+t firsttick-logs-the-documented-login-warn logged "$r1"
+case "$(cat "$FIRSTTICK_LOG")" in *'auth: gh rejected us'*) r1=logged ;; *) r1=MISSING ;; esac
+t firsttick-logs-the-credential-rejection logged "$r1"
+# The credential branch is the one that fires. A git-identity WARN here means
+# $ME was non-empty and the tick went on to converge against it — the defect,
+# stated as the line it leaves behind.
+t firsttick-does-not-blame-git-identity 0 \
+  "$(grep -c 'GitHub credential used by gh api user failed' "$FIRSTTICK_LOG" || true)"
+t firsttick-writes-the-auth-marker present \
+  "$([ -s "$FIRSTTICK_DIR/.auth-fail.gh" ] && echo present || echo MISSING)"
+t firsttick-marker-is-one-line 1 "$(wc -l <"$FIRSTTICK_DIR/.auth-fail.gh")"
+
+unset -f gh
+alert() { :; }
+DUTY_DIR="$AUTHDIR"
+
 # --- the per-tick path must not have reacquired a network auth probe -------
 # `gh auth status` in the tick is the exact cost this change removed; it would
 # pass every assertion above while restoring 7k requests/day.
