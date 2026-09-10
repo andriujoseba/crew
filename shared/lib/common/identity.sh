@@ -84,17 +84,35 @@ clear_auth_failure() {
 # two of the four agent CLIs cannot answer locally, so a countdown was the
 # flaky part of an otherwise stable idea. Whether the credential works right
 # now is the boolean that matters, and it is the one every provider agrees on.
+#
+# THIS FUNCTION'S STDOUT IS THE LOGIN AND NOTHING ELSE, because its only
+# caller is `ME="$(gh_identity)"` and a command substitution captures whatever
+# reaches stdout. Both recorders it calls announce themselves through log() /
+# warn(), which write to stdout — so on the first failing tick the WARN
+# `auth: gh rejected us` was captured INTO $ME, which was then non-empty, the
+# `cannot resolve own login` branch was skipped, and duty.sh converged git
+# identity against a log line. The credential branch never fired on the one
+# tick it exists for — the tick the drill reads and the tick an operator reads
+# when a box goes quiet (#708, drills/0.1.2.md finding 1).
+#
+# So every call inside this function is redirected to stderr, which tick.sh's
+# `2>&1` carries into duty.log unchanged: the announcement travels, the value
+# does not. The redirect covers the recorder's alert() too, which log()s when
+# a Telegram send fails. Both branches are redirected, not only the failing
+# one: the restore path's `auth: gh is working again` is the same defect on
+# the tick a credential comes back, and it lands where a mismatched $ME makes
+# converge_git_identity refuse the tick that should have recovered.
 gh_identity() {
   local login rc=0 err
   err="$(mktemp)"
   login="$(gh api user --jq .login 2>"$err")" || rc=$?
   if [ "$rc" -ne 0 ] || [ -z "$login" ]; then
-    note_auth_failure gh "$(grep -iE 'message|401|403|error' "$err" | head -1 || printf 'gh api user exited %s' "$rc")"
+    note_auth_failure gh "$(grep -iE 'message|401|403|error' "$err" | head -1 || printf 'gh api user exited %s' "$rc")" >&2
     rm -f "$err"
     return 0
   fi
   rm -f "$err"
-  clear_auth_failure gh
+  clear_auth_failure gh >&2
   printf '%s' "$login"
 }
 
