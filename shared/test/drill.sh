@@ -1686,6 +1686,108 @@ t drill-attention-census-reused-inode-stops-the-round 1 \
   "$(grep -c '^ASSERT-RC=1$' <<<"$ATT_ROT_REUSED" || true)"
 t drill-attention-census-reused-inode-grades-nothing-after-it 1 "$(att_ok "$ATT_ROT_REUSED")"
 
+# h5 — NOTHING ROTATED, AND THE COUNT STILL DECIDES WHOSE LINES THESE ARE.
+# The offset is what makes a reused drill box safe: `--reuse` passes leave
+# their records behind, and one of them is an attention session dispatched
+# outside the sandbox by a PREVIOUS life. It sits above the census mark, so it
+# is not this round's and the negative assertion must not see it.
+#
+# This is the row claude-bot's round-1 nit asked for: the same expression is
+# killed one branch down by h2, but only where the log rotated. Every other
+# fixture that lands on `current` either answers a canned string instead of
+# running the composed command, or starts from an empty log — where
+# `tail -n +1` and `cat` are the same read and no mutation can tell them
+# apart. Here they differ by exactly one line, and it is a damning one.
+att_prev_setup() {
+  att_box_conf attention "$ATT_MARK"
+  rm -f "$ATT_BOX_HOME/duty/duty.log" "$ATT_BOX_HOME/duty/duty.log.1"
+  { awk 'BEGIN { for (i = 1; i <= 49; i++) printf "tick %d duty run end\n", i }'
+    echo 'SESSION START kind=attention key=heavy-duty/incubator#470 timeout=1800s log=/l holder=x sid=0'
+  } >"$ATT_BOX_HOME/duty/duty.log"
+}
+# This round, appended to that same file: the suppressed report both demands
+# are graded against, and a session that names the sandbox. No `mv` anywhere.
+att_prev_tick() {
+  printf '%s\n' "$ATT_ROT_WARN" \
+    'SESSION START kind=attention key=host/crew-drill-builder#7 timeout=1800s log=/l holder=x sid=1' \
+    >>"$ATT_BOX_HOME/duty/duty.log"
+}
+ATT_BETWEEN='att_prev_tick'
+att_prev_setup
+ATT_PREV="$(att_drive both drain)"
+# The seed is the whole fixture: without that line above the mark, a whole-file
+# read and a bounded one agree and the row below proves nothing.
+t drill-attention-census-previous-pass-fixture-seeded-the-line 1 \
+  "$(grep -c 'key=heavy-duty/incubator#470 ' "$ATT_BOX_HOME/duty/duty.log" || true)"
+t drill-attention-census-previous-pass-is-not-this-round 0 "$(att_fail "$ATT_PREV")"
+t drill-attention-census-previous-pass-suppressed-both 2 \
+  "$(grep -c '^ok attention census: heavy-duty/incubator#46[89] seen and suppressed$' <<<"$ATT_PREV" || true)"
+t drill-attention-census-previous-pass-does-not-stop-the-round 0 \
+  "$(grep -c '^ASSERT-RC=' <<<"$ATT_PREV" || true)"
+
+# h6 — A DUTY.LOG THAT IS THERE AND WILL NOT READ (round 1, codex-bot).
+#
+# The third state again, on the file rather than on the board: not "the log was
+# empty" and not "the generation is gone", but "nobody read it". Before this
+# round every read on this path laundered its own failure — `wc -l … || echo 0`
+# made an unopenable log a log of length 0, `head | cksum` with no `pipefail`
+# made a failed read the checksum of nothing, and the slice recomputed the mark
+# the SAME way, matched itself, and returned `slice: current` with an empty
+# body. Every D2 row then graded green over a file nobody had read.
+#
+# THE FIXTURE DOES NOT USE `chmod 000`. Root reads a 0000 file, and neither a
+# builder box nor a CI runner is guaranteed to be non-root, so a permission
+# fixture can pass vacuously on the machine that is supposed to grade it — the
+# exact failure mode this group is about, wearing a fixture's clothes. A
+# duty.log that is a DIRECTORY fails `wc -l <`, `head` and `tail` with EISDIR
+# under every uid, which is the state under test: it exists, and it will not
+# read.
+att_unreadable_make() {
+  rm -rf "$ATT_BOX_HOME/duty/duty.log"
+  mkdir "$ATT_BOX_HOME/duty/duty.log"
+}
+att_unreadable_cannot_read() {
+  if wc -l <"$ATT_BOX_HOME/duty/duty.log" >/dev/null 2>&1; then echo readable; else echo unreadable; fi
+}
+# (h6a) unreadable at the census: the take half refuses, and rehearsal.sh's
+# caller stops the round there. NOTHING is graded — not even the census row,
+# which is emitted after this read for exactly that reason.
+att_box_conf attention "$ATT_MARK"
+rm -f "$ATT_BOX_HOME/duty/duty.log.1"
+att_unreadable_make
+ATT_BETWEEN=""
+ATT_UNREADABLE_TAKE="$(att_drive take drain)"
+t drill-attention-census-unreadable-fixture-really-cannot-read unreadable \
+  "$(att_unreadable_cannot_read)"
+t drill-attention-census-unreadable-log-refuses 1 \
+  "$(grep -c '^TAKE-RC=1$' <<<"$ATT_UNREADABLE_TAKE" || true)"
+t drill-attention-census-unreadable-log-grades-nothing 0 "$(att_ok "$ATT_UNREADABLE_TAKE")"
+t drill-attention-census-unreadable-log-fails-nothing 0 "$(att_fail "$ATT_UNREADABLE_TAKE")"
+# ...and the directory goes before the next block seeds a file there. `rm -f`
+# cannot remove one, so a setup that assumes a file would silently leave THIS
+# state standing and grade the next case against it.
+rm -rf "$ATT_BOX_HOME/duty/duty.log"
+
+# (h6b) readable at the census and unreadable by the time the evidence is read
+# — a rebuilt box, a mount that went away under the round. The census is taken,
+# so there IS something to grade; the bounding row is what grades it, and it
+# reds rather than certifying a read that did not happen. `unreadable` and not
+# `lost`: a file that will not open cannot be ruled out as the counted
+# generation either, and `lost` would be a conclusion the leg did not earn.
+att_prev_setup
+ATT_BETWEEN='att_unreadable_make'
+ATT_UNREADABLE_MID="$(att_drive both drain)"
+t drill-attention-census-unreadable-mid-round-fails 1 \
+  "$(grep -c "^FAIL attention census: this round's duty.log lines are bounded$" <<<"$ATT_UNREADABLE_MID" || true)"
+t drill-attention-census-unreadable-mid-round-says-what-it-read 1 \
+  "$(grep -c '^  read: the box has a duty.log it could not read' <<<"$ATT_UNREADABLE_MID" || true)"
+t drill-attention-census-unreadable-mid-round-stops-the-round 1 \
+  "$(grep -c '^ASSERT-RC=1$' <<<"$ATT_UNREADABLE_MID" || true)"
+# The census row, and nothing downstream of the slice.
+t drill-attention-census-unreadable-mid-round-grades-nothing-after-it 1 \
+  "$(att_ok "$ATT_UNREADABLE_MID")"
+rm -rf "$ATT_BOX_HOME/duty/duty.log"
+
 ATT_BOX_HOME=""
 ATT_BETWEEN=""
 
