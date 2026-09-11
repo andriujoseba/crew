@@ -141,6 +141,9 @@ echo "== force stop (#486)"
 # wait for the tier to have reached it rather than assuming the suites sourced
 # before this one took long enough. Without this the whole block would pass or
 # fail on how fast the machine is.
+# This observation is not carried as the action verdict: the explicit `force`
+# POST rechecks the live ping map and refuses on disagreement, so an expired
+# display observation cannot select the wrong stop path.
 FS_DL=$(( $(date +%s) + 60 ))
 while [ "$(uf ff-wedged 'u["note"].startswith("UNREACHABLE")')" != "True" ] \
       && [ "$(date +%s)" -lt "$FS_DL" ]; do sleep 1; done
@@ -439,6 +442,9 @@ fi
 # ===========================================================================
 echo "== restart reads its own stop (#487)"
 
+# Unlike a wedged=True classification, this absence does not age out. The ping
+# loop omits a stopped box until the POST below starts it again, so None stays
+# the current fact throughout this wait and assertion.
 FS_DL=$(( $(date +%s) + 60 ))
 while [ "$(uf ff-wedged 'u["ping"]')" != "None" ] && [ "$(date +%s)" -lt "$FS_DL" ]; do
   sleep 1
@@ -539,6 +545,8 @@ esac
 # which waits on exactly that fact — would spend its timeout and then fail for
 # a reason nobody would trace to this block.
 status POST /api/command '{"action":"power-on","box":"ff-wedged"}' >/dev/null
+# This is a terminal restoration check, not an observation carried into a
+# later action. No request depends on the note after the assertion reads it.
 FS_DL=$(( $(date +%s) + 60 ))
 while [ "$(uf ff-wedged 'u["note"].startswith("UNREACHABLE")')" != "True" ] \
       && [ "$(date +%s)" -lt "$FS_DL" ]; do sleep 1; done
