@@ -483,10 +483,18 @@ rehearsal_attention_census_take() {
   # count just took, for the reason the slice command gives at length: an inode
   # on its own is re-issued to the next file created, so the mark would be
   # forgeable by any box that rotated twice or was rebuilt under the round.
+  #
+  # `n` is NOT re-sanitised in here before it bounds that checksum, and that is
+  # deliberate. It is already whatever `wc -l` printed or the literal `0`, so a
+  # non-numeric value is unreachable — but were one to arrive, coercing it to 0
+  # in here would make the mark agree with the base the host records below and
+  # the slice would resolve `current` over the WHOLE file. Left alone, the two
+  # disagree, the generation reads `lost`, and the round stops. The degenerate
+  # case should fail closed, so the sanitisation stays host-side, where it
+  # bounds the offset and not the region the mark covers.
   # shellcheck disable=SC2016  # the command substitutions run inside the box
   conf="$(bx 'n=$(wc -l < ~/duty/duty.log 2>/dev/null || echo 0)
               n=$(printf %s "$n" | tr -d " ")
-              case "$n" in "" | *[!0-9]*) n=0 ;; esac
               if [ -e ~/duty/duty.log ]; then
                 g="$(stat -c %i ~/duty/duty.log):$(head -n "$n" ~/duty/duty.log | cksum | cut -d" " -f1)"
               else g=none; fi
