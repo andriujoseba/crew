@@ -1683,7 +1683,12 @@ att_box_conf attention "$ATT_MARK" needs-human '🔧 not the wire mark'
 ATT_LABEL_CONF="needs-human"   # what the endpoint will answer to
 ATT_MARK_EXPECT="$ATT_MARK"    # ...and the comment read must still carry the wire mark
 : >"$ATT_BOX_HOME/duty/duty.log"
-ATT_BETWEEN='printf "%s\n%s\n" "$ATT_ROT_WARN" "SESSION START kind=attention key=host/crew-drill-builder#7 timeout=1800s log=/l holder=x sid=1" >>"$ATT_BOX_HOME/duty/duty.log"'
+att_conf_tick() {
+  printf '%s\n%s\n' "$ATT_ROT_WARN" \
+    'SESSION START kind=attention key=host/crew-drill-builder#7 timeout=1800s log=/l holder=x sid=1' \
+    >>"$ATT_BOX_HOME/duty/duty.log"
+}
+ATT_BETWEEN='att_conf_tick'
 ATT_RENAMED="$(att_drive both)"
 t drill-attention-census-renamed-label-records-the-demands 1 \
   "$(grep -c '^ok attention census: 2 demand(s) parked outside host/crew-drill-builder' <<<"$ATT_RENAMED" || true)"
