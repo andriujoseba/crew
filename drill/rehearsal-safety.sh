@@ -180,6 +180,15 @@ rehearsal_attention_no_outside_session() {
 # some box legitimately picked up in an earlier life carries the mark forever.
 # And a `created_at >` window would hang the verdict on agreement between the
 # drill host's clock and GitHub's. Two reads bracketing the tick need neither.
+#
+# This one row is fleet-wide where the other two are per box, and that is worth
+# naming: a comment from a DIFFERENT box sharing the identity is indiscernible
+# from this box's, since the author is the same login. What excludes it is the
+# rehearsal's own standing precondition — never borrow a live identity until
+# the other box holding it is DISARMED (shared/docs/rehearsal.md, phase 2) — and
+# the session row above, which reads only this box's duty.log and is therefore
+# the precise one. Keeping both is the point: one is exact about which box
+# acted, the other is exact about whether the demand was touched at all.
 rehearsal_attention_no_pickup() {
   local id="$1" before="$2" after="$3" mark="$4"
   case "${before:-x}${after:-x}" in
