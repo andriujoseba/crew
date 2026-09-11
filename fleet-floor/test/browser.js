@@ -44,6 +44,8 @@ const BYLINE_REPEATS = Math.max(1,
    reason that the fleet is fine. kimi-bot caught this: the guard is right for
    the suite and wrong unconditionally, so it is gated rather than removed. */
 const FIXTURE = process.env.FLOOR_TEST_FIXTURE === '1';
+const FIXTURE_ENGINE_VERSION = process.env.FLOOR_TEST_ENGINE_VERSION || '0.4.1';
+const FIXTURE_ENGINE_PATTERN = FIXTURE_ENGINE_VERSION.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const url = URL_ARG || 'http://127.0.0.1:8791/';
 const out = OUT_ARG || 'shots';
 
@@ -987,13 +989,14 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
          && /triage lane, budget/.test(budgetUnit.current),
        budgetUnit ? budgetUnit.headline+' | '+budgetUnit.current : 'budget fixture not reached');
     // The exact-constant half of the engine assertion above. The stub stamps
-    // `crew@9.9.9-rc1 (deadbee)` (test/run.sh), so this is the one run where
+    // `crew@${FLOOR_TEST_ENGINE_VERSION} (deadbee)` (test/run.sh), so this is
+    // the one run where
     // provenance-stripping can be checked against a KNOWN input: the version
     // must render and the provenance token must not. A real fleet cannot make
     // this claim — its stamp carries whatever provenance it carries — which is
     // why the live block above asserts shape instead.
-    ok('render: the fixture engine renders 9.9.9-rc1 with its provenance stripped',
-       allSeen.some((u) => /Engine\s*9\.9\.9-rc1/.test(u.vitals)) &&
+    ok(`render: the fixture engine renders ${FIXTURE_ENGINE_VERSION} with its provenance stripped`,
+       allSeen.some((u) => new RegExp(`Engine\\s*${FIXTURE_ENGINE_PATTERN}`).test(u.vitals)) &&
          allSeen.every((u) => !/deadbee/.test(u.vitals)),
        allSeen.map((u) => u.box + ': ' + u.vitals).join(' | '));
     /* The three verdicts must render as three verdicts (#159, #190). A tile
