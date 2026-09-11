@@ -93,6 +93,25 @@ rehearsal_narrow_to_sandbox() {
 # not say" is not "there was nothing there", and an absence is established by
 # reading the source, never by failing to. The `|| true` that used to swallow
 # it turned an unanswerable box into a clean bill of health.
+#
+# NO `--paginate`, DELIBERATELY, AND THE WINDOW IS THE POINT (#714, round 2).
+# This is not an independent enumeration of what the identity carries; it is a
+# MIRROR of the window the engine itself fetched, because the other half then
+# asserts, per row recorded here, that the engine has a suppressed record for
+# it. duty_attention's own read is this endpoint with this per_page and no
+# --paginate (shared/lib/duty-attention.sh:115), and its partition, its
+# .suppressed-attention-scope file and its alert are all derived from that one
+# page. A census that read WIDER would record demands the engine never
+# fetched, for which no record can exist, and red the leg on a CORRECT engine
+# — re-creating one tick later exactly the false refusal this issue removes.
+# rehearsal-attention.sh:334-353 reads the same assigned index the same way
+# for the same reason, and says the same thing about a correct engine.
+#
+# So the two reads in this file differ on purpose: pickup_counts below DOES
+# paginate, because an appended pickup comment is precisely what lives past
+# page one of a surface the engine does not bound. Widening THIS one is an
+# engine-side question (`duty_attention` sees 100 assigned demands and no
+# more), and D5 fences it out of this issue: nothing under shared/ moves here.
 rehearsal_attention_census() {
   local sandbox="$1" out
   out="$(bx "gh api '/issues?filter=assigned&state=open&labels=attention&per_page=100' \
@@ -330,9 +349,15 @@ rehearsal_attention_census_take() {
     "$REHEARSAL_ATTENTION_OUTSIDE" "$REHEARSAL_ATTENTION_MARK")"
   ok "attention census: $REHEARSAL_ATTENTION_OUTSIDE_N demand(s) parked outside $sandbox — the tick below must suppress every one"
   local repo num
-  while read -r repo num; do
+  # On fd 3 for the reason pickup_counts' comment gives at length: the rows are
+  # the loop's input and stdin belongs to whatever the caller put there, so the
+  # next per-demand box read added inside either of these loops cannot truncate
+  # the census to its first row. Nothing here reads a box today, and neither
+  # loop's redirect has a behavioural kill for that reason — the guard's whole
+  # job is the read somebody adds NEXT.
+  while read -r repo num <&3; do
     [ -n "${num:-}" ] && echo "  census: $repo#$num"
-  done <<<"$REHEARSAL_ATTENTION_OUTSIDE"
+  done 3<<<"$REHEARSAL_ATTENTION_OUTSIDE"
   return 0
 }
 
@@ -354,7 +379,10 @@ rehearsal_attention_census_assert() {
   rehearsal_attention_graded \
     "attention census: no attention session launched outside $sandbox" \
     rehearsal_attention_no_outside_session "$sandbox" "$log" || rc=1
-  while read -r repo num; do
+  # fd 3, as in _take above and for the same forward-looking reason: every
+  # predicate this loop calls is pure today and pickups_after is read before
+  # it, so the shape is harmless right now and the guard is for the next read.
+  while read -r repo num <&3; do
     [ -n "${num:-}" ] || continue
     id="$repo#$num"
     rehearsal_attention_graded "attention census: $id seen and suppressed" \
@@ -363,7 +391,7 @@ rehearsal_attention_census_assert() {
     after="$(awk -v id="$id" '$1 == id { print $2; exit }' <<<"$pickups_after")"
     rehearsal_attention_graded "attention census: $id drew no pickup" \
       rehearsal_attention_no_pickup "$id" "$before" "$after" "$REHEARSAL_ATTENTION_MARK" || rc=1
-  done <<<"$REHEARSAL_ATTENTION_OUTSIDE"
+  done 3<<<"$REHEARSAL_ATTENTION_OUTSIDE"
   return "$rc"
 }
 

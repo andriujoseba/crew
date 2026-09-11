@@ -1061,6 +1061,7 @@ t drill-mint-sequence-bootstrap-names-no-user 0 \
 ATT_SANDBOX="host/crew-drill-builder"
 ATT_MARK="📌 picked up"
 ATT_CENSUS=""
+ATT_CENSUS_PAGE2=""
 ATT_CENSUS_RC=0
 ATT_MARK_CONF="$ATT_MARK"
 ATT_LOG_BASE=10
@@ -1078,6 +1079,13 @@ att_bx() {
     *'/issues?filter=assigned'*)
       [ "$ATT_CENSUS_RC" -eq 0 ] || return 1
       [ -z "$ATT_CENSUS" ] || printf '%s\n' "$ATT_CENSUS"
+      # ...and a second page that exists on the server and is invisible to a
+      # read which does not ask for it, which is how the endpoint behaves and
+      # what group (f) is about. Empty everywhere else, so every other case
+      # sees the single-page box it always saw.
+      case "$cmd" in
+        *--paginate*) [ -z "$ATT_CENSUS_PAGE2" ] || printf '%s\n' "$ATT_CENSUS_PAGE2" ;;
+      esac
       ;;
     *fleet.defaults.conf*) printf '%s\n' "$ATT_MARK_CONF" ;;
     *'wc -l < ~/duty/duty.log'*) printf '%s\n' "$ATT_LOG_BASE" ;;
@@ -1337,5 +1345,46 @@ att_pickup_rows_nested() {
 }
 t drill-attention-census-pickup-read-does-not-eat-a-caller-loop 3 \
   "$(att_pickup_rows_nested "$ATT_CENSUS" | grep -c . || true)"
+
+# (f) THE CENSUS'S WINDOW IS THE ENGINE'S WINDOW (#714, round 2).
+#
+# The census is not an independent enumeration of what the identity carries:
+# it is a mirror of the page duty_attention itself fetched, because the assert
+# half then demands, per recorded row, that the engine has a suppressed record
+# for it. The engine's read is unpaginated (shared/lib/duty-attention.sh:115)
+# and its .suppressed-attention-scope file is re-derived from that one page's
+# partition — so on a host carrying more than a page of demands, a record
+# exists for page 1 and cannot exist for page 2, no matter how correct the
+# engine is. That is exactly the box modelled here: page 1 answers a plain
+# read, pages 1+2 answer a `--paginate`d one, and the scope file names page 1.
+#
+# Today's code records the page-1 set and the leg is green. Add `--paginate`
+# to the census read and all four rows below red: the census row names three
+# demands, #470 is graded, `…#470 seen and suppressed` FAILs against an engine
+# that did nothing wrong, and the round stops — the false refusal this issue
+# removes, re-created one tick later. So this is the kill the window did not
+# have, and it is behaviour, not a grep for the absence of a flag.
+ATT_CENSUS="$(printf 'heavy-duty/incubator 468\nheavy-duty/incubator 469\n')"
+ATT_CENSUS_PAGE2="$(printf 'heavy-duty/incubator 470\n')"
+ATT_SCOPE="$(printf '%s\n' \
+  'heavy-duty/incubator#468 2026-09-10T21:00:00Z' \
+  'heavy-duty/incubator#469 2026-09-10T21:00:01Z')"
+ATT_LOG="$(printf '%s\n' \
+  'WARN attention: outside repos.txt: 2 item(s) in repos this box does not carry, never picked up — heavy-duty/incubator#468(2026-09-10T21:00:00Z) heavy-duty/incubator#469(2026-09-10T21:00:01Z) ' \
+  'SESSION START kind=attention key=host/crew-drill-builder#7 timeout=1800s log=/l holder=x sid=1')"
+# #470 is in the pickup tables so that a paginating census reds on the ONE
+# thing it should — no engine record — and not on a table lookup that happens
+# to be short.
+ATT_PICKUPS_BEFORE="$(printf '%s\n' \
+  'heavy-duty/incubator#468 0' 'heavy-duty/incubator#469 0' 'heavy-duty/incubator#470 0')"
+ATT_PICKUPS_AFTER="$ATT_PICKUPS_BEFORE"
+ATT_WINDOW="$(att_drive both drain)"
+t drill-attention-census-window-is-the-engines-window 1 \
+  "$(grep -c '^ok attention census: 2 demand(s) parked outside host/crew-drill-builder' <<<"$ATT_WINDOW" || true)"
+t drill-attention-census-window-omits-the-second-page 0 \
+  "$(grep -c '470' <<<"$ATT_WINDOW" || true)"
+t drill-attention-census-window-is-green 0 "$(att_fail "$ATT_WINDOW")"
+t drill-attention-census-window-rows 6 "$(att_ok "$ATT_WINDOW")"
+ATT_CENSUS_PAGE2=""
 
 suite_finish
