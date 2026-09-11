@@ -1081,6 +1081,20 @@ ATT_BOX_HOME=""
 # What the box did BETWEEN the two halves — which, on the real host, is the
 # tick. Eval'd inside att_drive's subshell.
 ATT_BETWEEN=""
+# When set, the comment read must carry this mark or the box declines.
+ATT_MARK_EXPECT=""
+
+# att_box_conf DEFAULTS_LABEL DEFAULTS_MARK [FLEET_LABEL FLEET_MARK] — the two
+# real configuration files under ATT_BOX_HOME, so the conf read is executed
+# rather than answered. With no third argument the box has no operator file.
+att_box_conf() {
+  mkdir -p "$ATT_BOX_HOME/duty/conf"
+  printf 'LABEL_ATTENTION="%s"\nMARK_PICKUP="%s"\n' "$1" "$2" \
+    >"$ATT_BOX_HOME/duty/conf/fleet.defaults.conf"
+  rm -f "$ATT_BOX_HOME/duty/conf/fleet.conf"
+  [ "$#" -lt 3 ] || printf 'LABEL_ATTENTION="%s"\nMARK_PICKUP="%s"\n' "$3" "$4" \
+    >"$ATT_BOX_HOME/duty/conf/fleet.conf"
+}
 
 # The box, in the reads the two halves make of it. Each answer is a fixture
 # variable, and `X` in a pickup table is the box declining to answer — the
@@ -1109,7 +1123,9 @@ att_bx() {
     # One read, two values, resolved two different ways (the label takes the
     # operator's fleet.conf, the wire mark does not) — so the fixture answers
     # with the pair the box's own configuration would.
-    *fleet.defaults.conf*) printf '%s\n%s\n' "$ATT_LABEL_CONF" "$ATT_MARK_CONF" ;;
+    *fleet.defaults.conf*)
+      if [ -n "$ATT_BOX_HOME" ]; then ( HOME="$ATT_BOX_HOME"; eval "$cmd" )
+      else printf '%s\n%s\n' "$ATT_LABEL_CONF" "$ATT_MARK_CONF"; fi ;;
     # The line count AND the generation it was counted against.
     *'wc -l < ~/duty/duty.log'*)
       if [ -n "$ATT_BOX_HOME" ]; then ( HOME="$ATT_BOX_HOME"; eval "$cmd" )
@@ -1124,6 +1140,14 @@ att_bx() {
       fi ;;
     *suppressed-attention-scope*) [ -z "$ATT_SCOPE" ] || printf '%s\n' "$ATT_SCOPE" ;;
     *'/comments?per_page=100'*)
+      # A comment search for a mark nothing writes finds nothing, and this box
+      # says so by declining rather than by answering 0 — the delta's own
+      # fail-closed branch. Group (i) sets this to the WIRE mark, so a read
+      # that let fleet.conf move it is killed on behaviour.
+      case "${ATT_MARK_EXPECT:-}" in
+        '') ;;
+        *) case "$cmd" in *"$ATT_MARK_EXPECT"*) ;; *) return 1 ;; esac ;;
+      esac
       key="$(sed -n "s|.*repos/\([^']*\)/issues/\([0-9]*\)/comments.*|\1#\2|p" <<<"$cmd")"
       if [ "${ATT_PHASE:-before}" = before ]; then table="$ATT_PICKUPS_BEFORE"; else table="$ATT_PICKUPS_AFTER"; fi
       v="$(awk -v k="$key" '$1 == k { print $2; exit }' <<<"$table")"
@@ -1541,6 +1565,7 @@ ATT_ROT_WARN='WARN attention: outside repos.txt: 2 item(s) in repos this box doe
 # and must stay out of this round's slice — which is what the line count is for
 # and why a rotation-aware read still has to apply it to the rotated file.
 att_rot_setup() {
+  att_box_conf attention "$ATT_MARK"
   rm -f "$ATT_BOX_HOME/duty/duty.log" "$ATT_BOX_HOME/duty/duty.log.1"
   { awk 'BEGIN { for (i = 1; i <= 49; i++) printf "tick %d duty run end\n", i }'
     echo 'SESSION START kind=attention key=heavy-duty/incubator#470 timeout=1800s log=/l holder=x sid=0'
@@ -1645,21 +1670,31 @@ ATT_LOG_GEN=111
 # that is full: zero demands recorded, nothing asserted, and the leg reports a
 # clean bill of health for a filter it never exercised. Same defect as the
 # --paginate window and the page boundary, third disguise.
-ATT_LABEL_CONF="needs-human"
-ATT_LOG="$(printf '%s\n' "$ATT_ROT_WARN" \
-  'SESSION START kind=attention key=host/crew-drill-builder#7 timeout=1800s log=/l holder=x sid=1')"
+# ...and the wire mark goes the OTHER way, from the SAME read: load_fleet_conf
+# restores MARK_PICKUP over fleet.conf, so an override of it must be read and
+# then discarded exactly as the loader discards it. One box, both resolutions,
+# and this box is real — the two configuration files exist and the read is
+# executed against them, so neither direction is pinned by a grep for source
+# text and a read that mixed them up is killed on behaviour.
+ATT_BOX_HOME="$TMP/att-conf-box"
+mkdir -p "$ATT_BOX_HOME/duty"
+# The operator moved BOTH names. Only one of them is theirs to move.
+att_box_conf attention "$ATT_MARK" needs-human '🔧 not the wire mark'
+ATT_LABEL_CONF="needs-human"   # what the endpoint will answer to
+ATT_MARK_EXPECT="$ATT_MARK"    # ...and the comment read must still carry the wire mark
+: >"$ATT_BOX_HOME/duty/duty.log"
+ATT_BETWEEN='printf "%s\n%s\n" "$ATT_ROT_WARN" "SESSION START kind=attention key=host/crew-drill-builder#7 timeout=1800s log=/l holder=x sid=1" >>"$ATT_BOX_HOME/duty/duty.log"'
 ATT_RENAMED="$(att_drive both)"
 t drill-attention-census-renamed-label-records-the-demands 1 \
   "$(grep -c '^ok attention census: 2 demand(s) parked outside host/crew-drill-builder' <<<"$ATT_RENAMED" || true)"
 t drill-attention-census-renamed-label-asserts-them 2 \
   "$(grep -c '^ok attention census: heavy-duty/incubator#46[89] seen and suppressed$' <<<"$ATT_RENAMED" || true)"
+t drill-attention-census-wire-mark-ignores-the-operator-file 2 \
+  "$(grep -c '^ok attention census: heavy-duty/incubator#46[89] drew no pickup$' <<<"$ATT_RENAMED" || true)"
 t drill-attention-census-renamed-label-is-green 0 "$(att_fail "$ATT_RENAMED")"
-# ...and the wire mark goes the OTHER way: fleet.conf cannot move MARK_PICKUP,
-# because load_fleet_conf restores it, so the read must discard an override
-# exactly as the loader does. Both values come from one box read and neither is
-# resolved the other one's way.
-t drill-attention-census-reads-both-conf-values-in-one-call 1 \
-  "$(grep -c 'wire_pickup="\$MARK_PICKUP"' "$ROOT/drill/rehearsal-safety.sh" || true)"
+ATT_BOX_HOME=""
+ATT_BETWEEN=""
+ATT_MARK_EXPECT=""
 ATT_LABEL_CONF="attention"
 # A box whose configuration resolves no LABEL_ATTENTION refuses, like the mark.
 ATT_LABEL_CONF=""
