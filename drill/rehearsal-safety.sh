@@ -24,8 +24,14 @@ REHEARSAL_BACKUP_TAKEN=0
 # authenticated tick, asserted after it (#714).
 REHEARSAL_ATTENTION_OUTSIDE=""
 REHEARSAL_ATTENTION_OUTSIDE_N=0
+REHEARSAL_ATTENTION_LABEL=""
 REHEARSAL_ATTENTION_MARK=""
 REHEARSAL_ATTENTION_LOG_BASE=0
+# Which generation of duty.log the line count above was measured against, as an
+# inode, or `none` when the box had no duty.log at all. tick.sh rotates that
+# file out from under the count (#714, round 5), so the count alone does not
+# name a place in the log.
+REHEARSAL_ATTENTION_LOG_GEN=none
 REHEARSAL_ATTENTION_PICKUPS_BEFORE=""
 # Why the census half said no, in the words the caller's refusal prints.
 REHEARSAL_ATTENTION_REASON=""
@@ -59,10 +65,20 @@ rehearsal_narrow_to_sandbox() {
     bx "[ \"\$(wc -l < ~/duty/repos.txt)\" -eq 1 ] && grep -qxF '$sandbox' ~/duty/repos.txt"
 }
 
-# rehearsal_attention_census SANDBOX — print "<repo> <number>" for every parked
-# attention demand this box's identity carries OUTSIDE the sandbox. Empty
-# output means the identity carries none. Returns non-zero when the box would
-# not answer at all.
+# rehearsal_attention_census SANDBOX LABEL — print "<repo> <number>" for every
+# parked attention demand this box's identity carries OUTSIDE the sandbox.
+# Empty output means the identity carries none. Returns non-zero when the box
+# would not answer at all.
+#
+# LABEL is the box's OWN effective LABEL_ATTENTION, read in _take below and
+# passed in rather than spelled here (#714, round 5). duty_attention fetches
+# `labels=$LABEL_ATTENTION` (shared/lib/duty-attention.sh:115), and that name
+# is NOT one of the six wire marks load_fleet_conf restores over fleet.conf
+# (shared/lib/common/conf.sh:14-24) — so an operator file genuinely moves it,
+# and a census keyed on the literal `attention` would fetch a different set
+# from the one the engine fetched. That is the same defect as the --paginate
+# window and the page boundary, in its third disguise: the census's window is
+# the engine's window, and every input to it is read off the box.
 #
 # Narrowing repos.txt scopes review, build, triage and hygiene — every module
 # that reads REPOS_FILE. It does NOT scope ATTENTION, which runs first and for
@@ -113,8 +129,8 @@ rehearsal_narrow_to_sandbox() {
 # engine-side question (`duty_attention` sees 100 assigned demands and no
 # more), and D5 fences it out of this issue: nothing under shared/ moves here.
 rehearsal_attention_census() {
-  local sandbox="$1" out
-  out="$(bx "gh api '/issues?filter=assigned&state=open&labels=attention&per_page=100' \
+  local sandbox="$1" label="$2" out
+  out="$(bx "gh api '/issues?filter=assigned&state=open&labels=$label&per_page=100' \
           --jq '.[] | select(.repository.full_name != \"$sandbox\") | \"\(.repository.full_name) \(.number)\"'")" \
     || return 1
   printf '%s\n' "$out" | sed '/^[[:space:]]*$/d' | sort -u
@@ -226,6 +242,91 @@ rehearsal_attention_no_pickup() {
   return 0
 }
 
+# --- reading THIS ROUND'S duty.log lines, across a rotation (#714, round 5) --
+#
+# The negative session assertion above is an ABSENCE, and an absence read out
+# of the wrong slice of a log is the failure this whole leg exists to stop —
+# established by failing to read rather than by reading, one file down from the
+# demands the census makes the same point about.
+#
+# shared/bin/tick.sh:31-34 moves duty.log to duty.log.1 when it passes 5 MiB,
+# BEFORE opening the append redirect for that tick's run, deliberately and for
+# a reason its own comment gives. A drill box is reused between passes and its
+# cron has been striking since install, so that threshold is reachable on the
+# ordinary `--reuse` invocation. A line count taken before the tick therefore
+# does not name a place in the log: the tick can move the file, write this
+# round's records near line 1 of a fresh one, and leave `tail -n +<count+1>`
+# returning NOTHING — every D2 row green over an outside session that really
+# did happen.
+#
+# So the census records WHICH GENERATION it counted (the inode), and the slice
+# is resolved against that, in one box read, in the four states it can be in.
+
+# rehearsal_attention_log_slice_cmd BASE GEN — the command that reads this
+# round's duty.log lines out of the box. Composed here rather than spelled at
+# the call site so a fixture can drive the real text against a real two-
+# generation log; every branch runs IN the box, in one read, because a
+# generation check and a read that are two calls can straddle the rotation
+# they are there to detect.
+#
+#   the counted generation is still duty.log  — its tail, as before
+#   it is now duty.log.1                      — that tail, THEN all of duty.log
+#   there was no duty.log at the census       — all of duty.log
+#   it is neither                             — `lost`, and the caller stops
+#
+# The rotated branch is the whole point: the round's lines are split across two
+# files and both halves are this round's. The base offset still applies to the
+# rotated generation, because that is the file the count was taken against.
+# shellcheck disable=SC2016  # every one of these expands inside the box, not here
+rehearsal_attention_log_slice_cmd() {
+  local base="$1" gen="$2"
+  printf '%s\n' \
+    'log="$HOME/duty/duty.log"' \
+    'cur=$(stat -c %i "$log" 2>/dev/null || echo none)' \
+    'rot=$(stat -c %i "$log.1" 2>/dev/null || echo none)' \
+    "if [ '$gen' = none ]; then" \
+    "  echo 'slice: fresh'; cat \"\$log\" 2>/dev/null || true" \
+    "elif [ \"\$cur\" = '$gen' ]; then" \
+    "  echo 'slice: current'; tail -n +$((base + 1)) \"\$log\" 2>/dev/null || true" \
+    "elif [ \"\$rot\" = '$gen' ]; then" \
+    "  echo 'slice: rotated'" \
+    "  tail -n +$((base + 1)) \"\$log.1\" 2>/dev/null || true" \
+    '  cat "$log" 2>/dev/null || true' \
+    'else' \
+    "  echo 'slice: lost'" \
+    'fi'
+}
+
+# rehearsal_attention_log_slice_readable RAW — the header the read above put on
+# the front, graded. `lost` is the generation the census measured being on
+# neither file: two rotations, or a box rebuilt under the round. Nothing can be
+# concluded from what is left, so this reds and the caller stops rather than
+# grading an absence it did not observe.
+rehearsal_attention_log_slice_readable() {
+  local header="${1%%"$REHEARSAL_NL"*}"
+  case "$header" in
+    'slice: current')
+      printf 'duty.log did not rotate since the census; the slice is its tail\n' ;;
+    'slice: rotated')
+      printf 'duty.log rotated since the census; the slice spans duty.log.1 and duty.log\n' ;;
+    'slice: fresh')
+      printf 'the box had no duty.log when the census was taken; the slice is the whole file\n' ;;
+    'slice: lost')
+      printf 'the duty.log generation the census counted is now neither duty.log nor duty.log.1, so the lines this round wrote cannot be bounded\n'
+      return 1 ;;
+    *)
+      printf 'the box did not answer the duty.log slice read (it said: %s)\n' "${header:-<nothing>}"
+      return 1 ;;
+  esac
+  return 0
+}
+
+# rehearsal_attention_log_slice RAW — the lines, with that header removed.
+rehearsal_attention_log_slice() {
+  [ "${1#*"$REHEARSAL_NL"}" != "$1" ] || return 0
+  printf '%s\n' "${1#*"$REHEARSAL_NL"}"
+}
+
 # --- the census's two live halves ------------------------------------------
 #
 # Both emit rows through the caller's ok()/fail(), and both take every box read
@@ -308,38 +409,74 @@ rehearsal_attention_graded() {
 # assertion the other half makes reads against what is recorded here, and a
 # leg that establishes an absence by failing to read establishes nothing.
 rehearsal_attention_census_take() {
-  local sandbox="$1"
+  local sandbox="$1" conf mark
   REHEARSAL_ATTENTION_REASON=""
-  if ! REHEARSAL_ATTENTION_OUTSIDE="$(rehearsal_attention_census "$sandbox")"; then
+  # The two configuration values this leg is keyed on, read from the box's OWN
+  # installed configuration rather than spelled here, in ONE call — and
+  # resolved the two DIFFERENT ways load_fleet_conf resolves them, which is the
+  # whole reason they are read together (shared/lib/common/conf.sh:10-25):
+  #
+  #   LABEL_ATTENTION — defaults, then fleet.conf OVER them. It is not one of
+  #   the six wire marks the loader restores, so an operator file moves it and
+  #   duty_attention then fetches that label (duty-attention.sh:115). The
+  #   census must ask the endpoint the same question the engine asked.
+  #
+  #   MARK_PICKUP — defaults ALONE, because the loader restores it over
+  #   fleet.conf: the board marks "are a wire protocol and cannot be changed by
+  #   an operator file". Keying the pickup delta on an operator override would
+  #   key it on a mark the engine never writes with, so an override is read and
+  #   then deliberately discarded here exactly as the loader discards it.
+  #
+  # An absence established against a needle nothing writes, or over a set
+  # nothing fetched, is green on every board.
+  # shellcheck disable=SC2016  # both names expand inside the box
+  conf="$(bx 'set -a
+              . ~/duty/conf/fleet.defaults.conf
+              wire_pickup="$MARK_PICKUP"
+              [ ! -f ~/duty/conf/fleet.conf ] || . ~/duty/conf/fleet.conf
+              printf "%s\n%s\n" "$LABEL_ATTENTION" "$wire_pickup"' | tr -d '\r')"
+  REHEARSAL_ATTENTION_LABEL="${conf%%"$REHEARSAL_NL"*}"
+  mark="${conf#*"$REHEARSAL_NL"}"
+  REHEARSAL_ATTENTION_MARK="${mark%%"$REHEARSAL_NL"*}"
+  if [ -z "$REHEARSAL_ATTENTION_LABEL" ] || [ -z "$REHEARSAL_ATTENTION_MARK" ] \
+    || [ "$mark" = "$conf" ]; then
+    # shellcheck disable=SC2034  # printed by rehearsal.sh's refusal, like REPOS_BACKUP
+    REHEARSAL_ATTENTION_REASON="the box's installed configuration resolved no LABEL_ATTENTION and MARK_PICKUP"
+    return 1
+  fi
+  if ! REHEARSAL_ATTENTION_OUTSIDE="$(rehearsal_attention_census "$sandbox" "$REHEARSAL_ATTENTION_LABEL")"; then
     REHEARSAL_ATTENTION_OUTSIDE=""
     REHEARSAL_ATTENTION_REASON="the box would not list this identity's parked attention demands"
     return 1
   fi
   REHEARSAL_ATTENTION_OUTSIDE_N="$(printf '%s' "$REHEARSAL_ATTENTION_OUTSIDE" | grep -c . || true)"
-  # The mark the pickup assertion counts, read from the box's OWN installed
-  # configuration rather than spelled here: an absence established against a
-  # needle the engine no longer writes is green on every board.
-  #
-  # fleet.defaults.conf ALONE is the effective value, not a half-read of it:
-  # load_fleet_conf sources fleet.conf and then restores the six board marks
-  # over it, because they "are a wire protocol and cannot be changed by an
-  # operator file" (shared/lib/common/conf.sh:10-25). Keying this delta on an
-  # operator override would key it on a mark the engine never writes with.
-  # shellcheck disable=SC2016  # MARK_PICKUP expands inside the box
-  REHEARSAL_ATTENTION_MARK="$(bx 'set -a; . ~/duty/conf/fleet.defaults.conf; printf "%s\n" "$MARK_PICKUP"' | tr -d '\r')"
-  if [ -z "$REHEARSAL_ATTENTION_MARK" ]; then
-    # shellcheck disable=SC2034  # printed by rehearsal.sh's refusal, like REPOS_BACKUP
-    REHEARSAL_ATTENTION_REASON="the box's installed configuration resolved no MARK_PICKUP"
-    return 1
-  fi
   # duty.log's length BEFORE the first phase-2 tick, so the negative assertion
   # reads only the lines this round's ticks wrote. A drill box is reused
   # between passes and its cron has been striking since install; a whole-file
   # read carries a previous pass's records into this pass's verdict.
-  REHEARSAL_ATTENTION_LOG_BASE="$(bx 'wc -l < ~/duty/duty.log 2>/dev/null || echo 0' | tr -d ' \r')"
+  #
+  # The length AND the generation it was measured against, in ONE read: the
+  # file can rotate between two of them (see the slice command above), and a
+  # count taken against one generation and checked against another names no
+  # place in either.
+  # shellcheck disable=SC2016  # the command substitutions run inside the box
+  conf="$(bx 'n=$(wc -l < ~/duty/duty.log 2>/dev/null || echo 0)
+              g=$(stat -c %i ~/duty/duty.log 2>/dev/null || echo none)
+              printf "%s %s\n" "$(printf %s "$n" | tr -d " ")" "$g"' | tr -d '\r')"
+  REHEARSAL_ATTENTION_LOG_BASE="${conf%% *}"
+  REHEARSAL_ATTENTION_LOG_GEN="${conf##* }"
   case "$REHEARSAL_ATTENTION_LOG_BASE" in
     '' | *[!0-9]*) REHEARSAL_ATTENTION_LOG_BASE=0 ;;
   esac
+  # A generation nobody read is not a generation that is not there: the box
+  # answering neither an inode nor `none` is the same third state the census
+  # itself refuses on, and the slice below would be resolved against an empty
+  # string for every tick of the round.
+  if [ -z "$REHEARSAL_ATTENTION_LOG_GEN" ] || [ "$REHEARSAL_ATTENTION_LOG_GEN" = "$conf" ]; then
+    # shellcheck disable=SC2034  # printed by rehearsal.sh's refusal, like REPOS_BACKUP
+    REHEARSAL_ATTENTION_REASON="the box would not say which generation of duty.log it counted"
+    return 1
+  fi
   if [ "$REHEARSAL_ATTENTION_OUTSIDE_N" -eq 0 ]; then
     REHEARSAL_ATTENTION_PICKUPS_BEFORE=""
     ok "attention census: 0 demand(s) parked outside $sandbox"
@@ -370,10 +507,21 @@ rehearsal_attention_census_take() {
 # through the census row alone (D4) — the positive case is the whole leg, as
 # it was before this issue.
 rehearsal_attention_census_assert() {
-  local sandbox="$1" scope log pickups_after rc=0 repo num id before after
+  local sandbox="$1" scope raw log pickups_after rc=0 repo num id before after
   [ "$REHEARSAL_ATTENTION_OUTSIDE_N" -gt 0 ] || return 0
   scope="$(bx 'cat ~/duty/.suppressed-attention-scope 2>/dev/null || true' | tr -d '\r')"
-  log="$(bx "tail -n +$((REHEARSAL_ATTENTION_LOG_BASE + 1)) ~/duty/duty.log 2>/dev/null || true" | tr -d '\r')"
+  raw="$(bx "$(rehearsal_attention_log_slice_cmd \
+    "$REHEARSAL_ATTENTION_LOG_BASE" "$REHEARSAL_ATTENTION_LOG_GEN")" | tr -d '\r')"
+  # GRADED, AND THE ONLY ROW THAT RETURNS EARLY. Every row below reads either
+  # this slice or the demands recorded against it, so a slice nobody could
+  # bound is not a leg with one red row in it — it is a leg with nothing to
+  # say, and the rows it would still print are exactly the vacuous greens this
+  # row exists to prevent. The round stops here (D3), for the same reason the
+  # take half refuses on a census it could not read.
+  rehearsal_attention_graded \
+    "attention census: this round's duty.log lines are bounded" \
+    rehearsal_attention_log_slice_readable "$raw" || return 1
+  log="$(rehearsal_attention_log_slice "$raw")"
   pickups_after="$(rehearsal_attention_pickup_counts \
     "$REHEARSAL_ATTENTION_OUTSIDE" "$REHEARSAL_ATTENTION_MARK")"
   rehearsal_attention_graded \

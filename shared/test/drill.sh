@@ -1064,20 +1064,39 @@ ATT_CENSUS=""
 ATT_CENSUS_PAGE2=""
 ATT_CENSUS_RC=0
 ATT_MARK_CONF="$ATT_MARK"
+ATT_LABEL_CONF="attention"
 ATT_LOG_BASE=10
+ATT_LOG_GEN=111
+ATT_SLICE=current
 ATT_SCOPE=""
 ATT_LOG=""
 ATT_PICKUPS_BEFORE=""
 ATT_PICKUPS_AFTER=""
+# Set to a directory and the log reads stop being fixture strings: the command
+# the host composed is EVAL'd against a real duty.log under that HOME, so
+# `stat`, `tail` and a real `mv` decide the answer. Group (h) is the only
+# caller, because that is the only group about the file moving. A fixture that
+# re-implemented the branch host-side would pass under its own mutation.
+ATT_BOX_HOME=""
+# What the box did BETWEEN the two halves — which, on the real host, is the
+# tick. Eval'd inside att_drive's subshell.
+ATT_BETWEEN=""
 
-# The box, in the five reads the two halves make of it. Each answer is a
-# fixture variable, and `X` in a pickup table is the box declining to answer —
-# the state the predicates must red on rather than read as zero.
+# The box, in the reads the two halves make of it. Each answer is a fixture
+# variable, and `X` in a pickup table is the box declining to answer — the
+# state the predicates must red on rather than read as zero.
 att_bx() {
   local cmd="$1" key table v
   case "$cmd" in
     *'/issues?filter=assigned'*)
       [ "$ATT_CENSUS_RC" -eq 0 ] || return 1
+      # The endpoint answers the label it was ASKED for, and nothing else. A
+      # census keyed on a name the operator moved away from reads an empty set
+      # off a board that is full — group (i).
+      case "$cmd" in
+        *"labels=$ATT_LABEL_CONF"*) ;;
+        *) return 0 ;;
+      esac
       [ -z "$ATT_CENSUS" ] || printf '%s\n' "$ATT_CENSUS"
       # ...and a second page that exists on the server and is invisible to a
       # read which does not ask for it, which is how the endpoint behaves and
@@ -1087,8 +1106,22 @@ att_bx() {
         *--paginate*) [ -z "$ATT_CENSUS_PAGE2" ] || printf '%s\n' "$ATT_CENSUS_PAGE2" ;;
       esac
       ;;
-    *fleet.defaults.conf*) printf '%s\n' "$ATT_MARK_CONF" ;;
-    *'wc -l < ~/duty/duty.log'*) printf '%s\n' "$ATT_LOG_BASE" ;;
+    # One read, two values, resolved two different ways (the label takes the
+    # operator's fleet.conf, the wire mark does not) — so the fixture answers
+    # with the pair the box's own configuration would.
+    *fleet.defaults.conf*) printf '%s\n%s\n' "$ATT_LABEL_CONF" "$ATT_MARK_CONF" ;;
+    # The line count AND the generation it was counted against.
+    *'wc -l < ~/duty/duty.log'*)
+      if [ -n "$ATT_BOX_HOME" ]; then ( HOME="$ATT_BOX_HOME"; eval "$cmd" )
+      else printf '%s %s\n' "$ATT_LOG_BASE" "$ATT_LOG_GEN"; fi ;;
+    # The duty.log slice read — matched on a string only the composed command
+    # carries, so it cannot be confused with the count above.
+    *'slice: lost'*)
+      if [ -n "$ATT_BOX_HOME" ]; then ( HOME="$ATT_BOX_HOME"; eval "$cmd" )
+      else
+        printf 'slice: %s\n' "$ATT_SLICE"
+        [ "$ATT_SLICE" = lost ] || [ -z "$ATT_LOG" ] || printf '%s\n' "$ATT_LOG"
+      fi ;;
     *suppressed-attention-scope*) [ -z "$ATT_SCOPE" ] || printf '%s\n' "$ATT_SCOPE" ;;
     *'/comments?per_page=100'*)
       key="$(sed -n "s|.*repos/\([^']*\)/issues/\([0-9]*\)/comments.*|\1#\2|p" <<<"$cmd")"
@@ -1097,7 +1130,6 @@ att_bx() {
       [ "$v" != X ] || return 1
       printf '%s\n' "${v:-0}"
       ;;
-    *'~/duty/duty.log'*) [ -z "$ATT_LOG" ] || printf '%s\n' "$ATT_LOG" ;;
     *) return 1 ;;
   esac
 }
@@ -1130,6 +1162,8 @@ att_drive() {
     ATT_PHASE=before
     rehearsal_attention_census_take "$ATT_SANDBOX" || echo "TAKE-RC=$?"
     [ "$1" = both ] || exit 0
+    # The tick, in whatever the group needs it to have done to the box.
+    [ -z "$ATT_BETWEEN" ] || eval "$ATT_BETWEEN"
     ATT_PHASE=after
     rehearsal_attention_census_assert "$ATT_SANDBOX" || echo "ASSERT-RC=$?"
   ) </dev/null
@@ -1170,7 +1204,7 @@ t drill-attention-census-suppressed-both-green 0 "$(att_fail "$ATT_BOTH")"
 # Six rows, counted rather than approximated: the census row, the one negative
 # session row, and a suppressed + no-pickup pair PER recorded demand. A leg
 # that graded the demands as a set would read green here with two rows.
-t drill-attention-census-suppressed-rows 6 "$(att_ok "$ATT_BOTH")"
+t drill-attention-census-suppressed-rows 7 "$(att_ok "$ATT_BOTH")"
 # A demand that already carried pickup comments from an earlier life is not a
 # failure: the assertion is a DELTA across the tick, and #469 arrives with 3.
 t drill-attention-census-standing-pickups-are-not-a-pickup 1 \
@@ -1337,7 +1371,7 @@ ATT_DRAIN="$(att_drive both drain)"
 t drill-attention-census-draining-box-grades-every-demand 3 \
   "$(grep -c '^ok attention census: heavy-duty/incubator#4[0-9]* drew no pickup$' <<<"$ATT_DRAIN" || true)"
 t drill-attention-census-draining-box-is-green 0 "$(att_fail "$ATT_DRAIN")"
-t drill-attention-census-draining-box-rows 8 "$(att_ok "$ATT_DRAIN")"
+t drill-attention-census-draining-box-rows 9 "$(att_ok "$ATT_DRAIN")"
 t drill-attention-census-draining-box-does-not-stop-the-round 0 \
   "$(grep -c '^ASSERT-RC=' <<<"$ATT_DRAIN" || true)"
 # The OTHER direction the drain runs in, and the second guard's own kill: the
@@ -1400,7 +1434,7 @@ t drill-attention-census-window-is-the-engines-window 1 \
 t drill-attention-census-window-omits-the-second-page 0 \
   "$(grep -c '470' <<<"$ATT_WINDOW" || true)"
 t drill-attention-census-window-is-green 0 "$(att_fail "$ATT_WINDOW")"
-t drill-attention-census-window-rows 6 "$(att_ok "$ATT_WINDOW")"
+t drill-attention-census-window-rows 7 "$(att_ok "$ATT_WINDOW")"
 ATT_CENSUS_PAGE2=""
 
 # (g) THE PAGE BOUNDARY: THE DRILL'S OWN FIXTURE MOVES THE ENGINE'S PAGE
@@ -1450,7 +1484,7 @@ t drill-attention-census-boundary-early-census-stops-the-round 1 \
 # One red, and it is a red against an engine that did nothing wrong: the other
 # 99 demands are graded and green beside it.
 t drill-attention-census-boundary-early-census-reds-only-that-one 1 "$(att_fail "$ATT_EARLY")"
-t drill-attention-census-boundary-early-census-grades-every-row 201 "$(att_ok "$ATT_EARLY")"
+t drill-attention-census-boundary-early-census-grades-every-row 202 "$(att_ok "$ATT_EARLY")"
 
 # The ordering this round ships: mint first, so the census's page IS the page
 # the engine will fetch.
@@ -1461,7 +1495,7 @@ t drill-attention-census-boundary-staged-census-records-the-engines-page 1 \
 t drill-attention-census-boundary-staged-census-omits-the-displaced-demand 0 \
   "$(grep -c '^  census: heavy-duty/incubator#1$' <<<"$ATT_STAGED" || true)"
 t drill-attention-census-boundary-staged-census-is-green 0 "$(att_fail "$ATT_STAGED")"
-t drill-attention-census-boundary-staged-census-grades-every-row 200 "$(att_ok "$ATT_STAGED")"
+t drill-attention-census-boundary-staged-census-grades-every-row 201 "$(att_ok "$ATT_STAGED")"
 t drill-attention-census-boundary-staged-census-does-not-stop-the-round 0 \
   "$(grep -c '^ASSERT-RC=' <<<"$ATT_STAGED" || true)"
 
@@ -1482,5 +1516,155 @@ ATT_SOURCED="$(att_drive both drain)"
 t drill-attention-census-boundary-source-ordering-is-green 0 "$(att_fail "$ATT_SOURCED")"
 t drill-attention-census-boundary-source-ordering-does-not-stop-the-round 0 \
   "$(grep -c '^ASSERT-RC=' <<<"$ATT_SOURCED" || true)"
+
+# (h) DUTY.LOG ROTATES UNDER THE CENSUS (#714, round 5).
+#
+# The take half counts duty.log's lines; the assert half reads what was written
+# after them. shared/bin/tick.sh:31-34 moves that file to duty.log.1 once it
+# passes 5 MiB, BEFORE opening the append redirect for the run — deliberately,
+# and its own comment says why. A drill box is reused between passes and its
+# cron has been striking since install, so the tick this leg is about can put
+# the round's records near line 1 of a FRESH file and leave `tail -n +<count+1>`
+# returning nothing. Every D2 row then reads green over evidence nobody read:
+# an absence established by failing to read, which is the exact failure this
+# leg exists to stop, one file down from the demands.
+#
+# THE BOX HERE IS A REAL DIRECTORY. The command the host composes is eval'd
+# against it, `stat` reads real inodes, and the rotation between the halves is
+# a real `mv` — because a fixture that re-implements the branch host-side
+# passes under its own mutation and proves nothing about the command that ships.
+ATT_BOX_HOME="$TMP/att-box"
+mkdir -p "$ATT_BOX_HOME/duty"
+ATT_ROT_WARN='WARN attention: outside repos.txt: 2 item(s) in repos this box does not carry, never picked up — heavy-duty/incubator#468(2026-09-10T21:00:00Z) heavy-duty/incubator#469(2026-09-10T21:00:01Z) '
+# The generation the census counts: 100 lines of an EARLIER pass, one of them
+# an attention session dispatched outside the sandbox. It is a previous life's
+# and must stay out of this round's slice — which is what the line count is for
+# and why a rotation-aware read still has to apply it to the rotated file.
+att_rot_setup() {
+  rm -f "$ATT_BOX_HOME/duty/duty.log" "$ATT_BOX_HOME/duty/duty.log.1"
+  { awk 'BEGIN { for (i = 1; i <= 49; i++) printf "tick %d duty run end\n", i }'
+    echo 'SESSION START kind=attention key=heavy-duty/incubator#470 timeout=1800s log=/l holder=x sid=0'
+    awk 'BEGIN { for (i = 51; i <= 100; i++) printf "tick %d duty run end\n", i }'
+  } >"$ATT_BOX_HOME/duty/duty.log"
+}
+# What the ticks did. Tick 1 appends this round's suppressed report to the
+# generation the census counted; tick 2 finds it over the threshold, rotates,
+# and writes its own records into a fresh one. BOTH halves are this round's,
+# which is why the slice has to span them.
+att_rot_tick() {
+  printf '%s\n' "$ATT_ROT_WARN" >>"$ATT_BOX_HOME/duty/duty.log"
+  mv "$ATT_BOX_HOME/duty/duty.log" "$ATT_BOX_HOME/duty/duty.log.1"
+  { echo 'tick 2026-09-11T18:00:00Z duty run start'
+    printf '%s\n' "$ATT_ROT_FRESH"
+  } >"$ATT_BOX_HOME/duty/duty.log"
+}
+ATT_BETWEEN='att_rot_tick'
+ATT_CENSUS="$(printf 'heavy-duty/incubator 468\nheavy-duty/incubator 469\n')"
+# NO state file: the suppressed evidence exists only in the rotated tail, so a
+# read that misses that tail cannot pass by another route.
+ATT_SCOPE=""
+ATT_PICKUPS_BEFORE="$(printf 'heavy-duty/incubator#468 0\nheavy-duty/incubator#469 0\n')"
+ATT_PICKUPS_AFTER="$ATT_PICKUPS_BEFORE"
+
+# h1 — the case codex-bot reported: the saved line number exceeds the fresh
+# log's length, and the fresh generation carries an outside attention session.
+ATT_ROT_FRESH='SESSION START kind=attention key=outside/repo#7 timeout=1800s log=/l holder=x sid=9'
+att_rot_setup
+ATT_ROTATED="$(att_drive both drain)"
+t drill-attention-census-rotation-sees-the-outside-session 1 \
+  "$(grep -c '^FAIL attention census: no attention session launched outside host/crew-drill-builder$' <<<"$ATT_ROTATED" || true)"
+t drill-attention-census-rotation-quotes-the-outside-session 1 \
+  "$(grep -c '^  read: SESSION START kind=attention key=outside/repo#7 ' <<<"$ATT_ROTATED" || true)"
+t drill-attention-census-rotation-stops-the-round 1 \
+  "$(grep -c '^ASSERT-RC=1$' <<<"$ATT_ROTATED" || true)"
+
+# h2 — the same rotation with a fresh generation that did nothing wrong. This
+# is the row that kills three implementations at once: the shipped one (an
+# empty slice, so the suppressed report in the rotated tail is missed and both
+# demands red), a read of the new generation alone (same), and a whole-file
+# read (the previous pass's outside session at line 50 reds a correct round).
+# Only a slice spanning duty.log.1's tail and all of duty.log is green here.
+ATT_ROT_FRESH='SESSION START kind=attention key=host/crew-drill-builder#7 timeout=1800s log=/l holder=x sid=1'
+att_rot_setup
+ATT_ROT_CLEAN="$(att_drive both drain)"
+t drill-attention-census-rotation-clean-is-green 0 "$(att_fail "$ATT_ROT_CLEAN")"
+t drill-attention-census-rotation-reads-the-rotated-tail 2 \
+  "$(grep -c '^ok attention census: heavy-duty/incubator#46[89] seen and suppressed$' <<<"$ATT_ROT_CLEAN" || true)"
+t drill-attention-census-rotation-does-not-stop-the-round 0 \
+  "$(grep -c '^ASSERT-RC=' <<<"$ATT_ROT_CLEAN" || true)"
+
+# h3 — the generation is on NEITHER file: two rotations, or a box rebuilt under
+# the round. Nothing can be concluded from what is left, so the leg says so and
+# stops — and emits no other assert row at all, because a red bounding row
+# beside four vacuous greens is the same lie in a longer form.
+att_rot_lose() {
+  att_rot_tick
+  mv "$ATT_BOX_HOME/duty/duty.log" "$ATT_BOX_HOME/duty/duty.log.1"
+  echo 'tick 2026-09-11T18:05:00Z duty run start' >"$ATT_BOX_HOME/duty/duty.log"
+}
+ATT_BETWEEN='att_rot_lose'
+att_rot_setup
+ATT_ROT_LOST="$(att_drive both drain)"
+t drill-attention-census-lost-generation-fails 1 \
+  "$(grep -c "^FAIL attention census: this round's duty.log lines are bounded$" <<<"$ATT_ROT_LOST" || true)"
+t drill-attention-census-lost-generation-says-what-it-read 1 \
+  "$(grep -c '^  read: the duty.log generation the census counted is now neither duty.log nor duty.log.1' <<<"$ATT_ROT_LOST" || true)"
+t drill-attention-census-lost-generation-stops-the-round 1 \
+  "$(grep -c '^ASSERT-RC=1$' <<<"$ATT_ROT_LOST" || true)"
+# One ok row, and it is the take half's census row: nothing downstream of the
+# slice is graded at all.
+t drill-attention-census-lost-generation-grades-nothing-after-it 1 "$(att_ok "$ATT_ROT_LOST")"
+ATT_BOX_HOME=""
+ATT_BETWEEN=""
+
+# ...and a box that does not answer the slice read in the shape it was asked
+# reds the same way. `slice:` with no generation word is the third state again:
+# not "the log was empty", but "nobody read it".
+ATT_SLICE=unanswered
+ATT_SCOPE="$(printf 'heavy-duty/incubator#468 2026-09-10T21:00:00Z\nheavy-duty/incubator#469 2026-09-10T21:00:01Z\n')"
+ATT_UNBOUNDED="$(att_drive both)"
+t drill-attention-census-unbounded-slice-fails 1 \
+  "$(grep -c "^FAIL attention census: this round's duty.log lines are bounded$" <<<"$ATT_UNBOUNDED" || true)"
+t drill-attention-census-unbounded-slice-stops-the-round 1 \
+  "$(grep -c '^ASSERT-RC=1$' <<<"$ATT_UNBOUNDED" || true)"
+ATT_SLICE=current
+# ...and the take half refuses outright when the box will not say WHICH
+# generation it counted, for the reason the census itself refuses: a slice
+# resolved against nothing would silently be the whole file, every tick.
+ATT_LOG_GEN=""
+t drill-attention-census-no-log-generation-refuses 1 \
+  "$(grep -c '^TAKE-RC=1$' <<<"$(att_drive take)" || true)"
+ATT_LOG_GEN=111
+
+# (i) THE LABEL IS THE BOX'S, NOT THIS FILE'S (#714, round 5).
+#
+# duty_attention fetches `labels=$LABEL_ATTENTION` (duty-attention.sh:115), and
+# LABEL_ATTENTION is NOT one of the six wire marks load_fleet_conf restores
+# over fleet.conf (common/conf.sh:14-24) — so an operator file moves it. A
+# census keyed on the literal `attention` then reads an EMPTY set off a board
+# that is full: zero demands recorded, nothing asserted, and the leg reports a
+# clean bill of health for a filter it never exercised. Same defect as the
+# --paginate window and the page boundary, third disguise.
+ATT_LABEL_CONF="needs-human"
+ATT_LOG="$(printf '%s\n' "$ATT_ROT_WARN" \
+  'SESSION START kind=attention key=host/crew-drill-builder#7 timeout=1800s log=/l holder=x sid=1')"
+ATT_RENAMED="$(att_drive both)"
+t drill-attention-census-renamed-label-records-the-demands 1 \
+  "$(grep -c '^ok attention census: 2 demand(s) parked outside host/crew-drill-builder' <<<"$ATT_RENAMED" || true)"
+t drill-attention-census-renamed-label-asserts-them 2 \
+  "$(grep -c '^ok attention census: heavy-duty/incubator#46[89] seen and suppressed$' <<<"$ATT_RENAMED" || true)"
+t drill-attention-census-renamed-label-is-green 0 "$(att_fail "$ATT_RENAMED")"
+# ...and the wire mark goes the OTHER way: fleet.conf cannot move MARK_PICKUP,
+# because load_fleet_conf restores it, so the read must discard an override
+# exactly as the loader does. Both values come from one box read and neither is
+# resolved the other one's way.
+t drill-attention-census-reads-both-conf-values-in-one-call 1 \
+  "$(grep -c 'wire_pickup="\$MARK_PICKUP"' "$ROOT/drill/rehearsal-safety.sh" || true)"
+ATT_LABEL_CONF="attention"
+# A box whose configuration resolves no LABEL_ATTENTION refuses, like the mark.
+ATT_LABEL_CONF=""
+t drill-attention-census-no-label-refuses 1 \
+  "$(grep -c '^TAKE-RC=1$' <<<"$(att_drive take)" || true)"
+ATT_LABEL_CONF="attention"
 
 suite_finish
