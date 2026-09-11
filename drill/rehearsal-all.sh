@@ -468,7 +468,8 @@ if [ "$INSTALL_DRILL" -eq 1 ]; then
     "$HERE/install-drill.sh" "${INSTALL_ARGS[@]}"
     rc=$?
     if box exec "$CONFIG_BOX" -- bash -lc \
-         '! crontab -l 2>/dev/null | grep -F ~/duty/bin/tick.sh >/dev/null' </dev/null; then
+         'command -v crontab >/dev/null 2>&1 &&
+          ! crontab -l 2>/dev/null | grep -F ~/duty/bin/tick.sh >/dev/null' </dev/null; then
       echo "- PASS: Section A returned \`$CONFIG_BOX\` disarmed"
     else
       echo "- FAIL: Section A returned \`$CONFIG_BOX\` armed"
