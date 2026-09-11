@@ -197,6 +197,25 @@ before the first authenticated tick, replaces it with the sandbox alone before
 phase 2, verifies that narrowing fail-closed, and restores the original on exit
 or interruption.
 
+**The operator's own account is a supported box identity.** Narrowing
+`repos.txt` bounds review, build, triage and hygiene — every module that reads
+`REPOS_FILE` — and since crew#66 it bounds the `attention` wake too, whose query
+is cross-repo while its action is not. So a parked `attention` demand in some
+other repository is not a reason to refuse a round, and the drill does not clear
+it, does not ask for it to be cleared, and does not want a second identity whose
+only qualification is carrying no work. Before the first authenticated tick the
+rehearsal **records** every such demand as a census row (`attention census: N
+demand(s) parked outside <sandbox>`, then one `census:` line each). After the
+attention tick it **asserts** the bound, per recorded demand: the engine's own
+suppressed report names it (`attention: outside repos.txt` in `duty.log`, or the
+`~/duty/.suppressed-attention-scope` set that same call leaves behind), no
+`SESSION START kind=attention` names a repository other than the sandbox, and
+the demand drew no new `📌 picked up` comment across the tick. Any miss is a
+`FAIL` row and the round stops there rather than ticking again — which is the
+independent verification the old refusal claimed to be, made real, and on the
+one fixture the drill could never mint for itself. An identity carrying no
+outside demand reports `0` and asserts nothing, exactly as before.
+
 The rehearsal deliberately does **not** arm cron. Every drill tick is explicit;
 the old scheduled-boundary check was not worth creating an autonomous agent
 that could outlive the invoking shell. On every exit the cleanup path removes

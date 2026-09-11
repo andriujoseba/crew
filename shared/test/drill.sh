@@ -1048,4 +1048,204 @@ t drill-mint-sequence-emits-no-template 0 \
 t drill-mint-sequence-bootstrap-names-no-user 0 \
   "$(grep -c -- '--user' "$MINT_STATE/script-crew-drill-reviewer" || true)"
 
+# --- the attention census: recorded, then asserted, never refused (#714) -----
+#
+# Phase 2 used to exit 1 the moment the box identity carried an `attention`
+# demand in any repository outside the sandbox, which is a real account's
+# normal state — so Gate A could not run on the operator's own host and every
+# role loop stayed UNPROVEN. Both halves of the replacement are driven here:
+# the census that records those demands before the first authenticated tick,
+# and the assertion that reads the engine's own suppressed report back after
+# it. Every box read goes through the caller's bx(), so none of this needs a
+# drill host, credentials, or a network.
+ATT_SANDBOX="host/crew-drill-builder"
+ATT_MARK="📌 picked up"
+ATT_CENSUS=""
+ATT_CENSUS_RC=0
+ATT_MARK_CONF="$ATT_MARK"
+ATT_LOG_BASE=10
+ATT_SCOPE=""
+ATT_LOG=""
+ATT_PICKUPS_BEFORE=""
+ATT_PICKUPS_AFTER=""
+
+# The box, in the five reads the two halves make of it. Each answer is a
+# fixture variable, and `X` in a pickup table is the box declining to answer —
+# the state the predicates must red on rather than read as zero.
+att_bx() {
+  local cmd="$1" key table v
+  case "$cmd" in
+    *'/issues?filter=assigned'*)
+      [ "$ATT_CENSUS_RC" -eq 0 ] || return 1
+      [ -z "$ATT_CENSUS" ] || printf '%s\n' "$ATT_CENSUS"
+      ;;
+    *fleet.defaults.conf*) printf '%s\n' "$ATT_MARK_CONF" ;;
+    *'wc -l < ~/duty/duty.log'*) printf '%s\n' "$ATT_LOG_BASE" ;;
+    *suppressed-attention-scope*) [ -z "$ATT_SCOPE" ] || printf '%s\n' "$ATT_SCOPE" ;;
+    *'/comments?per_page=100'*)
+      key="$(sed -n "s|.*repos/\([^']*\)/issues/\([0-9]*\)/comments.*|\1#\2|p" <<<"$cmd")"
+      if [ "${ATT_PHASE:-before}" = before ]; then table="$ATT_PICKUPS_BEFORE"; else table="$ATT_PICKUPS_AFTER"; fi
+      v="$(awk -v k="$key" '$1 == k { print $2; exit }' <<<"$table")"
+      [ "$v" != X ] || return 1
+      printf '%s\n' "${v:-0}"
+      ;;
+    *'~/duty/duty.log'*) [ -z "$ATT_LOG" ] || printf '%s\n' "$ATT_LOG" ;;
+    *) return 1 ;;
+  esac
+}
+
+# att_drive take|both — run the halves against the fixture box and print the
+# rows they emit. The caller supplies ok()/fail() exactly as rehearsal.sh does,
+# so a row's GRADE is observed and not inferred from a return code.
+att_drive() {
+  (
+    ok()   { echo "ok $1"; }
+    fail() { echo "FAIL $1"; }
+    bx()   { att_bx "$1"; }
+    # shellcheck source=drill/rehearsal-safety.sh
+    . "$ROOT/drill/rehearsal-safety.sh"
+    ATT_PHASE=before
+    rehearsal_attention_census_take "$ATT_SANDBOX" || echo "TAKE-RC=$?"
+    [ "$1" = both ] || exit 0
+    ATT_PHASE=after
+    rehearsal_attention_census_assert "$ATT_SANDBOX" || echo "ASSERT-RC=$?"
+  )
+}
+att_ok()   { grep -c '^ok ' <<<"$1" || true; }
+att_fail() { grep -c '^FAIL ' <<<"$1" || true; }
+
+# (a) two demands parked outside the sandbox, and a tick that suppressed both.
+ATT_CENSUS="$(printf 'heavy-duty/incubator 468\nheavy-duty/incubator 469\n')"
+ATT_SCOPE="$(printf 'heavy-duty/incubator#468 2026-09-10T21:00:00Z\nheavy-duty/incubator#469 2026-09-10T21:00:01Z\n')"
+ATT_LOG="$(printf '%s\n' \
+  'WARN attention: outside repos.txt: 2 item(s) in repos this box does not carry, never picked up — heavy-duty/incubator#468(2026-09-10T21:00:00Z) heavy-duty/incubator#469(2026-09-10T21:00:01Z) ' \
+  'SESSION START kind=attention key=host/crew-drill-builder#7 timeout=1800s log=/l holder=x sid=1')"
+ATT_PICKUPS_BEFORE="$(printf 'heavy-duty/incubator#468 0\nheavy-duty/incubator#469 3\n')"
+ATT_PICKUPS_AFTER="$ATT_PICKUPS_BEFORE"
+ATT_BOTH="$(att_drive both)"
+# The demand is RECORDED and the round continues. This is the case that made
+# Gate A unrunnable on the operator's host: before #714 the preamble exited 1
+# here, and there was no census to take.
+t drill-attention-census-records-two 1 \
+  "$(grep -c '^ok attention census: 2 demand(s) parked outside host/crew-drill-builder' <<<"$ATT_BOTH" || true)"
+t drill-attention-census-names-each-demand 2 \
+  "$(grep -c '^  census: heavy-duty/incubator#46[89]$' <<<"$ATT_BOTH" || true)"
+t drill-attention-census-suppressed-both-green 0 "$(att_fail "$ATT_BOTH")"
+# Six rows, counted rather than approximated: the census row, the one negative
+# session row, and a suppressed + no-pickup pair PER recorded demand. A leg
+# that graded the demands as a set would read green here with two rows.
+t drill-attention-census-suppressed-rows 6 "$(att_ok "$ATT_BOTH")"
+# A demand that already carried pickup comments from an earlier life is not a
+# failure: the assertion is a DELTA across the tick, and #469 arrives with 3.
+t drill-attention-census-standing-pickups-are-not-a-pickup 1 \
+  "$(grep -c '^ok attention census: heavy-duty/incubator#469 drew no pickup$' <<<"$ATT_BOTH" || true)"
+
+# The log line alone is enough when the state file has been emptied: both
+# records are accepted, because report_suppressed writes the line only on a
+# CHANGE and removes the file when the set empties.
+ATT_SCOPE=""
+t drill-attention-census-log-line-alone-is-evidence 0 "$(att_fail "$(att_drive both)")"
+# ...and the state file alone is enough when the line was written on an earlier
+# tick, which is every --reuse pass.
+ATT_SCOPE="$(printf 'heavy-duty/incubator#468 2026-09-10T21:00:00Z\nheavy-duty/incubator#469 2026-09-10T21:00:01Z\n')"
+ATT_LOG='SESSION START kind=attention key=host/crew-drill-builder#7 timeout=1800s log=/l holder=x sid=1'
+t drill-attention-census-scope-state-alone-is-evidence 0 "$(att_fail "$(att_drive both)")"
+
+# (b) one recorded demand with neither record naming it — the D3 miss.
+ATT_SCOPE='heavy-duty/incubator#468 2026-09-10T21:00:00Z'
+ATT_LOG="$(printf '%s\n' \
+  'WARN attention: outside repos.txt: 1 item(s) in repos this box does not carry, never picked up — heavy-duty/incubator#468(2026-09-10T21:00:00Z) ' \
+  'SESSION START kind=attention key=host/crew-drill-builder#7 timeout=1800s log=/l holder=x sid=1')"
+ATT_MISS="$(att_drive both)"
+t drill-attention-census-unsuppressed-demand-fails 1 \
+  "$(grep -c '^FAIL attention census: heavy-duty/incubator#469 seen and suppressed$' <<<"$ATT_MISS" || true)"
+t drill-attention-census-unsuppressed-names-what-it-read 1 \
+  "$(grep -c '^  read: neither ~/duty/.suppressed-attention-scope nor an "attention: outside repos.txt" line names heavy-duty/incubator#469$' <<<"$ATT_MISS" || true)"
+# ...and the round stops: the half returns non-zero, which is what rehearsal.sh
+# exits on before another tick can strike.
+t drill-attention-census-unsuppressed-stops-the-round 1 \
+  "$(grep -c '^ASSERT-RC=1$' <<<"$ATT_MISS" || true)"
+# The demand that WAS suppressed still reads green beside it — a miss is per
+# demand, not a verdict on the census.
+t drill-attention-census-miss-is-per-demand 1 \
+  "$(grep -c '^ok attention census: heavy-duty/incubator#468 seen and suppressed$' <<<"$ATT_MISS" || true)"
+
+# (c) a session dispatched to a repository other than the sandbox.
+ATT_SCOPE="$(printf 'heavy-duty/incubator#468 2026-09-10T21:00:00Z\nheavy-duty/incubator#469 2026-09-10T21:00:01Z\n')"
+ATT_LOG="$(printf '%s\n' \
+  'WARN attention: outside repos.txt: 2 item(s) in repos this box does not carry, never picked up — heavy-duty/incubator#468(2026-09-10T21:00:00Z) heavy-duty/incubator#469(2026-09-10T21:00:01Z) ' \
+  'SESSION START kind=attention key=heavy-duty/incubator#468 timeout=1800s log=/l holder=x sid=2')"
+ATT_STRAY="$(att_drive both)"
+t drill-attention-census-outside-session-fails 1 \
+  "$(grep -c '^FAIL attention census: no attention session launched outside host/crew-drill-builder$' <<<"$ATT_STRAY" || true)"
+t drill-attention-census-outside-session-quotes-the-record 1 \
+  "$(grep -c '^  read: SESSION START kind=attention key=heavy-duty/incubator#468 ' <<<"$ATT_STRAY" || true)"
+t drill-attention-census-outside-session-stops-the-round 1 \
+  "$(grep -c '^ASSERT-RC=1$' <<<"$ATT_STRAY" || true)"
+
+# A new pickup comment across the tick is the third miss, and the one that says
+# the wake actually ACTED on a demand outside the registry.
+ATT_LOG="$(printf '%s\n' \
+  'WARN attention: outside repos.txt: 2 item(s) in repos this box does not carry, never picked up — heavy-duty/incubator#468(2026-09-10T21:00:00Z) heavy-duty/incubator#469(2026-09-10T21:00:01Z) ' \
+  'SESSION START kind=attention key=host/crew-drill-builder#7 timeout=1800s log=/l holder=x sid=1')"
+ATT_PICKUPS_AFTER="$(printf 'heavy-duty/incubator#468 1\nheavy-duty/incubator#469 3\n')"
+ATT_PICKED="$(att_drive both)"
+t drill-attention-census-new-pickup-fails 1 \
+  "$(grep -c '^FAIL attention census: heavy-duty/incubator#468 drew no pickup$' <<<"$ATT_PICKED" || true)"
+t drill-attention-census-new-pickup-quotes-the-delta 1 \
+  "$(grep -c '^  read: heavy-duty/incubator#468 drew 1 new "📌 picked up" comment(s) across the tick (0 -> 1)$' <<<"$ATT_PICKED" || true)"
+# A comment read the box would not answer is a red, not a zero: an absence is
+# established by reading the source, never by failing to read it.
+ATT_PICKUPS_AFTER="$(printf 'heavy-duty/incubator#468 X\nheavy-duty/incubator#469 3\n')"
+ATT_UNREAD="$(att_drive both)"
+t drill-attention-census-unreadable-comments-fail 1 \
+  "$(grep -c '^FAIL attention census: heavy-duty/incubator#468 drew no pickup$' <<<"$ATT_UNREAD" || true)"
+t drill-attention-census-unreadable-comments-say-so 1 \
+  "$(grep -c '^  read: could not read the "📌 picked up" comment count of heavy-duty/incubator#468 (before: 0, after: unreadable)$' <<<"$ATT_UNREAD" || true)"
+ATT_PICKUPS_AFTER="$ATT_PICKUPS_BEFORE"
+
+# (d) an identity carrying nothing outside the sandbox: the census reports 0
+# and the leg asserts nothing, which is the behaviour that shipped before this.
+ATT_CENSUS=""
+ATT_ZERO="$(att_drive both)"
+t drill-attention-census-zero-reports-zero 1 \
+  "$(grep -c '^ok attention census: 0 demand(s) parked outside host/crew-drill-builder$' <<<"$ATT_ZERO" || true)"
+t drill-attention-census-zero-asserts-nothing 1 "$(att_ok "$ATT_ZERO")"
+t drill-attention-census-zero-is-green 0 "$(att_fail "$ATT_ZERO")"
+
+# The census fails CLOSED. The read it replaced ended in `|| true`, so a box
+# that would not answer read as a clean bill of health; the caller refuses on
+# this rc, and the reason it prints comes back in the same variable.
+ATT_CENSUS_RC=1
+ATT_UNANSWERED="$(att_drive take)"
+t drill-attention-census-unreadable-box-refuses 1 \
+  "$(grep -c '^TAKE-RC=1$' <<<"$ATT_UNANSWERED" || true)"
+t drill-attention-census-unreadable-box-emits-no-row 0 "$(att_ok "$ATT_UNANSWERED")"
+ATT_CENSUS_RC=0
+# ...and so does a box whose installed configuration resolves no MARK_PICKUP: a
+# no-pickup assertion counting a needle nothing writes is green on every board.
+ATT_CENSUS='heavy-duty/incubator 468'
+ATT_MARK_CONF=""
+t drill-attention-census-no-mark-refuses 1 \
+  "$(grep -c '^TAKE-RC=1$' <<<"$(att_drive take)" || true)"
+ATT_MARK_CONF="$ATT_MARK"
+
+# The refusal itself is gone from the preamble. A census that reads everything
+# correctly and is still guarded by an `exit` on a non-empty result would leave
+# Gate A exactly where #714 found it, and no fixture above would notice.
+t drill-attention-census-preamble-refuses-no-parked-demand 0 \
+  "$(grep -c 'no parked demand outside' "$ROOT/drill/rehearsal.sh" || true)"
+# shellcheck disable=SC2016  # a literal source match: "$SANDBOX" is the text
+t drill-attention-census-preamble-calls-both-halves 2 \
+  "$(grep -cE 'rehearsal_attention_census_(take|assert) "\$SANDBOX"' "$ROOT/drill/rehearsal.sh" || true)"
+# The assertion must run AFTER the wake rows: the suppressed report it reads is
+# written by the same duty_attention call, above the same partition, that
+# dispatched the sandbox demand. Read earlier it would be some other tick's.
+t drill-attention-census-asserts-after-the-wake ordered \
+  "$(awk '/rehearsal_attention_census_take/{take=NR}
+          /label removed \(ack re-arms\)/{wake=NR}
+          /rehearsal_attention_census_assert/{assert=NR}
+          END{print (take && wake && assert && take < wake && wake < assert) ? "ordered" : "OUT-OF-ORDER"}' \
+      "$ROOT/drill/rehearsal.sh")"
+
 suite_finish
