@@ -467,6 +467,13 @@ if [ "$INSTALL_DRILL" -eq 1 ]; then
     fi
     "$HERE/install-drill.sh" "${INSTALL_ARGS[@]}"
     rc=$?
+    if box exec "$CONFIG_BOX" -- bash -lc \
+         '! crontab -l 2>/dev/null | grep -F ~/duty/bin/tick.sh >/dev/null' </dev/null; then
+      echo "- PASS: Section A returned \`$CONFIG_BOX\` disarmed"
+    else
+      echo "- FAIL: Section A returned \`$CONFIG_BOX\` armed"
+      rc=1
+    fi
     case "$rc" in
       0) SUMMARY+=("ok         installer  (Section A record emitted)") ;;
       *) SUMMARY+=("FAIL       installer"); overall=1 ;;

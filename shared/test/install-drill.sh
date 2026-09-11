@@ -43,6 +43,16 @@ case "${1:-}" in
 esac
 SHIM
 chmod +x "$STUB/box"
+cat >"$STUB/crontab" <<'SHIM'
+#!/usr/bin/env bash
+state="${STUB_BOX_HOME:?}/crontab"
+case "${1:-}" in
+  -l) [ -f "$state" ] || exit 1; cat "$state" ;;
+  '') cat >"$state" ;;
+  *) cp "$1" "$state" ;;
+esac
+SHIM
+chmod +x "$STUB/crontab"
 # …and a double for the one jq query the driver's box-presence gate makes, so
 # stubbing `box` is enough to make this suite host-independent. Without it the
 # gate reports "no host" on any machine without jq, and the identity cases
@@ -211,6 +221,42 @@ if grep -qF 'step 9:' "$DRIVER" &&
 else
   bad "step-9-positively-observes-engine-cron-and-tick"
 fi
+
+# Exercise the production snapshot/restore functions against a borrowed-box
+# fixture. Section A replaces repos.txt and leaves the engine armed before the
+# post-step-9 cleanup; return must preserve unrelated cron and registry bytes.
+# shellcheck source=drill/install-borrowed-box.sh
+. "$ROOT/drill/install-borrowed-box.sh"
+BORROWED_HOME="$WORK/borrowed-boxhome"
+mkdir -p "$BORROWED_HOME/duty"
+printf 'owner/original  # preserve these bytes\n' >"$BORROWED_HOME/duty/repos.txt"
+cp "$BORROWED_HOME/duty/repos.txt" "$WORK/repos.before"
+printf '17 * * * * /usr/local/bin/unrelated\n*/5 * * * * %s/duty/bin/tick.sh\n' \
+  "$BORROWED_HOME" >"$BORROWED_HOME/crontab"
+STUB_BOX_HOME="$BORROWED_HOME"
+bx() { HOME="$STUB_BOX_HOME" bash -c "$1"; }
+if install_borrowed_box_snapshot; then
+  printf 'drill/installer-rehearsal\n' >"$BORROWED_HOME/duty/repos.txt"
+  if install_borrowed_box_restore && install_borrowed_box_verify; then
+    ok "borrowed-box-return-restores-state"
+  else
+    bad "borrowed-box-return-restores-state ($INSTALL_BORROWED_DETAIL)"
+  fi
+else
+  bad "borrowed-box-return-snapshots-state ($INSTALL_BORROWED_DETAIL)"
+fi
+if cmp -s "$WORK/repos.before" "$BORROWED_HOME/duty/repos.txt"; then
+  ok "borrowed-box-return-restores-registry-byte-identically"
+else
+  bad "borrowed-box-return-restores-registry-byte-identically"
+fi
+if grep -qF '/usr/local/bin/unrelated' "$BORROWED_HOME/crontab" &&
+   ! grep -qF '/duty/bin/tick.sh' "$BORROWED_HOME/crontab"; then
+  ok "borrowed-box-return-disarms-only-duty-tick"
+else
+  bad "borrowed-box-return-disarms-only-duty-tick"
+fi
+install_borrowed_box_discard_snapshot || bad "borrowed-box-snapshot-discard"
 
 if grep -qF "\"\$HERE/install-drill.sh\"" "$ROOT/drill/rehearsal-all.sh"; then
   ok "rehearsal-all-wires-section-a"
