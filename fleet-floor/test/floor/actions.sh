@@ -141,6 +141,9 @@ echo "== force stop (#486)"
 # wait for the tier to have reached it rather than assuming the suites sourced
 # before this one took long enough. Without this the whole block would pass or
 # fail on how fast the machine is.
+# This observation is not carried as the action verdict: the explicit `force`
+# POST rechecks the live ping map and refuses on disagreement, so an expired
+# display observation cannot select the wrong stop path.
 FS_DL=$(( $(date +%s) + 60 ))
 while [ "$(uf ff-wedged 'u["note"].startswith("UNREACHABLE")')" != "True" ] \
       && [ "$(date +%s)" -lt "$FS_DL" ]; do sleep 1; done
@@ -229,18 +232,55 @@ else fail "force: a reachable box is started again afterwards" "$FS_SEEN"; fi
 # calls land in this window and an emptiness check would read them as fired.
 echo "== restart mode (#486 round 2)"
 
+# Both wedged preconditions below have a bounded lifetime. Wait for a fresh
+# publication before issuing each request, otherwise a loaded runner can let
+# the heartbeat become unmeasured before the command handler reads it.
+read -r FS_PING_INTERVAL FS_PING_STALE_AFTER <<EOF
+$(
+  CREW_FLOOR_PING_INTERVAL="$FLOOR_TEST_PING_INTERVAL" \
+  CREW_FLOOR_PING_TIMEOUT="$FLOOR_TEST_PING_TIMEOUT" \
+  CREW_FLOOR_PING_FAILS="$FLOOR_TEST_PING_FAILS" \
+  FF_SERVER="$FLOOR/server" python3 - <<'PY'
+import os
+import sys
+sys.path.insert(0, os.environ["FF_SERVER"])
+from floor.ping import PING_INTERVAL_S, PING_STALE_AFTER_S
+print(PING_INTERVAL_S, PING_STALE_AFTER_S)
+PY
+)
+EOF
+# A local POST normally takes milliseconds. Leave at least one complete ping
+# scheduler interval plus one second, so an observation near an integer-second
+# boundary cannot become stale before the command handler reads it.
+FS_PING_REQUEST_MARGIN=$(( (FS_PING_INTERVAL > 2 ? FS_PING_INTERVAL : 2) + 1 ))
+FS_PING_FRESH_MAX=$(( FS_PING_STALE_AFTER - FS_PING_REQUEST_MARGIN ))
+if [ "$(( FS_PING_STALE_AFTER - FS_PING_FRESH_MAX ))" -ge 3 ] && \
+   [ "$FS_PING_FRESH_MAX" -ge 1 ]; then
+  ok "mode: the freshness guard leaves time for the request"
+else
+  fail "mode: the freshness guard leaves time for the request" \
+       "margin=$(( FS_PING_STALE_AFTER - FS_PING_FRESH_MAX ))"
+fi
+
 # 1. A GENTLE confirmation over a box that has gone wedged. The destructive
 #    direction: this is the one that must never authorise a kill.
 # The force-restart case above stops and starts this fixture. A ping round that
 # observed it while stopped legitimately removes its heartbeat, so establish
 # the wedged precondition again here rather than borrowing the earlier wait.
 FS_DL=$(( $(date +%s) + 60 ))
-while [ "$(uf ff-wedged 'u["ping"]["wedged"]')" != "True" ] \
-      && [ "$(date +%s)" -lt "$FS_DL" ]; do sleep 1; done
-t "mode: the fixture is wedged again after force restart" True \
-  "$(uf ff-wedged 'u["ping"]["wedged"]')"
+FS_PING_FRESH=False
+FS_X=
 FS_M=$(fs_mark)
-FS_X="$(api POST /api/command '{"action":"restart","box":"ff-wedged","mode":"graceful"}')"
+while [ "$(date +%s)" -lt "$FS_DL" ]; do
+  FS_PING_FRESH="$(uf ff-wedged "u[\"ping\"][\"wedged\"] and u[\"ping\"][\"age\"] <= $FS_PING_FRESH_MAX")"
+  if [ "$FS_PING_FRESH" = "True" ]; then
+    FS_M=$(fs_mark)
+    FS_X="$(api POST /api/command '{"action":"restart","box":"ff-wedged","mode":"graceful"}')"
+    break
+  fi
+  sleep 0.25
+done
+t "mode: the fixture is wedged again after force restart" True "$FS_PING_FRESH"
 FS_SEEN="$(fs_calls_since "$FS_M")"
 t "mode: a graceful confirmation over a wedged box is refused" 409 \
   "$(printf '%s' "$FS_X" | tail -1)"
@@ -280,35 +320,6 @@ else ok "mode: the harmless direction fires nothing either"; fi
 #    before this issue existed. So the old request shape keeps its old
 #    semantics and cannot become a kill by arriving at the wrong moment: the
 #    escalation is reachable only from a client that showed a human the word.
-# The earlier precondition can be nearly PING_STALE_AFTER_S old by now on a
-# loaded runner. Wait for a fresh wedged publication: otherwise this request
-# may legitimately see the heartbeat become unmeasured, take the graceful
-# path, and spend the action timeout proving a race instead of this contract.
-read -r FS_PING_INTERVAL FS_PING_STALE_AFTER <<EOF
-$(
-  CREW_FLOOR_PING_INTERVAL="$FLOOR_TEST_PING_INTERVAL" \
-  CREW_FLOOR_PING_TIMEOUT="$FLOOR_TEST_PING_TIMEOUT" \
-  CREW_FLOOR_PING_FAILS="$FLOOR_TEST_PING_FAILS" \
-  FF_SERVER="$FLOOR/server" python3 - <<'PY'
-import os
-import sys
-sys.path.insert(0, os.environ["FF_SERVER"])
-from floor.ping import PING_INTERVAL_S, PING_STALE_AFTER_S
-print(PING_INTERVAL_S, PING_STALE_AFTER_S)
-PY
-)
-EOF
-# A local POST normally takes milliseconds. Leave at least one complete ping
-# scheduler interval plus one second, so an observation near an integer-second
-# boundary cannot become stale before the command handler reads it.
-FS_PING_REQUEST_MARGIN=$(( (FS_PING_INTERVAL > 2 ? FS_PING_INTERVAL : 2) + 1 ))
-FS_PING_FRESH_MAX=$(( FS_PING_STALE_AFTER - FS_PING_REQUEST_MARGIN ))
-if [ "$(( FS_PING_STALE_AFTER - FS_PING_FRESH_MAX ))" -ge 3 ]; then
-  ok "mode: the freshness guard leaves time for the request"
-else
-  fail "mode: the freshness guard leaves time for the request" \
-       "margin=$(( FS_PING_STALE_AFTER - FS_PING_FRESH_MAX ))"
-fi
 FS_DL=$(( $(date +%s) + 60 ))
 FS_PING_FRESH=False
 FS_NO_MODE_STATUS=
@@ -431,6 +442,9 @@ fi
 # ===========================================================================
 echo "== restart reads its own stop (#487)"
 
+# Unlike a wedged=True classification, this absence does not age out. The ping
+# loop omits a stopped box until the POST below starts it again, so None stays
+# the current fact throughout this wait and assertion.
 FS_DL=$(( $(date +%s) + 60 ))
 while [ "$(uf ff-wedged 'u["ping"]')" != "None" ] && [ "$(date +%s)" -lt "$FS_DL" ]; do
   sleep 1
@@ -531,6 +545,8 @@ esac
 # which waits on exactly that fact — would spend its timeout and then fail for
 # a reason nobody would trace to this block.
 status POST /api/command '{"action":"power-on","box":"ff-wedged"}' >/dev/null
+# This is a terminal restoration check, not an observation carried into a
+# later action. No request depends on the note after the assertion reads it.
 FS_DL=$(( $(date +%s) + 60 ))
 while [ "$(uf ff-wedged 'u["note"].startswith("UNREACHABLE")')" != "True" ] \
       && [ "$(date +%s)" -lt "$FS_DL" ]; do sleep 1; done
