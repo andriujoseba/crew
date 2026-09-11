@@ -1788,6 +1788,44 @@ t drill-attention-census-unreadable-mid-round-grades-nothing-after-it 1 \
   "$(att_ok "$ATT_UNREADABLE_MID")"
 rm -rf "$ATT_BOX_HOME/duty/duty.log"
 
+# (h6c) the box had NO duty.log at the census, and the one it has now will not
+# read. The `fresh` branch is the one path whose read is not vouched for by the
+# generation mark — there was no generation to mark — so it is the branch where
+# a `cat` hidden behind `2>/dev/null || true` returns an empty slice that looks
+# exactly like a box which simply wrote nothing this round.
+att_box_conf attention "$ATT_MARK"
+rm -rf "$ATT_BOX_HOME/duty/duty.log" "$ATT_BOX_HOME/duty/duty.log.1"
+ATT_BETWEEN='att_unreadable_make'
+ATT_UNREADABLE_FRESH="$(att_drive both drain)"
+t drill-attention-census-unreadable-fresh-fails 1 \
+  "$(grep -c "^FAIL attention census: this round's duty.log lines are bounded$" <<<"$ATT_UNREADABLE_FRESH" || true)"
+t drill-attention-census-unreadable-fresh-stops-the-round 1 \
+  "$(grep -c '^ASSERT-RC=1$' <<<"$ATT_UNREADABLE_FRESH" || true)"
+t drill-attention-census-unreadable-fresh-grades-nothing-after-it 1 \
+  "$(att_ok "$ATT_UNREADABLE_FRESH")"
+rm -rf "$ATT_BOX_HOME/duty/duty.log"
+
+# (h6d) ...and the other side of that judgement, which is why `unreadable` is
+# asked LAST. A drill box reused across passes can carry a duty.log.1 nobody
+# can open — a rebuild left it root-owned, a mount went away. It says nothing
+# about a generation that has already been identified BY READING IT: `cur`
+# matched on both the inode and the counted lines, so this round's lines are
+# exactly where the census said they were. A leg that asked "did every read
+# succeed?" before "do I know where my lines are?" would stop a sound round
+# over a file it never needed.
+att_prev_setup
+rm -rf "$ATT_BOX_HOME/duty/duty.log.1"
+mkdir "$ATT_BOX_HOME/duty/duty.log.1"
+ATT_BETWEEN='att_prev_tick'
+ATT_UNREADABLE_ROT="$(att_drive both drain)"
+t drill-attention-census-unreadable-rotated-file-is-not-this-rounds-problem 0 \
+  "$(att_fail "$ATT_UNREADABLE_ROT")"
+t drill-attention-census-unreadable-rotated-file-does-not-stop-the-round 0 \
+  "$(grep -c '^ASSERT-RC=' <<<"$ATT_UNREADABLE_ROT" || true)"
+t drill-attention-census-unreadable-rotated-file-still-grades-both 2 \
+  "$(grep -c '^ok attention census: heavy-duty/incubator#46[89] seen and suppressed$' <<<"$ATT_UNREADABLE_ROT" || true)"
+rm -rf "$ATT_BOX_HOME/duty/duty.log" "$ATT_BOX_HOME/duty/duty.log.1"
+
 ATT_BOX_HOME=""
 ATT_BETWEEN=""
 
