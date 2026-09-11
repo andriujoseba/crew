@@ -63,7 +63,7 @@ cleanup() {
       }
     else
       echo "WARNING: Section A could not return '$BOX_NAME' clean: $INSTALL_BORROWED_DETAIL" >&2
-      echo "WARNING: stop the box and inspect $INSTALL_BORROWED_REPOS_BACKUP before continuing" >&2
+      echo "WARNING: stop the box and inspect ~/duty/$INSTALL_BORROWED_REPOS_BACKUP before continuing" >&2
       rc=1
     fi
   fi

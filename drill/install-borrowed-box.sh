@@ -4,14 +4,17 @@
 
 INSTALL_BORROWED_SNAPSHOT_TAKEN=0
 INSTALL_BORROWED_REPOS_STATE=""
-INSTALL_BORROWED_REPOS_BACKUP="~/duty/.repos.txt.install-drill.$$"
+# A basename keeps the path safe to interpolate into the remote shell while
+# leaving that shell (not the host) responsible for resolving ~/duty.
+INSTALL_BORROWED_REPOS_BACKUP=".repos.txt.install-drill.$$"
+# shellcheck disable=SC2034  # read by the sourcing driver after helper calls
 INSTALL_BORROWED_DETAIL=""
 
 install_borrowed_box_snapshot() {
   local rc
   if bx 'test -e ~/duty/repos.txt'; then
     INSTALL_BORROWED_REPOS_STATE=present
-    bx "cp ~/duty/repos.txt $INSTALL_BORROWED_REPOS_BACKUP" || {
+    bx "cp ~/duty/repos.txt ~/duty/$INSTALL_BORROWED_REPOS_BACKUP" || {
       INSTALL_BORROWED_DETAIL="could not snapshot ~/duty/repos.txt"
       return 1
     }
@@ -29,6 +32,7 @@ install_borrowed_box_snapshot() {
 install_borrowed_box_disarm() {
   # Keep unrelated cron entries. An empty installed crontab is still disarmed;
   # the contract is specifically that no duty tick survives Section A.
+  # shellcheck disable=SC2016  # expanded by bash inside the box
   bx 'tmp=$(mktemp) || exit 1
       crontab -l 2>/dev/null | grep -vF ~/duty/bin/tick.sh >"$tmp" || true
       crontab "$tmp"; rc=$?
@@ -45,7 +49,7 @@ install_borrowed_box_restore() {
   }
   case "$INSTALL_BORROWED_REPOS_STATE" in
     present)
-      bx "cp $INSTALL_BORROWED_REPOS_BACKUP ~/duty/repos.txt" || {
+      bx "cp ~/duty/$INSTALL_BORROWED_REPOS_BACKUP ~/duty/repos.txt" || {
         INSTALL_BORROWED_DETAIL="could not restore the borrowed box's ~/duty/repos.txt"
         return 1
       } ;;
@@ -67,12 +71,13 @@ install_borrowed_box_verify() {
   fi
   case "$INSTALL_BORROWED_REPOS_STATE" in
     present)
-      bx "cmp -s $INSTALL_BORROWED_REPOS_BACKUP ~/duty/repos.txt" || {
+      bx "cmp -s ~/duty/$INSTALL_BORROWED_REPOS_BACKUP ~/duty/repos.txt" || {
         INSTALL_BORROWED_DETAIL="the borrowed box's ~/duty/repos.txt differs from its pre-Section-A bytes"
         return 1
       } ;;
     absent)
       bx 'test ! -e ~/duty/repos.txt' || {
+        # shellcheck disable=SC2034  # read by the sourcing driver
         INSTALL_BORROWED_DETAIL="Section A created ~/duty/repos.txt on a box that arrived without one"
         return 1
       } ;;
@@ -82,7 +87,7 @@ install_borrowed_box_verify() {
 install_borrowed_box_discard_snapshot() {
   [ "$INSTALL_BORROWED_SNAPSHOT_TAKEN" -eq 1 ] || return 0
   if [ "$INSTALL_BORROWED_REPOS_STATE" = present ]; then
-    bx "rm -f -- $INSTALL_BORROWED_REPOS_BACKUP" || return 1
+    bx "rm -f -- ~/duty/$INSTALL_BORROWED_REPOS_BACKUP" || return 1
   fi
   INSTALL_BORROWED_SNAPSHOT_TAKEN=0
 }

@@ -326,6 +326,7 @@ t drill-phase2-failure-reports-role 1 \
   "$(grep -cF 'FAIL       reviewer  (phase 2 failed)' <<<"$phase2_out")"
 t drill-phase2-failure-runs-section-a 1 \
   "$(grep -cF 'ok         installer  (Section A record emitted)' <<<"$phase2_out")"
+# shellcheck disable=SC2016  # literal Markdown backticks in the record row
 t drill-phase2-section-a-return-is-recorded 1 \
   "$(grep -cF 'PASS: Section A returned `crew-drill-reviewer` disarmed' <<<"$phase2_out")"
 t drill-phase2-failure-runs-config 1 \
@@ -353,6 +354,7 @@ else
   armed_rc=$?
 fi
 t drill-section-a-armed-return-reds 1 "$armed_rc"
+# shellcheck disable=SC2016  # literal Markdown backticks in the record row
 t drill-section-a-armed-return-is-recorded 1 \
   "$(grep -cF 'FAIL: Section A returned `crew-drill-reviewer` armed' <<<"$armed_out")"
 
