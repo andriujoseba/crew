@@ -1283,6 +1283,22 @@ t drill-attention-census-asserts-after-the-wake ordered \
           /rehearsal_attention_census_assert/{assert=NR}
           END{print (take && wake && assert && take < wake && wake < assert) ? "ordered" : "OUT-OF-ORDER"}' \
       "$ROOT/drill/rehearsal.sh")"
+# ...and the sandbox demand must be minted BEFORE the census is taken (#714,
+# round 4). Both reads are one page of an endpoint that answers newest first,
+# so minting after the census displaces the OLDEST outside demand off the page
+# the engine will fetch, and the assert half then grades a row no correct
+# engine can hold a record for. Group (g) below drives that failure; this row
+# is the ordering it turns on, and no fixture driving the two halves can pin
+# it, because the mint is the caller's and not theirs.
+#
+# The census still precedes the wake marker: it captures duty.log's length,
+# and D3's negative-session assertion reads only what was written after it.
+t drill-attention-census-mints-the-sandbox-demand-first ordered \
+  "$(awk '/drill: attention wake /{ if (!mint) mint = NR }
+          /rehearsal_attention_census_take/{ if (!take) take = NR }
+          /-- attention wake --/{ if (!wake) wake = NR }
+          END{print (mint && take && wake && mint < take && take < wake) ? "ordered" : "OUT-OF-ORDER"}' \
+      "$ROOT/drill/rehearsal.sh")"
 
 # (e) THE PER-DEMAND BOX READ MUST NOT EAT THE LOOP IT RUNS IN (#714, round 1).
 #
@@ -1386,5 +1402,67 @@ t drill-attention-census-window-omits-the-second-page 0 \
 t drill-attention-census-window-is-green 0 "$(att_fail "$ATT_WINDOW")"
 t drill-attention-census-window-rows 6 "$(att_ok "$ATT_WINDOW")"
 ATT_CENSUS_PAGE2=""
+
+# (g) THE PAGE BOUNDARY: THE DRILL'S OWN FIXTURE MOVES THE ENGINE'S PAGE
+# (#714, round 4).
+#
+# Group (f) proves the census does not read WIDER than the engine, holding both
+# pages static across the tick. That is not the only way the two windows come
+# apart, and the other way is the drill's own doing. `/issues?filter=assigned`
+# answers newest first, and the census and duty_attention each read one
+# `per_page=100` page of it — so minting the sandbox `attention` demand INSERTS
+# a row at the head of that page and displaces the oldest outside demand off
+# the engine's next fetch. A census taken before the mint records 100 rows; the
+# engine correctly writes records for the 99 it fetched; the displaced
+# hundredth reds and the round stops. That is the false refusal this issue
+# removes, re-created one tick later at the boundary.
+#
+# 100 rows, the engine's real per_page, because the cap IS the boundary: below
+# it both orderings record the same set and there is nothing to see. Newest
+# first, so `#1` is the oldest demand and the one that falls off.
+#
+# The two orderings are driven against ONE correct engine — its suppressed
+# scope is the post-mint page either way, because the tick always runs after
+# the mint. What differs is only which page the census read.
+att_page() { # att_page STAGED — the rows one per_page=100 read yields, with
+             # the sandbox demand dropped as the census's own --jq drops it
+  { [ "$1" = 1 ] && printf '%s 7\n' "$ATT_SANDBOX"
+    awk 'BEGIN { for (i = 100; i >= 1; i--) printf "heavy-duty/incubator %d\n", i }'
+  } | head -n 100 | awk -v s="$ATT_SANDBOX" '$1 != s'
+}
+ATT_SCOPE="$(att_page 1 | awk '{ printf "%s#%s 2026-09-11T00:00:00Z\n", $1, $2 }')"
+ATT_LOG='SESSION START kind=attention key=host/crew-drill-builder#7 timeout=1800s log=/l holder=x sid=1'
+# Explicit zeroes for every row of the WIDER page, so the displaced demand reds
+# on the one thing it should — no engine record — and never on a pickup table
+# that happened to be short.
+ATT_PICKUPS_BEFORE="$(att_page 0 | awk '{ print $1 "#" $2 " 0" }')"
+ATT_PICKUPS_AFTER="$ATT_PICKUPS_BEFORE"
+
+# The ordering that shipped through round 3: census first, mint second.
+ATT_CENSUS="$(att_page 0)"
+ATT_EARLY="$(att_drive both drain)"
+t drill-attention-census-boundary-early-census-records-100 1 \
+  "$(grep -c '^ok attention census: 100 demand(s) parked outside host/crew-drill-builder' <<<"$ATT_EARLY" || true)"
+t drill-attention-census-boundary-early-census-fails-the-displaced-demand 1 \
+  "$(grep -c '^FAIL attention census: heavy-duty/incubator#1 seen and suppressed$' <<<"$ATT_EARLY" || true)"
+t drill-attention-census-boundary-early-census-stops-the-round 1 \
+  "$(grep -c '^ASSERT-RC=1$' <<<"$ATT_EARLY" || true)"
+# One red, and it is a red against an engine that did nothing wrong: the other
+# 99 demands are graded and green beside it.
+t drill-attention-census-boundary-early-census-reds-only-that-one 1 "$(att_fail "$ATT_EARLY")"
+t drill-attention-census-boundary-early-census-grades-every-row 201 "$(att_ok "$ATT_EARLY")"
+
+# The ordering this round ships: mint first, so the census's page IS the page
+# the engine will fetch.
+ATT_CENSUS="$(att_page 1)"
+ATT_STAGED="$(att_drive both drain)"
+t drill-attention-census-boundary-staged-census-records-the-engines-page 1 \
+  "$(grep -c '^ok attention census: 99 demand(s) parked outside host/crew-drill-builder' <<<"$ATT_STAGED" || true)"
+t drill-attention-census-boundary-staged-census-omits-the-displaced-demand 0 \
+  "$(grep -c '^  census: heavy-duty/incubator#1$' <<<"$ATT_STAGED" || true)"
+t drill-attention-census-boundary-staged-census-is-green 0 "$(att_fail "$ATT_STAGED")"
+t drill-attention-census-boundary-staged-census-grades-every-row 200 "$(att_ok "$ATT_STAGED")"
+t drill-attention-census-boundary-staged-census-does-not-stop-the-round 0 \
+  "$(grep -c '^ASSERT-RC=' <<<"$ATT_STAGED" || true)"
 
 suite_finish

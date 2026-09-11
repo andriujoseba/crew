@@ -204,9 +204,20 @@ is cross-repo while its action is not. So a parked `attention` demand in some
 other repository is not a reason to refuse a round, and the drill does not clear
 it, does not ask for it to be cleared, and does not want a second identity whose
 only qualification is carrying no work. Before the first authenticated tick the
-rehearsal **records** every such demand as a census row (`attention census: N
-demand(s) parked outside <sandbox>`, then one `census:` line each). After the
-attention tick it **asserts** the bound, per recorded demand: the engine's own
+rehearsal **records** those demands as a census row (`attention census: N
+demand(s) parked outside <sandbox>`, then one `census:` line each).
+
+The census's window is the wake's own, deliberately: the single unpaginated
+`per_page=100` page of `/issues?filter=assigned` that `duty_attention` itself
+reads, and no wider. The assertion below holds the engine to a record it
+derives from exactly that page, so a demand past it is one no correct engine
+can have seen, and recording it would red a correct round. For the same reason
+the census is taken **after** the sandbox's own drill demand is minted: that
+endpoint answers newest first, so minting an issue displaces the oldest demand
+off the page the tick will fetch.
+
+After the attention tick the rehearsal **asserts** the bound, per demand that
+census recorded: the engine's own
 suppressed report names it (`attention: outside repos.txt` in `duty.log`, or the
 `~/duty/.suppressed-attention-scope` set that same call leaves behind), no
 `SESSION START kind=attention` names a repository other than the sandbox, and

@@ -653,6 +653,29 @@ else
   # and attention is not one of them (#52).
   ok "safety interlock: repos.txt narrows review/build/triage/hygiene to the sandbox"
 
+  # -- the sandbox demand, minted BEFORE the census below (#714, round 4) --
+  #
+  # This is the fixture the attention wake further down waits on, and it is
+  # staged HERE rather than beside that wait for one reason: the census below
+  # mirrors the single unpaginated `per_page=100` page duty_attention itself
+  # fetches, and minting an issue CHANGES that page. The endpoint answers
+  # newest first, so on an identity already carrying a full page of demands,
+  # creating the newest one displaces the OLDEST off the engine's next page —
+  # and the census, taken before the mint, would then record a row for which
+  # no correct engine can hold a suppressed record. The assert half reds it,
+  # the round stops, and that is the false refusal this issue removes,
+  # re-created one tick later at the page boundary.
+  #
+  # Minting first makes the census's page the page the engine will fetch. The
+  # census stays where it is, before every phase-2 tick — including the notify
+  # leg's — because it is also what captures duty.log's length, and D3's
+  # "no attention session outside the sandbox" assertion reads only the lines
+  # written after that mark.
+  inum="$(gh api "repos/$SANDBOX/issues" -f title="drill: attention wake $(date -u +%H%M%S)" \
+    -f body="Drill demand: reply with exactly one short comment acknowledging this drill, then stop. Do not open PRs." \
+    -f "assignees[]=$ME2" -f "labels[]=attention" --jq .number)"
+  rehearsal_fixture_record_issue "$SANDBOX" "$inum"
+
   # The surface repos.txt cannot bound, RECORDED rather than refused (#714).
   #
   # This block used to exit 1 on any demand parked outside the sandbox, and
@@ -693,10 +716,8 @@ else
   fi
 
   # -- attention wake --
-  inum="$(gh api "repos/$SANDBOX/issues" -f title="drill: attention wake $(date -u +%H%M%S)" \
-    -f body="Drill demand: reply with exactly one short comment acknowledging this drill, then stop. Do not open PRs." \
-    -f "assignees[]=$ME2" -f "labels[]=attention" --jq .number)"
-  rehearsal_fixture_record_issue "$SANDBOX" "$inum"
+  # Its fixture is `$inum`, minted above the census for the page-boundary
+  # reason given there. The tick is what the wake rows are about.
   bx "~/duty/bin/tick.sh" || true
   wait_for 900 "attention: 📌 pickup comment" bash -c \
     "out=\$(gh api 'repos/$SANDBOX/issues/$inum/comments' --jq '[.[] | select(.user.login == \"$ME2\")] | length'); grep -qE '^[1-9][0-9]*$' <<<\"\$out\""
