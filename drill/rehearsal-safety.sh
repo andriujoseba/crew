@@ -531,6 +531,18 @@ rehearsal_attention_census_take() {
   # The count is not coerced anywhere, in here or on the host. A degenerate one
   # is not a zero to be tidied up: it is the box telling us it could not read
   # the file, and the caller refuses on it below.
+  #
+  # THE `pipefail` ON THIS SIDE HAS NO BEHAVIOURAL KILL, and that is reported
+  # rather than papered over. `wc` opens the file first, so every fixture that
+  # can make `head` fail makes `wc` fail too and refuses one branch earlier; the
+  # gap it covers is the file changing identity BETWEEN those two opens, which
+  # no fixture can stage inside a single box command. It is also not the line
+  # that holds the invariant up: a laundered mark here is only ever COMPARED,
+  # and `cksum` of nothing cannot equal the checksum of a prefix that was read,
+  # so the slice answers `lost` or — under its own `pipefail`, which IS killed —
+  # `unreadable`. It stays because both sides must compute the mark the same
+  # way for the comparison to mean anything, and because a drill box has cron
+  # striking at that very file while this runs.
   # shellcheck disable=SC2016  # the command substitutions run inside the box
   conf="$(bx 'set -o pipefail
               n=0 g=none

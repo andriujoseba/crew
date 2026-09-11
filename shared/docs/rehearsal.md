@@ -246,6 +246,19 @@ present a brand-new `duty.log` wearing the counted generation's number and the
 slice would read past the end of it. Those all land on `lost`, and the round
 stops.
 
+A read that **fails** is a third answer again, and neither of the other two. A
+`duty.log` that is there and will not open — a rebuilt box, a mount that went
+away, a file some other pass left unreadable — is not a log of length zero and
+not a generation that is gone: it is a file nothing can be concluded from, and
+one that cannot be ruled out as the counted generation either. The census
+refuses to be taken on it, and a log that stops reading mid-round reds the
+bounding row and stops there. That distinction is what keeps the negative
+assertions honest: "no attention session was launched outside the sandbox" and
+"the box could not be read" are the same empty slice, and only one of them is
+evidence. An unreadable `duty.log.1` beside a generation the census identified
+by reading it costs the round nothing, because that file is not where this
+round's lines are.
+
 The rehearsal deliberately does **not** arm cron. Every drill tick is explicit;
 the old scheduled-boundary check was not worth creating an autonomous agent
 that could outlive the invoking shell. On every exit the cleanup path removes
