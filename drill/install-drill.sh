@@ -49,8 +49,27 @@ case "$BOX_NAME" in
   *) echo "refusing non-drill box '$BOX_NAME' — installer rehearsal targets crew-drill-* only" >&2; exit 1 ;;
 esac
 WORK="$(mktemp -d)"
+# shellcheck source=drill/install-borrowed-box.sh
+. "$ROOT/drill/install-borrowed-box.sh"
 # shellcheck disable=SC2317  # invoked indirectly by the EXIT trap
-cleanup() { rm -rf -- "$WORK"; }
+cleanup() {
+  rc=$?
+  trap - EXIT
+  if [ "$INSTALL_BORROWED_SNAPSHOT_TAKEN" -eq 1 ]; then
+    if install_borrowed_box_restore && install_borrowed_box_verify; then
+      install_borrowed_box_discard_snapshot || {
+        echo "WARNING: borrowed-box state was restored but its temporary registry snapshot could not be removed" >&2
+        rc=1
+      }
+    else
+      echo "WARNING: Section A could not return '$BOX_NAME' clean: $INSTALL_BORROWED_DETAIL" >&2
+      echo "WARNING: stop the box and inspect ~/duty/$INSTALL_BORROWED_REPOS_BACKUP before continuing" >&2
+      rc=1
+    fi
+  fi
+  rm -rf -- "$WORK"
+  exit "$rc"
+}
 trap cleanup EXIT
 if [ "$ACQUIRE" -eq 1 ]; then
   TREE="$WORK/source"
@@ -190,6 +209,13 @@ case "$IDENTITY_STATE" in
     exit 1 ;;
 esac
 echo
+
+# Snapshot immediately before Section A's first possible box mutation. The
+# EXIT trap owns the restore from here, including every failure path.
+if ! install_borrowed_box_snapshot; then
+  echo "cannot snapshot '$BOX_NAME' before Section A: $INSTALL_BORROWED_DETAIL" >&2
+  exit 1
+fi
 
 FAIL=0
 pass() { echo "- PASS: $1"; }
@@ -333,6 +359,18 @@ else
   # removal's own success message and says nothing about what went missing
   # after it, which is how a true survival got reported as a failure (#341).
   fail "step 9: positive engine/cron/tick survival observation" "$INSTALL_SURVIVAL_DETAIL"
+fi
+
+# The survival assertion above deliberately reads the armed state. Only after
+# that evidence is complete does Section A return the borrowed box disarmed
+# and restore the exact registry bytes it carried on entry.
+if install_borrowed_box_restore && install_borrowed_box_verify; then
+  pass "return: \`$BOX_NAME\` is disarmed and its pre-Section-A registry is byte-identical"
+  install_borrowed_box_discard_snapshot ||
+    fail "return: discard the temporary borrowed-box registry snapshot"
+else
+  fail "return: \`$BOX_NAME\` is disarmed with its pre-Section-A registry restored" \
+    "$INSTALL_BORROWED_DETAIL"
 fi
 
 # Last, because it covers every mutation above: Section A hires, re-hires and

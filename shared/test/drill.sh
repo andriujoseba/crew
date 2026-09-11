@@ -102,6 +102,19 @@ printf 'installer %s %s %s\n' "$remote" "$ref" "$shipped" >>"$DRILL_INSTALL_LOG"
 exit 0
 INSTALL
 chmod +x "$HARNESS/install-drill.sh"
+cat >"$HARNESS/box" <<'BOX'
+#!/usr/bin/env bash
+[ "${1:-}" = exec ] || exit 1
+[ "${DRILL_SECTION_A_UNREADABLE:-0}" -eq 0 ] || exit 2
+if [ "${DRILL_SECTION_A_ARMED:-0}" -eq 1 ]; then
+  printf 'armed\n'
+else
+  printf 'disarmed\n'
+fi
+BOX
+chmod +x "$HARNESS/box"
+PATH="$HARNESS:$PATH"
+export PATH
 cat >"$HARNESS/rehearsal-config.sh" <<'CONFIG'
 #!/usr/bin/env bash
 printf 'config\n' >>"$DRILL_SECTION_LOG"
@@ -318,6 +331,9 @@ t drill-phase2-failure-reports-role 1 \
   "$(grep -cF 'FAIL       reviewer  (phase 2 failed)' <<<"$phase2_out")"
 t drill-phase2-failure-runs-section-a 1 \
   "$(grep -cF 'ok         installer  (Section A record emitted)' <<<"$phase2_out")"
+# shellcheck disable=SC2016  # literal Markdown backticks in the record row
+t drill-phase2-section-a-return-is-recorded 1 \
+  "$(grep -cF 'PASS: Section A returned `crew-drill-reviewer` disarmed' <<<"$phase2_out")"
 t drill-phase2-failure-runs-config 1 \
   "$(grep -cF 'ok         config  (operator mode + registry contract)' <<<"$phase2_out")"
 t drill-phase2-failure-runs-app 1 \
@@ -331,6 +347,37 @@ t drill-phase2-records-app-armed-blocker 1 \
 t drill-phase2-failure-invokes-config-and-app $'config\napp' "$(cat "$SECTION_LOG")"
 t drill-phase2-summary-counts-four-passed 1 \
   "$(grep -cE '^## section states: 4 passed, 1 failed, [0-9]+ skipped/not-run$' <<<"$phase2_out")"
+
+if armed_out="$(DRILL_ROLE_LOG="$ROLE_LOG" DRILL_INSTALL_LOG="$INSTALL_LOG" \
+    DRILL_SECTION_LOG="$SECTION_LOG" DRILL_REMOTE="$REMOTE" \
+    DRILL_SECTION_A_ARMED=1 bash "$HARNESS/rehearsal-all.sh" --tree "$SOURCE" \
+      --roles reviewer --keep --no-app --no-config-drill --no-resume-drill \
+      --no-attention-drill --no-attention-audit-drill --no-hygiene-drill \
+      --no-breaker-drill --no-notify-drill 2>&1)"; then
+  armed_rc=0
+else
+  armed_rc=$?
+fi
+t drill-section-a-armed-return-reds 1 "$armed_rc"
+# shellcheck disable=SC2016  # literal Markdown backticks in the record row
+t drill-section-a-armed-return-is-recorded 1 \
+  "$(grep -cF 'FAIL: Section A returned `crew-drill-reviewer` armed' <<<"$armed_out")"
+
+if unreadable_out="$(DRILL_ROLE_LOG="$ROLE_LOG" DRILL_INSTALL_LOG="$INSTALL_LOG" \
+    DRILL_SECTION_LOG="$SECTION_LOG" DRILL_REMOTE="$REMOTE" \
+    DRILL_SECTION_A_UNREADABLE=1 bash "$HARNESS/rehearsal-all.sh" --tree "$SOURCE" \
+      --roles reviewer --keep --no-app --no-config-drill --no-resume-drill \
+      --no-attention-drill --no-attention-audit-drill --no-hygiene-drill \
+      --no-breaker-drill --no-notify-drill 2>&1)"; then
+  unreadable_rc=0
+else
+  unreadable_rc=$?
+fi
+t drill-section-a-unreadable-return-reds 1 "$unreadable_rc"
+# shellcheck disable=SC2016  # literal Markdown backticks in the record row
+t drill-section-a-unreadable-return-is-recorded 1 \
+  "$(grep -cF 'FAIL: Section A returned `crew-drill-reviewer` with crontab state unreadable' \
+    <<<"$unreadable_out")"
 
 # The third historical zero-execution leg also records a discovered host
 # blocker rather than disappearing inside app's aggregate result.
