@@ -214,7 +214,12 @@ derives from exactly that page, so a demand past it is one no correct engine
 can have seen, and recording it would red a correct round. For the same reason
 the census is taken **after** the sandbox's own drill demand is minted: that
 endpoint answers newest first, so minting an issue displaces the oldest demand
-off the page the tick will fetch.
+off the page the tick will fetch. The label it asks for is the box's own
+effective `LABEL_ATTENTION` and not the literal `attention`, because an
+operator `fleet.conf` can move that name and the wake would then be fetching a
+different set from the census — the `MARK_PICKUP` the pickup assertion counts
+is read from the same call and deliberately does *not* take such an override,
+because the loader restores the six board marks over any operator file.
 
 After the attention tick the rehearsal **asserts** the bound, per demand that
 census recorded: the engine's own
@@ -226,6 +231,14 @@ the demand drew no new `📌 picked up` comment across the tick. Any miss is a
 independent verification the old refusal claimed to be, made real, and on the
 one fixture the drill could never mint for itself. An identity carrying no
 outside demand reports `0` and asserts nothing, exactly as before.
+
+Those `duty.log` reads are bounded by a line count **and** the generation it
+was counted against, because `tick.sh` rotates `duty.log` to `duty.log.1` at
+5 MiB before a run appends to it — a threshold a reused drill box reaches. When
+the file moved under the round, the slice spans the tail of the rotated
+generation and all of the new one; when the generation the census counted is on
+neither file, the round stops on that fact rather than grading an absence in a
+log it could not bound.
 
 The rehearsal deliberately does **not** arm cron. Every drill tick is explicit;
 the old scheduled-boundary check was not worth creating an autonomous agent
