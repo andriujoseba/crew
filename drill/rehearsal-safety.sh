@@ -27,10 +27,12 @@ REHEARSAL_ATTENTION_OUTSIDE_N=0
 REHEARSAL_ATTENTION_LABEL=""
 REHEARSAL_ATTENTION_MARK=""
 REHEARSAL_ATTENTION_LOG_BASE=0
-# Which generation of duty.log the line count above was measured against, as an
-# inode, or `none` when the box had no duty.log at all. tick.sh rotates that
-# file out from under the count (#714, round 5), so the count alone does not
-# name a place in the log.
+# Which generation of duty.log the line count above was measured against, as
+# `<inode>:<checksum of the counted lines>`, or `none` when the box had no
+# duty.log at all. tick.sh rotates that file out from under the count (#714,
+# round 5), so the count alone does not name a place in the log — and the inode
+# alone does not name a file, because the kernel re-issues it the moment the
+# generation is unlinked.
 REHEARSAL_ATTENTION_LOG_GEN=none
 REHEARSAL_ATTENTION_PICKUPS_BEFORE=""
 # Why the census half said no, in the words the caller's refusal prints.
@@ -259,8 +261,24 @@ rehearsal_attention_no_pickup() {
 # returning NOTHING — every D2 row green over an outside session that really
 # did happen.
 #
-# So the census records WHICH GENERATION it counted (the inode), and the slice
-# is resolved against that, in one box read, in the four states it can be in.
+# So the census records WHICH GENERATION it counted, and the slice is resolved
+# against that, in one box read, in the four states it can be in.
+#
+# That mark is NOT the inode alone. An inode is a slot, not an identity: the
+# kernel hands it straight back on the next create, so a box that rotates twice
+# or is rebuilt under the round gets a brand-new duty.log wearing the counted
+# generation's number, `tail -n +<count+1>` runs off the end of it, and every
+# D2 row greens over an absence nobody observed — the exact failure this slice
+# exists to stop, one level down. It is not hypothetical: it is what ci-shell
+# graded red on an ext4 runner while tmpfs handed the drill a fresh inode and
+# hid it (#714, this round). Truncation in place is the same hole, from the
+# other side: `>` keeps the inode and drops everything the count named.
+#
+# The mark is therefore the inode AND a checksum of the first <count> lines —
+# precisely the region the offset names. A match then asserts what the slice
+# actually needs: this is the file the count was taken from, and it still
+# carries the lines that were counted. Anything else is `lost`, and the caller
+# stops rather than reading an absence out of a file it cannot place.
 
 # rehearsal_attention_log_slice_cmd BASE GEN — the command that reads this
 # round's duty.log lines out of the box. Composed here rather than spelled at
@@ -282,8 +300,9 @@ rehearsal_attention_log_slice_cmd() {
   local base="$1" gen="$2"
   printf '%s\n' \
     'log="$HOME/duty/duty.log"' \
-    'cur=$(stat -c %i "$log" 2>/dev/null || echo none)' \
-    'rot=$(stat -c %i "$log.1" 2>/dev/null || echo none)' \
+    'cur=none rot=none' \
+    "[ ! -e \"\$log\" ] || cur=\"\$(stat -c %i \"\$log\"):\$(head -n $base \"\$log\" | cksum | cut -d' ' -f1)\"" \
+    "[ ! -e \"\$log.1\" ] || rot=\"\$(stat -c %i \"\$log.1\"):\$(head -n $base \"\$log.1\" | cksum | cut -d' ' -f1)\"" \
     "if [ '$gen' = none ]; then" \
     "  echo 'slice: fresh'; cat \"\$log\" 2>/dev/null || true" \
     "elif [ \"\$cur\" = '$gen' ]; then" \
@@ -459,17 +478,26 @@ rehearsal_attention_census_take() {
   # file can rotate between two of them (see the slice command above), and a
   # count taken against one generation and checked against another names no
   # place in either.
+  #
+  # The generation is marked by its inode AND a checksum of the very lines the
+  # count just took, for the reason the slice command gives at length: an inode
+  # on its own is re-issued to the next file created, so the mark would be
+  # forgeable by any box that rotated twice or was rebuilt under the round.
   # shellcheck disable=SC2016  # the command substitutions run inside the box
   conf="$(bx 'n=$(wc -l < ~/duty/duty.log 2>/dev/null || echo 0)
-              g=$(stat -c %i ~/duty/duty.log 2>/dev/null || echo none)
-              printf "%s %s\n" "$(printf %s "$n" | tr -d " ")" "$g"' | tr -d '\r')"
+              n=$(printf %s "$n" | tr -d " ")
+              case "$n" in "" | *[!0-9]*) n=0 ;; esac
+              if [ -e ~/duty/duty.log ]; then
+                g="$(stat -c %i ~/duty/duty.log):$(head -n "$n" ~/duty/duty.log | cksum | cut -d" " -f1)"
+              else g=none; fi
+              printf "%s %s\n" "$n" "$g"' | tr -d '\r')"
   REHEARSAL_ATTENTION_LOG_BASE="${conf%% *}"
   REHEARSAL_ATTENTION_LOG_GEN="${conf##* }"
   case "$REHEARSAL_ATTENTION_LOG_BASE" in
     '' | *[!0-9]*) REHEARSAL_ATTENTION_LOG_BASE=0 ;;
   esac
   # A generation nobody read is not a generation that is not there: the box
-  # answering neither an inode nor `none` is the same third state the census
+  # answering neither a mark nor `none` is the same third state the census
   # itself refuses on, and the slice below would be resolved against an empty
   # string for every tick of the round.
   if [ -z "$REHEARSAL_ATTENTION_LOG_GEN" ] || [ "$REHEARSAL_ATTENTION_LOG_GEN" = "$conf" ]; then

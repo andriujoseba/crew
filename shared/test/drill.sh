@@ -1622,6 +1622,14 @@ t drill-attention-census-rotation-does-not-stop-the-round 0 \
 # the round. Nothing can be concluded from what is left, so the leg says so and
 # stops — and emits no other assert row at all, because a red bounding row
 # beside four vacuous greens is the same lie in a longer form.
+#
+# Note what decides this row and what does not. The second `mv` frees the
+# counted generation's inode, and whether the kernel then hands that very
+# number back to the `echo` below is the FILESYSTEM's business: tmpfs does not,
+# ext4 does. This row must land `lost` either way, which it does only because
+# the mark carries the counted lines' checksum as well as the inode — a reused
+# inode arrives under a first line the census never counted. h4 drives the
+# reuse case deterministically rather than waiting for a filesystem to do it.
 att_rot_lose() {
   att_rot_tick
   mv "$ATT_BOX_HOME/duty/duty.log" "$ATT_BOX_HOME/duty/duty.log.1"
@@ -1639,6 +1647,45 @@ t drill-attention-census-lost-generation-stops-the-round 1 \
 # One ok row, and it is the take half's census row: nothing downstream of the
 # slice is graded at all.
 t drill-attention-census-lost-generation-grades-nothing-after-it 1 "$(att_ok "$ATT_ROT_LOST")"
+
+# h4 — THE COUNTED GENERATION'S NUMBER, WORN BY A FILE THAT IS NOT IT. The log
+# is truncated in place and rewritten: `>` re-uses the open inode by
+# construction, on every filesystem, so this forges the identity h3 can only
+# forge when the kernel happens to co-operate. It is also a real state — a
+# rebuilt box, or anything that rewrites the log in place — and the round's
+# suppressed report, appended before the truncation, is destroyed with it.
+#
+# This is the row that kills an inode-only mark, which is what this leg shipped
+# with until ci-shell graded it on ext4: that implementation reads `current`,
+# runs `tail -n +101` off the end of a two-line file, and returns an empty
+# slice, so the bounding row greens and four vacuous assertions are graded
+# against evidence that no longer exists. The fresh generation is deliberately
+# INNOCENT — it names the sandbox, not an outside repo — so nothing but the
+# bounding row can red here, and a mark that cannot tell the files apart is
+# caught by the greens it produces and not by a coincidence.
+att_rot_truncate() {
+  printf '%s\n' "$ATT_ROT_WARN" >>"$ATT_BOX_HOME/duty/duty.log"
+  printf '%s\n' 'tick 2026-09-11T18:05:00Z duty run start' "$ATT_ROT_FRESH" \
+    >"$ATT_BOX_HOME/duty/duty.log"
+}
+ATT_ROT_FRESH='SESSION START kind=attention key=host/crew-drill-builder#7 timeout=1800s log=/l holder=x sid=1'
+ATT_BETWEEN='att_rot_truncate'
+att_rot_setup
+ATT_ROT_SAME_INODE_GEN="$(stat -c %i "$ATT_BOX_HOME/duty/duty.log")"
+ATT_ROT_REUSED="$(att_drive both drain)"
+# The fixture only proves what it claims if the inode really did survive: a
+# truncation that silently replaced the file would make this an expensive
+# duplicate of h3.
+t drill-attention-census-reused-inode-fixture-kept-the-inode "$ATT_ROT_SAME_INODE_GEN" \
+  "$(stat -c %i "$ATT_BOX_HOME/duty/duty.log")"
+t drill-attention-census-reused-inode-fails 1 \
+  "$(grep -c "^FAIL attention census: this round's duty.log lines are bounded$" <<<"$ATT_ROT_REUSED" || true)"
+t drill-attention-census-reused-inode-says-what-it-read 1 \
+  "$(grep -c '^  read: the duty.log generation the census counted is now neither duty.log nor duty.log.1' <<<"$ATT_ROT_REUSED" || true)"
+t drill-attention-census-reused-inode-stops-the-round 1 \
+  "$(grep -c '^ASSERT-RC=1$' <<<"$ATT_ROT_REUSED" || true)"
+t drill-attention-census-reused-inode-grades-nothing-after-it 1 "$(att_ok "$ATT_ROT_REUSED")"
+
 ATT_BOX_HOME=""
 ATT_BETWEEN=""
 
