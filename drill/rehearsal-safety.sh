@@ -291,29 +291,59 @@ rehearsal_attention_no_pickup() {
 #   it is now duty.log.1                      — that tail, THEN all of duty.log
 #   there was no duty.log at the census       — all of duty.log
 #   it is neither                             — `lost`, and the caller stops
+#   a file that is there and will not read     — `unreadable`, and it stops too
 #
 # The rotated branch is the whole point: the round's lines are split across two
 # files and both halves are this round's. The base offset still applies to the
 # rotated generation, because that is the file the count was taken against.
+#
+# `unreadable` is a SEPARATE answer from `lost`, and the distinction is the
+# whole of round 1's blocking finding. A read that fails is not an observation:
+# a file we cannot open cannot be ruled OUT as the counted generation either, so
+# `lost` — "the generation is on neither file" — would be a conclusion we did
+# not earn, and `current` over an empty body would be the vacuous green this leg
+# exists to stop. Every read below therefore carries its status: `pipefail` so a
+# failing `head` cannot be laundered into `cksum` of nothing, an explicit test on
+# `stat` so a missing inode cannot become an empty field in a well-formed mark,
+# and the selected branch's own read captured before the header is printed so a
+# `tail` that failed cannot arrive as a slice that was empty. bx is `box exec …
+# bash -lc` (rehearsal.sh), so `pipefail` is the box's to set.
+#
+# It is the LAST thing asked, after both positive identifications, because a
+# file that cannot be read only matters while the generation is still in doubt.
+# A `cur` that matched has already been read — inode and counted lines both —
+# and a duty.log.1 nobody can open says nothing about it. Asking first would
+# stop a round that knows exactly where its lines are over an unrelated file
+# left behind by an earlier pass.
 # shellcheck disable=SC2016  # every one of these expands inside the box, not here
 rehearsal_attention_log_slice_cmd() {
   local base="$1" gen="$2"
   printf '%s\n' \
+    'set -o pipefail' \
     'log="$HOME/duty/duty.log"' \
-    'cur=none rot=none' \
-    "[ ! -e \"\$log\" ] || cur=\"\$(stat -c %i \"\$log\"):\$(head -n $base \"\$log\" | cksum | cut -d' ' -f1)\"" \
-    "[ ! -e \"\$log.1\" ] || rot=\"\$(stat -c %i \"\$log.1\"):\$(head -n $base \"\$log.1\" | cksum | cut -d' ' -f1)\"" \
+    'cur=none rot=none hdr= body=' \
+    'if [ -e "$log" ]; then cur=unreadable' \
+    "  i=\$(stat -c %i \"\$log\") && c=\$(head -n $base \"\$log\" | cksum | cut -d' ' -f1) && cur=\"\$i:\$c\"" \
+    'fi' \
+    'if [ -e "$log.1" ]; then rot=unreadable' \
+    "  i=\$(stat -c %i \"\$log.1\") && c=\$(head -n $base \"\$log.1\" | cksum | cut -d' ' -f1) && rot=\"\$i:\$c\"" \
+    'fi' \
     "if [ '$gen' = none ]; then" \
-    "  echo 'slice: fresh'; cat \"\$log\" 2>/dev/null || true" \
+    "  hdr='slice: fresh'" \
+    "  if [ -e \"\$log\" ]; then body=\"\$(cat \"\$log\")\" || hdr='slice: unreadable'; fi" \
     "elif [ \"\$cur\" = '$gen' ]; then" \
-    "  echo 'slice: current'; tail -n +$((base + 1)) \"\$log\" 2>/dev/null || true" \
+    "  hdr='slice: current'" \
+    "  body=\"\$(tail -n +$((base + 1)) \"\$log\")\" || hdr='slice: unreadable'" \
     "elif [ \"\$rot\" = '$gen' ]; then" \
-    "  echo 'slice: rotated'" \
-    "  tail -n +$((base + 1)) \"\$log.1\" 2>/dev/null || true" \
-    '  cat "$log" 2>/dev/null || true' \
+    "  hdr='slice: rotated'" \
+    "  body=\"\$(tail -n +$((base + 1)) \"\$log.1\" && { [ ! -e \"\$log\" ] || cat \"\$log\"; })\" || hdr='slice: unreadable'" \
+    'elif [ "$cur" = unreadable ] || [ "$rot" = unreadable ]; then' \
+    "  hdr='slice: unreadable'" \
     'else' \
-    "  echo 'slice: lost'" \
-    'fi'
+    "  hdr='slice: lost'" \
+    'fi' \
+    'printf "%s\n" "$hdr"' \
+    '[ -z "$body" ] || printf "%s\n" "$body"'
 }
 
 # rehearsal_attention_log_slice_readable RAW — the header the read above put on
@@ -332,6 +362,9 @@ rehearsal_attention_log_slice_readable() {
       printf 'the box had no duty.log when the census was taken; the slice is the whole file\n' ;;
     'slice: lost')
       printf 'the duty.log generation the census counted is now neither duty.log nor duty.log.1, so the lines this round wrote cannot be bounded\n'
+      return 1 ;;
+    'slice: unreadable')
+      printf 'the box has a duty.log it could not read, so the lines this round wrote cannot be bounded — and the file cannot be ruled out as the generation the census counted either\n'
       return 1 ;;
     *)
       printf 'the box did not answer the duty.log slice read (it said: %s)\n' "${header:-<nothing>}"
@@ -484,25 +517,46 @@ rehearsal_attention_census_take() {
   # on its own is re-issued to the next file created, so the mark would be
   # forgeable by any box that rotated twice or was rebuilt under the round.
   #
-  # `n` is NOT re-sanitised in here before it bounds that checksum, and that is
-  # deliberate. It is already whatever `wc -l` printed or the literal `0`, so a
-  # non-numeric value is unreachable — but were one to arrive, coercing it to 0
-  # in here would make the mark agree with the base the host records below and
-  # the slice would resolve `current` over the WHOLE file. Left alone, the two
-  # disagree, the generation reads `lost`, and the round stops. The degenerate
-  # case should fail closed, so the sanitisation stays host-side, where it
-  # bounds the offset and not the region the mark covers.
+  # EVERY READ IN HERE CARRIES ITS STATUS, and a log that is there and will not
+  # read answers `unreadable` rather than a number (round 1, codex-bot). The
+  # three ways a failure used to become a valid empty generation were one
+  # mechanism: `wc -l … || echo 0` made an unopenable log a log of length 0, an
+  # untested `stat` made a missing inode an empty field, and `head | cksum` with
+  # no `pipefail` made a failed read the checksum of nothing. The slice then
+  # recomputed the mark exactly the same way, reached exactly the same value,
+  # resolved `current` — and every assertion downstream graded green against a
+  # file nobody had read. A mark that both sides forge identically certifies
+  # nothing; the point of the mark is that a read HAPPENED.
+  #
+  # The count is not coerced anywhere, in here or on the host. A degenerate one
+  # is not a zero to be tidied up: it is the box telling us it could not read
+  # the file, and the caller refuses on it below.
   # shellcheck disable=SC2016  # the command substitutions run inside the box
-  conf="$(bx 'n=$(wc -l < ~/duty/duty.log 2>/dev/null || echo 0)
-              n=$(printf %s "$n" | tr -d " ")
+  conf="$(bx 'set -o pipefail
+              n=0 g=none
               if [ -e ~/duty/duty.log ]; then
-                g="$(stat -c %i ~/duty/duty.log):$(head -n "$n" ~/duty/duty.log | cksum | cut -d" " -f1)"
-              else g=none; fi
+                n=unreadable g=unreadable
+                if c=$(wc -l < ~/duty/duty.log 2>/dev/null); then
+                  c=$(printf %s "$c" | tr -d " ")
+                  if i=$(stat -c %i ~/duty/duty.log) &&
+                     k=$(head -n "$c" ~/duty/duty.log | cksum | cut -d" " -f1); then
+                    n="$c" g="$i:$k"
+                  fi
+                fi
+              fi
               printf "%s %s\n" "$n" "$g"' | tr -d '\r')"
   REHEARSAL_ATTENTION_LOG_BASE="${conf%% *}"
   REHEARSAL_ATTENTION_LOG_GEN="${conf##* }"
+  # A count that is not a count is the box saying it could not read duty.log —
+  # `unreadable`, or anything else that is not a number. Refusing here is the
+  # only fail-closed answer: the offset bounds this round's lines, and one that
+  # was never measured would bound them at nothing while looking like a log
+  # that was simply empty.
   case "$REHEARSAL_ATTENTION_LOG_BASE" in
-    '' | *[!0-9]*) REHEARSAL_ATTENTION_LOG_BASE=0 ;;
+    '' | *[!0-9]*)
+      # shellcheck disable=SC2034  # printed by rehearsal.sh's refusal, like REPOS_BACKUP
+      REHEARSAL_ATTENTION_REASON="the box could not read duty.log to bound this round's lines (it said: ${REHEARSAL_ATTENTION_LOG_BASE:-<nothing>})"
+      return 1 ;;
   esac
   # A generation nobody read is not a generation that is not there: the box
   # answering neither a mark nor `none` is the same third state the census
