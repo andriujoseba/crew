@@ -1130,20 +1130,27 @@ att_bx() {
     # read laundered a failed `head` into the checksum of nothing (round 1).
     # A fixture must not hand the implementation an option the box will not.
     #
+    # Its stderr is dropped, and only its stderr: the composed command does not
+    # muffle its own reads — in a real drill those messages belong on the
+    # operator's console — and the two unreadable-log groups make them shout. A
+    # suite that prints `error reading` while passing teaches a reader to skim
+    # past the word. What the fixture actually claims is a graded row, not
+    # noise: `…-fixture-really-cannot-read` asserts the read fails.
+    #
     # One read, two values, resolved two different ways (the label takes the
     # operator's fleet.conf, the wire mark does not) — so the fixture answers
     # with the pair the box's own configuration would.
     *fleet.defaults.conf*)
-      if [ -n "$ATT_BOX_HOME" ]; then ( HOME="$ATT_BOX_HOME"; bash -c "$cmd" )
+      if [ -n "$ATT_BOX_HOME" ]; then ( HOME="$ATT_BOX_HOME"; bash -c "$cmd" 2>/dev/null )
       else printf '%s\n%s\n' "$ATT_LABEL_CONF" "$ATT_MARK_CONF"; fi ;;
     # The line count AND the generation it was counted against.
     *'wc -l < ~/duty/duty.log'*)
-      if [ -n "$ATT_BOX_HOME" ]; then ( HOME="$ATT_BOX_HOME"; bash -c "$cmd" )
+      if [ -n "$ATT_BOX_HOME" ]; then ( HOME="$ATT_BOX_HOME"; bash -c "$cmd" 2>/dev/null )
       else printf '%s %s\n' "$ATT_LOG_BASE" "$ATT_LOG_GEN"; fi ;;
     # The duty.log slice read — matched on a string only the composed command
     # carries, so it cannot be confused with the count above.
     *'slice: lost'*)
-      if [ -n "$ATT_BOX_HOME" ]; then ( HOME="$ATT_BOX_HOME"; bash -c "$cmd" )
+      if [ -n "$ATT_BOX_HOME" ]; then ( HOME="$ATT_BOX_HOME"; bash -c "$cmd" 2>/dev/null )
       else
         printf 'slice: %s\n' "$ATT_SLICE"
         [ "$ATT_SLICE" = lost ] || [ -z "$ATT_LOG" ] || printf '%s\n' "$ATT_LOG"
