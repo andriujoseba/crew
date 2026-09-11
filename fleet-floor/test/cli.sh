@@ -379,7 +379,7 @@ fi
 #
 # `cl_note` is the row minus its columns: the note is the last field and the
 # only one these cases are about. Cut at the LAST run of two or more spaces,
-# not by counting columns — ENGINE renders as `crew@0.4.1 (deadbee)` and
+# not by counting columns — ENGINE renders as `crew@X.Y.Z[-suffix] (deadbee)` and
 # carries a space of its own, so a field count reads one column short.
 cl_note() { sed -n "s/^$1 .*  \(.*\)\$/\1/p" "$CL_TMP/crew-out"; }
 
@@ -593,7 +593,7 @@ fi
 # single-cell assertion passes it. Matched by regex rather than by field index
 # or character offset because neither survives this table — `$6` is INTEGRITY
 # on a hired row and GH on an unhired one, since the stub's ENGINE value
-# (`crew@0.4.1 (deadbee)`) both contains a space and overruns its `%-15s`
+# (`crew@X.Y.Z[-suffix] (deadbee)`) both contains a space and overruns its `%-15s`
 # field. Anchoring on the NOTE that follows is what keeps the match honest:
 # it pins the cells to their column rather than to any two words in the row.
 cl_pair() {
@@ -855,7 +855,7 @@ t "crew status <box>: the stopped detail view still costs three round trips" 3 "
 # --- the normal case, unchanged --------------------------------------------
 crew_detail cli-hired
 t "crew status <box>: a ticking box exits 0" 0 "$CL_RC"
-if grep -qx 'engine: crew@0.4.1 (deadbee)' "$CL_TMP/crew-out"; then
+if grep -Fqx "engine: crew@${FLOOR_TEST_ENGINE_VERSION:-0.4.1} (deadbee)" "$CL_TMP/crew-out"; then
   ok "crew status <box>: a hired box keeps its engine line"
 else
   fail "crew status <box>: a hired box keeps its engine line" \

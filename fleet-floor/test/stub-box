@@ -393,7 +393,7 @@ emit_probe() {
 
   case "$sc" in
     nothired|unconverged|premanifest) printf '::engine \n' ;;
-    *)        printf '::engine crew@0.4.1 (deadbee)\n' ;;
+    *)        printf '::engine crew@%s (deadbee)\n' "${FLOOR_TEST_ENGINE_VERSION:-0.4.1}" ;;
   esac
   # The engine-integrity verdict probe.sh gets from engine-manifest.sh (#159),
   # and the one field on this record the stub cannot honestly compute: there is
@@ -859,13 +859,13 @@ case "${1:-}" in
         if [ "$_unhired" = 1 ]; then
           printf 'state=absent\nstamp=\nrecorded=\n'
         else
-          _ver="$(cat "$STATEDIR/$name.version" 2>/dev/null || echo "crew@0.4.1 (deadbee)")"
+          _ver="$(cat "$STATEDIR/$name.version" 2>/dev/null || echo "crew@${FLOOR_TEST_ENGINE_VERSION:-0.4.1} (deadbee)")"
           printf 'state=current\nstamp=%s\nrecorded=%s\n' "$_ver" "$_ver"
         fi ;;
       *'duty/VERSION'*)                         # crew's hired_at
         case "$sc" in
           nothired|unconverged|premanifest) : ;;
-          *) cat "$STATEDIR/$name.version" 2>/dev/null || echo "crew@0.4.1 (deadbee)" ;;
+          *) cat "$STATEDIR/$name.version" 2>/dev/null || echo "crew@${FLOOR_TEST_ENGINE_VERSION:-0.4.1} (deadbee)" ;;
         esac ;;
       *'gh auth status'*)                       # crew hire / boot gate
         [ "$sc" = "noauth" ] && exit 1; exit 0 ;;
