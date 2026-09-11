@@ -1120,20 +1120,30 @@ att_bx() {
         *--paginate*) [ -z "$ATT_CENSUS_PAGE2" ] || printf '%s\n' "$ATT_CENSUS_PAGE2" ;;
       esac
       ;;
+    # A REAL BOX HOME RUNS THE COMMAND IN A FRESH SHELL, not `eval`. The real
+    # transport is `box exec … bash -lc` (drill/rehearsal.sh), which starts
+    # with bash's default options; `eval` runs it inside THIS suite, which sets
+    # `-u` and `pipefail` on line 3. A composed command that relies on either
+    # then passes here and fails in the box — and worse, one that SETS
+    # `pipefail` for itself cannot be mutated away in a harness that was
+    # supplying it anyway: dropping it left drill.sh green while the shipped
+    # read laundered a failed `head` into the checksum of nothing (round 1).
+    # A fixture must not hand the implementation an option the box will not.
+    #
     # One read, two values, resolved two different ways (the label takes the
     # operator's fleet.conf, the wire mark does not) — so the fixture answers
     # with the pair the box's own configuration would.
     *fleet.defaults.conf*)
-      if [ -n "$ATT_BOX_HOME" ]; then ( HOME="$ATT_BOX_HOME"; eval "$cmd" )
+      if [ -n "$ATT_BOX_HOME" ]; then ( HOME="$ATT_BOX_HOME"; bash -c "$cmd" )
       else printf '%s\n%s\n' "$ATT_LABEL_CONF" "$ATT_MARK_CONF"; fi ;;
     # The line count AND the generation it was counted against.
     *'wc -l < ~/duty/duty.log'*)
-      if [ -n "$ATT_BOX_HOME" ]; then ( HOME="$ATT_BOX_HOME"; eval "$cmd" )
+      if [ -n "$ATT_BOX_HOME" ]; then ( HOME="$ATT_BOX_HOME"; bash -c "$cmd" )
       else printf '%s %s\n' "$ATT_LOG_BASE" "$ATT_LOG_GEN"; fi ;;
     # The duty.log slice read — matched on a string only the composed command
     # carries, so it cannot be confused with the count above.
     *'slice: lost'*)
-      if [ -n "$ATT_BOX_HOME" ]; then ( HOME="$ATT_BOX_HOME"; eval "$cmd" )
+      if [ -n "$ATT_BOX_HOME" ]; then ( HOME="$ATT_BOX_HOME"; bash -c "$cmd" )
       else
         printf 'slice: %s\n' "$ATT_SLICE"
         [ "$ATT_SLICE" = lost ] || [ -z "$ATT_LOG" ] || printf '%s\n' "$ATT_LOG"
