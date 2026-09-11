@@ -1094,14 +1094,29 @@ att_bx() {
   esac
 }
 
-# att_drive take|both — run the halves against the fixture box and print the
-# rows they emit. The caller supplies ok()/fail() exactly as rehearsal.sh does,
-# so a row's GRADE is observed and not inferred from a return code.
+# att_drive take|both [drain] — run the halves against the fixture box and
+# print the rows they emit. The caller supplies ok()/fail() exactly as
+# rehearsal.sh does, so a row's GRADE is observed and not inferred from a
+# return code.
+#
+# `drain` is the REAL transport's stdin behaviour, and without it this harness
+# cannot see the defect it is here to pin: rehearsal.sh's bx() is `box exec …
+# bash -lc`, and `box exec` DRAINS the stdin it inherits (drill/rehearsal-app.sh
+# :540-550, found by running that leg and not by reading it). A plain att_bx
+# never touches stdin, so a per-demand box read that eats its own loop reads
+# green through it. The subshell's own stdin is /dev/null so the drain
+# terminates on every call rather than on a terminal — the loop input a
+# truncating implementation eats is its `<<<` here-string, which is inside the
+# function either way.
 att_drive() {
   (
     ok()   { echo "ok $1"; }
     fail() { echo "FAIL $1"; }
-    bx()   { att_bx "$1"; }
+    if [ "${2:-}" = drain ]; then
+      bx() { cat >/dev/null 2>&1 || true; att_bx "$1"; }
+    else
+      bx() { att_bx "$1"; }
+    fi
     # shellcheck source=drill/rehearsal-safety.sh
     . "$ROOT/drill/rehearsal-safety.sh"
     ATT_PHASE=before
@@ -1109,7 +1124,20 @@ att_drive() {
     [ "$1" = both ] || exit 0
     ATT_PHASE=after
     rehearsal_attention_census_assert "$ATT_SANDBOX" || echo "ASSERT-RC=$?"
-  )
+  ) </dev/null
+}
+
+# att_pickup_rows ROWS — the pickup census in isolation, through a draining
+# box, so a truncated table is unambiguously that function's and not a grading
+# artifact somewhere above it.
+att_pickup_rows() {
+  (
+    bx() { cat >/dev/null 2>&1 || true; att_bx "$1"; }
+    # shellcheck source=drill/rehearsal-safety.sh
+    . "$ROOT/drill/rehearsal-safety.sh"
+    ATT_PHASE=before
+    rehearsal_attention_pickup_counts "$1" "$ATT_MARK"
+  ) </dev/null
 }
 att_ok()   { grep -c '^ok ' <<<"$1" || true; }
 att_fail() { grep -c '^FAIL ' <<<"$1" || true; }
@@ -1247,5 +1275,67 @@ t drill-attention-census-asserts-after-the-wake ordered \
           /rehearsal_attention_census_assert/{assert=NR}
           END{print (take && wake && assert && take < wake && wake < assert) ? "ordered" : "OUT-OF-ORDER"}' \
       "$ROOT/drill/rehearsal.sh")"
+
+# (e) THE PER-DEMAND BOX READ MUST NOT EAT THE LOOP IT RUNS IN (#714, round 1).
+#
+# Every case above drives a box that never touches stdin, and the real one
+# drains it. A pickup census whose read swallowed its own row list counted the
+# FIRST demand and nothing else — and did not fail quietly: demands 2..N took
+# the fail-closed `could not read` branch, the assert half returned 1, and
+# rehearsal.sh refused the round. That is acceptance criterion 1 unmet on every
+# identity carrying more than one parked demand, which is the host this issue
+# was minted from (heavy-duty/incubator #468, #469, #470 on dan-office-workstation).
+#
+# THREE demands, not two: one cannot tell a loop that ran once from a loop that
+# ran, and two cannot tell a loop that ran once from a loop that read the row
+# list one line short.
+ATT_CENSUS="$(printf 'heavy-duty/incubator 468\nheavy-duty/incubator 469\nheavy-duty/incubator 470\n')"
+ATT_SCOPE="$(printf '%s\n' \
+  'heavy-duty/incubator#468 2026-09-10T21:00:00Z' \
+  'heavy-duty/incubator#469 2026-09-10T21:00:01Z' \
+  'heavy-duty/incubator#470 2026-09-10T21:00:02Z')"
+ATT_LOG="$(printf '%s\n' \
+  'WARN attention: outside repos.txt: 3 item(s) in repos this box does not carry, never picked up — heavy-duty/incubator#468(2026-09-10T21:00:00Z) heavy-duty/incubator#469(2026-09-10T21:00:01Z) heavy-duty/incubator#470(2026-09-10T21:00:02Z) ' \
+  'SESSION START kind=attention key=host/crew-drill-builder#7 timeout=1800s log=/l holder=x sid=1')"
+ATT_PICKUPS_BEFORE="$(printf '%s\n' \
+  'heavy-duty/incubator#468 0' 'heavy-duty/incubator#469 0' 'heavy-duty/incubator#470 0')"
+ATT_PICKUPS_AFTER="$ATT_PICKUPS_BEFORE"
+# The function alone, so a short table is unambiguously its own doing.
+t drill-attention-census-pickup-read-does-not-eat-its-loop 3 \
+  "$(att_pickup_rows "$ATT_CENSUS" | grep -c . || true)"
+t drill-attention-census-pickup-read-names-the-last-demand 1 \
+  "$(att_pickup_rows "$ATT_CENSUS" | grep -c '^heavy-duty/incubator#470 0$' || true)"
+# ...and the whole leg through the same box: eight rows (the census row, the
+# negative session row, and a suppressed + no-pickup pair per demand), no FAIL,
+# and no refusal. A truncating read reds the last two pairs on the branch
+# written for a box that will not answer, which reads as a real finding.
+ATT_DRAIN="$(att_drive both drain)"
+t drill-attention-census-draining-box-grades-every-demand 3 \
+  "$(grep -c '^ok attention census: heavy-duty/incubator#4[0-9]* drew no pickup$' <<<"$ATT_DRAIN" || true)"
+t drill-attention-census-draining-box-is-green 0 "$(att_fail "$ATT_DRAIN")"
+t drill-attention-census-draining-box-rows 8 "$(att_ok "$ATT_DRAIN")"
+t drill-attention-census-draining-box-does-not-stop-the-round 0 \
+  "$(grep -c '^ASSERT-RC=' <<<"$ATT_DRAIN" || true)"
+# The OTHER direction the drain runs in, and the second guard's own kill: the
+# read closes its own stdin, so it cannot eat a CALLER's loop either. Nothing
+# drives this function per row today; the fd-3 guard above protects its own
+# loop and could not protect that one, which is why the redirect is on the call
+# as well. Both rows red if either guard is dropped, and neither is a grep for
+# source text.
+att_pickup_rows_nested() {
+  (
+    bx() { cat >/dev/null 2>&1 || true; att_bx "$1"; }
+    # shellcheck source=drill/rehearsal-safety.sh
+    . "$ROOT/drill/rehearsal-safety.sh"
+    ATT_PHASE=before
+    local repo num
+    while read -r repo num; do
+      [ -n "${num:-}" ] || continue
+      rehearsal_attention_pickup_counts "$repo $num" "$ATT_MARK"
+    done <<<"$1"
+  ) </dev/null
+}
+t drill-attention-census-pickup-read-does-not-eat-a-caller-loop 3 \
+  "$(att_pickup_rows_nested "$ATT_CENSUS" | grep -c . || true)"
 
 suite_finish

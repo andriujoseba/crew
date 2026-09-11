@@ -221,19 +221,37 @@ rehearsal_attention_no_pickup() {
 # filter per page and prints one number each, so reading the last line counts
 # the last page; and dropping `--paginate` would read the first hundred
 # comments only, which is exactly where an appended pickup is not.
+#
+# THE STDIN GUARDS ARE LOAD-BEARING, and they are two different guards against
+# the same drain running in two directions. `bx` here is the caller's, and
+# rehearsal.sh's is `box exec … bash -lc "$1"` with no redirect of its own —
+# `box exec` DRAINS the stdin it inherits, which is how drill/rehearsal-app.sh
+# (`:540-550`) once read one roster box while claiming the fleet.
+#
+#   `</dev/null` on the read  — so this call consumes NOBODY's stdin: not the
+#   loop below, and not the loop of some future caller that drives this
+#   function per row. It holds whatever bx() the caller hands us.
+#
+#   the rows on fd 3          — so the loop's own input is not on stdin at all,
+#   and the next per-demand box read added inside it cannot silently truncate
+#   the census to its first row. rehearsal-app-surfaces.sh:77 fixes the same
+#   shape the same way, for the same reason: the reader is caller-supplied.
+#
+# One demand cannot tell a loop that ran once from a loop that ran, so the
+# fixture that pins this carries THREE.
 rehearsal_attention_pickup_counts() {
   local rows="$1" mark="$2" repo num raw count
   [ -n "$rows" ] || return 0
-  while read -r repo num; do
+  while read -r repo num <&3; do
     [ -n "${num:-}" ] || continue
     if raw="$(bx "gh api 'repos/$repo/issues/$num/comments?per_page=100' --paginate \
-        --jq '[.[] | select(.body | contains(\"$mark\"))] | length'")"; then
+        --jq '[.[] | select(.body | contains(\"$mark\"))] | length'" </dev/null)"; then
       count="$(printf '%s\n' "$raw" | tr -d ' \r' | awk 'NF{s+=$1} END{print s+0}')"
     else
       count=unreadable
     fi
     printf '%s#%s %s\n' "$repo" "$num" "$count"
-  done <<<"$rows"
+  done 3<<<"$rows"
 }
 
 # rehearsal_attention_graded NAME PREDICATE... — run the predicate, print what
@@ -282,6 +300,12 @@ rehearsal_attention_census_take() {
   # The mark the pickup assertion counts, read from the box's OWN installed
   # configuration rather than spelled here: an absence established against a
   # needle the engine no longer writes is green on every board.
+  #
+  # fleet.defaults.conf ALONE is the effective value, not a half-read of it:
+  # load_fleet_conf sources fleet.conf and then restores the six board marks
+  # over it, because they "are a wire protocol and cannot be changed by an
+  # operator file" (shared/lib/common/conf.sh:10-25). Keying this delta on an
+  # operator override would key it on a mark the engine never writes with.
   # shellcheck disable=SC2016  # MARK_PICKUP expands inside the box
   REHEARSAL_ATTENTION_MARK="$(bx 'set -a; . ~/duty/conf/fleet.defaults.conf; printf "%s\n" "$MARK_PICKUP"' | tr -d '\r')"
   if [ -z "$REHEARSAL_ATTENTION_MARK" ]; then
