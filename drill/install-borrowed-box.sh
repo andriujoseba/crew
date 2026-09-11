@@ -11,32 +11,46 @@ INSTALL_BORROWED_REPOS_BACKUP=".repos.txt.install-drill.$$"
 INSTALL_BORROWED_DETAIL=""
 
 install_borrowed_box_snapshot() {
-  local rc
-  if bx 'test -e ~/duty/repos.txt'; then
-    INSTALL_BORROWED_REPOS_STATE=present
-    bx "cp ~/duty/repos.txt ~/duty/$INSTALL_BORROWED_REPOS_BACKUP" || {
-      INSTALL_BORROWED_DETAIL="could not snapshot ~/duty/repos.txt"
-      return 1
-    }
-  else
-    rc=$?
-    [ "$rc" -eq 1 ] || {
-      INSTALL_BORROWED_DETAIL="could not determine whether ~/duty/repos.txt exists"
-      return 1
-    }
-    INSTALL_BORROWED_REPOS_STATE=absent
-  fi
+  local state
+  INSTALL_BORROWED_REPOS_STATE=""
+  # Classify and copy in one successful remote invocation. An outer `box
+  # exec` failure may also return 1, so its status alone never means absent.
+  state="$(bx "if [ -e ~/duty/repos.txt ]; then
+                  cp ~/duty/repos.txt ~/duty/$INSTALL_BORROWED_REPOS_BACKUP || exit 1
+                  printf 'present\\n'
+                else
+                  printf 'absent\\n'
+                fi")" || {
+    INSTALL_BORROWED_DETAIL="could not read and snapshot ~/duty/repos.txt"
+    return 1
+  }
+  case "$state" in
+    present|absent) INSTALL_BORROWED_REPOS_STATE="$state" ;;
+    *)
+      INSTALL_BORROWED_DETAIL="could not classify ~/duty/repos.txt as present or absent"
+      return 1 ;;
+  esac
   INSTALL_BORROWED_SNAPSHOT_TAKEN=1
 }
 
 install_borrowed_box_disarm() {
-  # Keep unrelated cron entries. An empty installed crontab is still disarmed;
-  # the contract is specifically that no duty tick survives Section A.
+  # Keep unrelated cron entries, and keep an absent crontab absent. The
+  # locale-pinned no-table diagnostic is the only failed read that proves
+  # absence; every other error is indeterminate and must preserve the table.
   # shellcheck disable=SC2016  # expanded by bash inside the box
-  bx 'tmp=$(mktemp) || exit 1
-      crontab -l 2>/dev/null | grep -vF ~/duty/bin/tick.sh >"$tmp" || true
-      crontab "$tmp"; rc=$?
-      rm -f -- "$tmp"
+  bx 'current=$(mktemp) || exit 1
+      filtered=$(mktemp) || { rm -f -- "$current"; exit 1; }
+      error=$(mktemp) || { rm -f -- "$current" "$filtered"; exit 1; }
+      if LC_ALL=C crontab -l >"$current" 2>"$error"; then
+        grep -vF "/duty/bin/tick.sh" "$current" >"$filtered" || true
+        crontab "$filtered"; rc=$?
+      else
+        rc=$?
+        if [ "$rc" -eq 1 ] && grep -q "^no crontab for " "$error"; then
+          rc=0
+        fi
+      fi
+      rm -f -- "$current" "$filtered" "$error"
       exit "$rc"'
 }
 
@@ -65,10 +79,37 @@ install_borrowed_box_restore() {
 }
 
 install_borrowed_box_verify() {
-  if bx 'crontab -l 2>/dev/null | grep -F ~/duty/bin/tick.sh >/dev/null'; then
-    INSTALL_BORROWED_DETAIL="the borrowed box is still armed"
+  local cron_state
+  # An explicit answer from a successful remote invocation keeps transport or
+  # read failures distinct from a proven absent/disarmed table.
+  # shellcheck disable=SC2016  # expanded by bash inside the box
+  cron_state="$(bx 'tmp=$(mktemp) || exit 1
+                     error=$(mktemp) || { rm -f -- "$tmp"; exit 1; }
+                     if LC_ALL=C crontab -l >"$tmp" 2>"$error"; then
+                       if grep -F "/duty/bin/tick.sh" "$tmp" >/dev/null; then
+                         printf "armed\\n"
+                       else
+                         printf "disarmed\\n"
+                       fi
+                     else
+                       rc=$?
+                       [ "$rc" -eq 1 ] && grep -q "^no crontab for " "$error" ||
+                         { rm -f -- "$tmp" "$error"; exit "$rc"; }
+                       printf "absent\\n"
+                     fi
+                     rm -f -- "$tmp" "$error"')" || {
+    INSTALL_BORROWED_DETAIL="could not read the borrowed box's crontab"
     return 1
-  fi
+  }
+  case "$cron_state" in
+    disarmed|absent) ;;
+    armed)
+      INSTALL_BORROWED_DETAIL="the borrowed box is still armed"
+      return 1 ;;
+    *)
+      INSTALL_BORROWED_DETAIL="could not classify the borrowed box's crontab state"
+      return 1 ;;
+  esac
   case "$INSTALL_BORROWED_REPOS_STATE" in
     present)
       bx "cmp -s ~/duty/$INSTALL_BORROWED_REPOS_BACKUP ~/duty/repos.txt" || {

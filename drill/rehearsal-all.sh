@@ -467,14 +467,34 @@ if [ "$INSTALL_DRILL" -eq 1 ]; then
     fi
     "$HERE/install-drill.sh" "${INSTALL_ARGS[@]}"
     rc=$?
-    if box exec "$CONFIG_BOX" -- bash -lc \
-         'command -v crontab >/dev/null 2>&1 &&
-          ! crontab -l 2>/dev/null | grep -F ~/duty/bin/tick.sh >/dev/null' </dev/null; then
-      echo "- PASS: Section A returned \`$CONFIG_BOX\` disarmed"
-    else
-      echo "- FAIL: Section A returned \`$CONFIG_BOX\` armed"
-      rc=1
-    fi
+    # shellcheck disable=SC2016  # expanded by bash inside the box
+    return_state="$(box exec "$CONFIG_BOX" -- bash -lc \
+      'command -v crontab >/dev/null 2>&1 || exit 2
+       tmp=$(mktemp) || exit 2
+       error=$(mktemp) || { rm -f -- "$tmp"; exit 2; }
+       if LC_ALL=C crontab -l >"$tmp" 2>"$error"; then
+         if grep -F "/duty/bin/tick.sh" "$tmp" >/dev/null; then
+           printf "armed\\n"
+         else
+           printf "disarmed\\n"
+         fi
+       else
+         read_rc=$?
+         [ "$read_rc" -eq 1 ] && grep -q "^no crontab for " "$error" ||
+           { rm -f -- "$tmp" "$error"; exit "$read_rc"; }
+         printf "absent\\n"
+       fi
+       rm -f -- "$tmp" "$error"' </dev/null)" || return_state=unreadable
+    case "$return_state" in
+      disarmed|absent)
+        echo "- PASS: Section A returned \`$CONFIG_BOX\` disarmed" ;;
+      armed)
+        echo "- FAIL: Section A returned \`$CONFIG_BOX\` armed"
+        rc=1 ;;
+      *)
+        echo "- FAIL: Section A returned \`$CONFIG_BOX\` with crontab state unreadable"
+        rc=1 ;;
+    esac
     case "$rc" in
       0) SUMMARY+=("ok         installer  (Section A record emitted)") ;;
       *) SUMMARY+=("FAIL       installer"); overall=1 ;;

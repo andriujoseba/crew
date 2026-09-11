@@ -47,7 +47,13 @@ cat >"$STUB/crontab" <<'SHIM'
 #!/usr/bin/env bash
 state="${STUB_BOX_HOME:?}/crontab"
 case "${1:-}" in
-  -l) [ -f "$state" ] || exit 1; cat "$state" ;;
+  -l)
+    if [ "${STUB_CRONTAB_READ_RC:-0}" -ne 0 ]; then
+      printf '%s\n' "${STUB_CRONTAB_READ_ERROR:-read failed}" >&2
+      exit "$STUB_CRONTAB_READ_RC"
+    fi
+    [ -f "$state" ] || { printf 'no crontab for fixture\n' >&2; exit 1; }
+    cat "$state" ;;
   '') cat >"$state" ;;
   *) cp "$1" "$state" ;;
 esac
@@ -234,7 +240,10 @@ cp "$BORROWED_HOME/duty/repos.txt" "$WORK/repos.before"
 printf '17 * * * * /usr/local/bin/unrelated\n*/5 * * * * %s/duty/bin/tick.sh\n' \
   "$BORROWED_HOME" >"$BORROWED_HOME/crontab"
 STUB_BOX_HOME="$BORROWED_HOME"
-bx() { HOME="$STUB_BOX_HOME" bash -c "$1"; }
+bx() {
+  [ "${BORROWED_BX_FAIL:-0}" -eq 0 ] || return 1
+  HOME="$STUB_BOX_HOME" bash -c "$1"
+}
 if install_borrowed_box_snapshot; then
   printf 'drill/installer-rehearsal\n' >"$BORROWED_HOME/duty/repos.txt"
   if install_borrowed_box_restore && install_borrowed_box_verify; then
@@ -258,10 +267,66 @@ else
 fi
 install_borrowed_box_discard_snapshot || bad "borrowed-box-snapshot-discard"
 
+# A failed box transport is not evidence that repos.txt was absent. In
+# particular, restore must remain a no-op rather than deleting real state.
+INSTALL_BORROWED_SNAPSHOT_TAKEN=0
+INSTALL_BORROWED_REPOS_STATE=""
+BORROWED_BX_FAIL=1
+if install_borrowed_box_snapshot; then
+  bad "borrowed-box-failed-read-refuses-snapshot"
+elif [ "$INSTALL_BORROWED_SNAPSHOT_TAKEN" -eq 0 ] &&
+     [ -z "$INSTALL_BORROWED_REPOS_STATE" ]; then
+  ok "borrowed-box-failed-read-is-not-classified-absent"
+else
+  bad "borrowed-box-failed-read-is-not-classified-absent"
+fi
+install_borrowed_box_restore
+if cmp -s "$WORK/repos.before" "$BORROWED_HOME/duty/repos.txt"; then
+  ok "borrowed-box-failed-read-does-not-remove-registry"
+else
+  bad "borrowed-box-failed-read-does-not-remove-registry"
+fi
+BORROWED_BX_FAIL=0
+
+# An unreadable crontab must neither be replaced with an empty table nor pass
+# verification. The status-1 no-table case remains a clean absent state.
+printf '17 * * * * /usr/local/bin/unrelated\n*/5 * * * * %s/duty/bin/tick.sh\n' \
+  "$BORROWED_HOME" >"$BORROWED_HOME/crontab"
+cp "$BORROWED_HOME/crontab" "$WORK/crontab.before"
+export STUB_CRONTAB_READ_RC=2
+if install_borrowed_box_disarm; then
+  bad "borrowed-box-unreadable-crontab-refuses-disarm"
+else
+  ok "borrowed-box-unreadable-crontab-refuses-disarm"
+fi
+if cmp -s "$WORK/crontab.before" "$BORROWED_HOME/crontab"; then
+  ok "borrowed-box-unreadable-crontab-preserves-content"
+else
+  bad "borrowed-box-unreadable-crontab-preserves-content"
+fi
+if install_borrowed_box_verify; then
+  bad "borrowed-box-unreadable-crontab-reds-verification"
+else
+  ok "borrowed-box-unreadable-crontab-reds-verification"
+fi
+export STUB_CRONTAB_READ_RC=0
+rm -f -- "$BORROWED_HOME/crontab"
+if install_borrowed_box_disarm && install_borrowed_box_verify &&
+   [ ! -e "$BORROWED_HOME/crontab" ]; then
+  ok "borrowed-box-absent-crontab-stays-absent"
+else
+  bad "borrowed-box-absent-crontab-stays-absent ($INSTALL_BORROWED_DETAIL)"
+fi
+
 if grep -qF "\"\$HERE/install-drill.sh\"" "$ROOT/drill/rehearsal-all.sh"; then
   ok "rehearsal-all-wires-section-a"
 else
   bad "rehearsal-all-wires-section-a"
+fi
+if grep -qF 'install_borrowed_box_restore' "$DRIVER"; then
+  ok "install-drill-wires-borrowed-box-restore"
+else
+  bad "install-drill-wires-borrowed-box-restore"
 fi
 
 echo
