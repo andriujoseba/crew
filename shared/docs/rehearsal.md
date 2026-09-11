@@ -238,7 +238,13 @@ was counted against, because `tick.sh` rotates `duty.log` to `duty.log.1` at
 the file moved under the round, the slice spans the tail of the rotated
 generation and all of the new one; when the generation the census counted is on
 neither file, the round stops on that fact rather than grading an absence in a
-log it could not bound.
+log it could not bound. A generation is identified by its inode **and** a
+checksum of the lines the census counted, because an inode is a slot and not an
+identity: the kernel re-issues it to the next file created, so a box that
+rotated twice, was rebuilt, or had its log truncated in place would otherwise
+present a brand-new `duty.log` wearing the counted generation's number and the
+slice would read past the end of it. Those all land on `lost`, and the round
+stops.
 
 The rehearsal deliberately does **not** arm cron. Every drill tick is explicit;
 the old scheduled-boundary check was not worth creating an autonomous agent
