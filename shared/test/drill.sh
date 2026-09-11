@@ -1465,4 +1465,22 @@ t drill-attention-census-boundary-staged-census-grades-every-row 200 "$(att_ok "
 t drill-attention-census-boundary-staged-census-does-not-stop-the-round 0 \
   "$(grep -c '^ASSERT-RC=' <<<"$ATT_STAGED" || true)"
 
+# ...and the two above are the two sides, documented. THIS is the kill: which
+# page the census reads is not a property of either half — it is decided by the
+# order rehearsal.sh calls them in — so the fixture READS that order off the
+# production file and drives the page it implies. Move the mint back below the
+# census and these two rows red on behaviour, through the real functions,
+# against an engine that did nothing wrong.
+att_staged_by_source() {
+  awk '/drill: attention wake /{ if (!mint) mint = NR }
+       /rehearsal_attention_census_take/{ if (!take) take = NR }
+       END { print (mint && take && mint < take) ? 1 : 0 }' \
+    "$ROOT/drill/rehearsal.sh"
+}
+ATT_CENSUS="$(att_page "$(att_staged_by_source)")"
+ATT_SOURCED="$(att_drive both drain)"
+t drill-attention-census-boundary-source-ordering-is-green 0 "$(att_fail "$ATT_SOURCED")"
+t drill-attention-census-boundary-source-ordering-does-not-stop-the-round 0 \
+  "$(grep -c '^ASSERT-RC=' <<<"$ATT_SOURCED" || true)"
+
 suite_finish
