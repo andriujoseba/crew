@@ -653,22 +653,53 @@ else
   # and attention is not one of them (#52).
   ok "safety interlock: repos.txt narrows review/build/triage/hygiene to the sandbox"
 
-  # The surface repos.txt cannot bound, checked rather than assumed.
-  STRAY_ATTENTION="$(rehearsal_attention_is_clear "$SANDBOX" | grep -v '^$' | sort -u | head -5)"
-  if [ -n "$STRAY_ATTENTION" ]; then
+  # -- the sandbox demand, minted BEFORE the census below (#714, round 4) --
+  #
+  # This is the fixture the attention wake further down waits on, and it is
+  # staged HERE rather than beside that wait for one reason: the census below
+  # mirrors the single unpaginated `per_page=100` page duty_attention itself
+  # fetches, and minting an issue CHANGES that page. The endpoint answers
+  # newest first, so on an identity already carrying a full page of demands,
+  # creating the newest one displaces the OLDEST off the engine's next page —
+  # and the census, taken before the mint, would then record a row for which
+  # no correct engine can hold a suppressed record. The assert half reds it,
+  # the round stops, and that is the false refusal this issue removes,
+  # re-created one tick later at the page boundary.
+  #
+  # Minting first makes the census's page the page the engine will fetch. The
+  # census stays where it is, before every phase-2 tick — including the notify
+  # leg's — because it is also what captures duty.log's length, and D3's
+  # "no attention session outside the sandbox" assertion reads only the lines
+  # written after that mark.
+  inum="$(gh api "repos/$SANDBOX/issues" -f title="drill: attention wake $(date -u +%H%M%S)" \
+    -f body="Drill demand: reply with exactly one short comment acknowledging this drill, then stop. Do not open PRs." \
+    -f "assignees[]=$ME2" -f "labels[]=attention" --jq .number)"
+  rehearsal_fixture_record_issue "$SANDBOX" "$inum"
+
+  # The surface repos.txt cannot bound, RECORDED rather than refused (#714).
+  #
+  # This block used to exit 1 on any demand parked outside the sandbox, and
+  # that made Gate A unrunnable on the operator's own host: the only two ways
+  # out it offered were stripping the operator's own `attention` markers off a
+  # production board for the length of a round, or a throwaway account whose
+  # single qualification is carrying no work. Its argument — a drill is the
+  # wrong place to discover crew#66's filter regressed — survives, and is
+  # discharged below by ASSERTING the engine's own suppressed-report on the
+  # very tick it was refusing to let run.
+  #
+  # The demands the identity already carries are, read the other way round, the
+  # best fixture this leg can have. The registry filter's negative case is a
+  # demand OUTSIDE repos.txt being seen and left alone, and no fixture the
+  # drill mints inside the sandbox can produce one: every round that had a real
+  # one stopped here.
+  if ! rehearsal_attention_census_take "$SANDBOX"; then
     echo
-    echo "REFUSING before a phase 2 tick: this box's identity ($ME2) has attention demands"
-    echo "parked outside $SANDBOX:"
-    printf '  %s\n' "$STRAY_ATTENTION"
-    echo "Since crew#66 the engine should IGNORE these — the registry bounds the attention"
-    echo "wake like every other module — so this check is now the independent verification"
-    echo "that the filter holds, not the only thing containing it. It stays a refusal on"
-    echo "purpose: a drill is the wrong place to discover the filter regressed, and the"
-    echo "cost of being wrong is a real session on a real repo. Clear the label, or re-run"
-    echo "on a box whose identity carries no parked demand outside $SANDBOX."
+    echo "REFUSING before a phase 2 tick: $REHEARSAL_ATTENTION_REASON, so the"
+    echo "census cannot be taken. This is not an empty census — an absence is"
+    echo "established by reading the source, never by failing to read it, and the"
+    echo "assertions after the tick have nothing to assert against without one."
     exit 1
   fi
-  ok "safety interlock: no attention demand parked outside the sandbox"
 
   # -- the operator's watch set: repos.txt ∪ notify-repos.txt (#316) --
   # Here and not in a role block: the notifier is role-independent, and the
@@ -685,10 +716,8 @@ else
   fi
 
   # -- attention wake --
-  inum="$(gh api "repos/$SANDBOX/issues" -f title="drill: attention wake $(date -u +%H%M%S)" \
-    -f body="Drill demand: reply with exactly one short comment acknowledging this drill, then stop. Do not open PRs." \
-    -f "assignees[]=$ME2" -f "labels[]=attention" --jq .number)"
-  rehearsal_fixture_record_issue "$SANDBOX" "$inum"
+  # Its fixture is `$inum`, minted above the census for the page-boundary
+  # reason given there. The tick is what the wake rows are about.
   bx "~/duty/bin/tick.sh" || true
   wait_for 900 "attention: 📌 pickup comment" bash -c \
     "out=\$(gh api 'repos/$SANDBOX/issues/$inum/comments' --jq '[.[] | select(.user.login == \"$ME2\")] | length'); grep -qE '^[1-9][0-9]*$' <<<\"\$out\""
@@ -698,6 +727,22 @@ else
   # states. Compare inside the filter so a token reaches the shell either way.
   wait_for 300 "attention: label removed (ack re-arms)" bash -c \
     "out=\$(gh api 'repos/$SANDBOX/issues/$inum' --jq '[.labels[].name] | index(\"attention\") == null'); grep -qx true <<<\"\$out\""
+
+  # The census's other half (#714, D2/D3). Deliberately AFTER the two rows
+  # above: they are what establishes that a tick fetched, partitioned and
+  # dispatched the sandbox demand, and the engine's suppressed-report for the
+  # demands OUTSIDE the sandbox is written by that same call, above that same
+  # partition. Reading it before the wake had run would read the last tick to
+  # have run for any other reason.
+  if ! rehearsal_attention_census_assert "$SANDBOX"; then
+    echo
+    echo "REFUSING to continue: the registry bound crew#66 shipped is not holding for"
+    echo "this identity's parked demands, so the round stops before another tick. This"
+    echo "is the cost the old refusal guarded against — caught on the first tick that"
+    echo "shows it, rather than prevented by never ticking at all, and the narrowed"
+    echo "repos.txt and the disarmed cron bound what that one tick could reach."
+    exit 1
+  fi
 
   # ---- role-specific loops ---------------------------------------------
   # duty_attention above is role-independent and already ran. What follows

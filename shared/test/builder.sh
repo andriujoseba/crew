@@ -832,8 +832,16 @@ t attention-crash-does-not-commit 0 "$(printf '%s\n' "$ATT_1" | grep -c '^LEDGER
 # to be the ONLY containment for this module, and is now an independent
 # verification that the filter above actually holds. Keeping it is the
 # difference between testing the invariant and trusting it.
-if grep -q 'rehearsal_attention_is_clear' "$ROOT/drill/rehearsal-safety.sh" &&
-   grep -q 'rehearsal_attention_is_clear' "$ROOT/drill/rehearsal.sh"; then r1=checked; else r1=ASSUMED; fi
+#
+# The verification is a CENSUS plus a post-tick assertion since #714, not a
+# refusal, so the needles are the two halves rather than the old predicate:
+# `rehearsal_attention_census` records what is parked outside the sandbox and
+# `rehearsal_attention_census_assert` reads this module's own suppressed report
+# back. A grep for the old name would be green on a drill that had quietly
+# stopped reading anything.
+if grep -q 'rehearsal_attention_census()' "$ROOT/drill/rehearsal-safety.sh" &&
+   grep -q 'rehearsal_attention_census_take' "$ROOT/drill/rehearsal.sh" &&
+   grep -q 'rehearsal_attention_census_assert' "$ROOT/drill/rehearsal.sh"; then r1=checked; else r1=ASSUMED; fi
 t "drill-checks-attention-outside-sandbox" checked "$r1"
 
 # --- head-checks.jq: the check at the head, and the round it gates (#45/#17) --

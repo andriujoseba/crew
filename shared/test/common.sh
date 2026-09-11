@@ -3612,10 +3612,15 @@ else
 fi
 t notify-helper-sourced-in-rehearsal wired "$notify_wiring"
 # Positional, because "after the safety interlock and before the role blocks"
-# is the criterion: the call has to sit between the interlock's last ok and
+# is the criterion: the call has to sit between the interlock's last row and
 # the first thing phase 2 does with a tick.
+#
+# The interlock's last row is the attention CENSUS since #714, and it is
+# emitted inside rehearsal-safety.sh rather than here, so the anchor is the
+# call that takes it. The criterion has not moved — that call is still the last
+# thing the preamble does before the notify union widens the watch set.
 # shellcheck disable=SC2016  # match the literal call in rehearsal.sh
-notify_interlock_block="$(sed -n '/ok "safety interlock: no attention demand parked outside the sandbox"/,/-- attention wake --/p' \
+notify_interlock_block="$(sed -n '/rehearsal_attention_census_take "\$SANDBOX"/,/-- attention wake --/p' \
     "$ROOT/drill/rehearsal.sh")"
 # shellcheck disable=SC2016  # match the literal call in rehearsal.sh
 if grep -Fq 'rehearsal_notify_drill "$SANDBOX"' <<<"$notify_interlock_block"; then

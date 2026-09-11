@@ -197,6 +197,68 @@ before the first authenticated tick, replaces it with the sandbox alone before
 phase 2, verifies that narrowing fail-closed, and restores the original on exit
 or interruption.
 
+**The operator's own account is a supported box identity.** Narrowing
+`repos.txt` bounds review, build, triage and hygiene — every module that reads
+`REPOS_FILE` — and since crew#66 it bounds the `attention` wake too, whose query
+is cross-repo while its action is not. So a parked `attention` demand in some
+other repository is not a reason to refuse a round, and the drill does not clear
+it, does not ask for it to be cleared, and does not want a second identity whose
+only qualification is carrying no work. Before the first authenticated tick the
+rehearsal **records** those demands as a census row (`attention census: N
+demand(s) parked outside <sandbox>`, then one `census:` line each).
+
+The census's window is the wake's own, deliberately: the single unpaginated
+`per_page=100` page of `/issues?filter=assigned` that `duty_attention` itself
+reads, and no wider. The assertion below holds the engine to a record it
+derives from exactly that page, so a demand past it is one no correct engine
+can have seen, and recording it would red a correct round. For the same reason
+the census is taken **after** the sandbox's own drill demand is minted: that
+endpoint answers newest first, so minting an issue displaces the oldest demand
+off the page the tick will fetch. The label it asks for is the box's own
+effective `LABEL_ATTENTION` and not the literal `attention`, because an
+operator `fleet.conf` can move that name and the wake would then be fetching a
+different set from the census — the `MARK_PICKUP` the pickup assertion counts
+is read from the same call and deliberately does *not* take such an override,
+because the loader restores the six board marks over any operator file.
+
+After the attention tick the rehearsal **asserts** the bound, per demand that
+census recorded: the engine's own
+suppressed report names it (`attention: outside repos.txt` in `duty.log`, or the
+`~/duty/.suppressed-attention-scope` set that same call leaves behind), no
+`SESSION START kind=attention` names a repository other than the sandbox, and
+the demand drew no new `📌 picked up` comment across the tick. Any miss is a
+`FAIL` row and the round stops there rather than ticking again — which is the
+independent verification the old refusal claimed to be, made real, and on the
+one fixture the drill could never mint for itself. An identity carrying no
+outside demand reports `0` and asserts nothing, exactly as before.
+
+Those `duty.log` reads are bounded by a line count **and** the generation it
+was counted against, because `tick.sh` rotates `duty.log` to `duty.log.1` at
+5 MiB before a run appends to it — a threshold a reused drill box reaches. When
+the file moved under the round, the slice spans the tail of the rotated
+generation and all of the new one; when the generation the census counted is on
+neither file, the round stops on that fact rather than grading an absence in a
+log it could not bound. A generation is identified by its inode **and** a
+checksum of the lines the census counted, because an inode is a slot and not an
+identity: the kernel re-issues it to the next file created, so a box that
+rotated twice, was rebuilt, or had its log truncated in place would otherwise
+present a brand-new `duty.log` wearing the counted generation's number and the
+slice would read past the end of it. Those all land on `lost`, and the round
+stops.
+
+A read that **fails** is a third answer again, and neither of the other two. A
+`duty.log` that is there and will not open — a rebuilt box, a mount that went
+away, a file some other pass left unreadable — is not a log of length zero and
+not a generation that is gone: it is a file nothing can be concluded from, and
+one that cannot be ruled out as the counted generation either. The census
+refuses to be taken on it, and a log that stops reading mid-round reds the
+bounding row and stops there. That distinction is what keeps the negative
+assertions honest: "no attention session was launched outside the sandbox" and
+"the box could not be read" are the same empty slice, and only one of them is
+evidence. An unreadable `duty.log.1` beside a generation the census identified
+by reading it costs the round nothing, because that file is not where this
+round's lines are.
+
 The rehearsal deliberately does **not** arm cron. Every drill tick is explicit;
 the old scheduled-boundary check was not worth creating an autonomous agent
 that could outlive the invoking shell. On every exit the cleanup path removes
