@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Safety interlocks for drill/rehearsal.sh. The caller supplies bx(), BOX_NAME,
-# and REPOS_BACKUP; keeping these functions separate makes failure cleanup
+# and REPOS_BACKUP — and, for the attention census's two halves at the bottom,
+# ok() and fail() as well, the shape drill/rehearsal-attention-audit.sh already
+# uses. Keeping these functions separate makes failure cleanup and the census
 # fixture-testable without a box or credentials.
 # shellcheck disable=SC2088  # stored tildes expand inside the box via bx()
 
@@ -17,6 +19,16 @@ REHEARSAL_TEARDOWN_REASON=""
 # teardown failure, while a backup that was never made is nothing to vouch for,
 # and only this flag tells those two apart (#423, round 3).
 REHEARSAL_BACKUP_TAKEN=0
+
+# The attention census, carried between its two halves: taken before the first
+# authenticated tick, asserted after it (#714).
+REHEARSAL_ATTENTION_OUTSIDE=""
+REHEARSAL_ATTENTION_OUTSIDE_N=0
+REHEARSAL_ATTENTION_MARK=""
+REHEARSAL_ATTENTION_LOG_BASE=0
+REHEARSAL_ATTENTION_PICKUPS_BEFORE=""
+# Why the census half said no, in the words the caller's refusal prints.
+REHEARSAL_ATTENTION_REASON=""
 
 rehearsal_disarm_cron() {
   bx "if command -v crontab >/dev/null 2>&1; then
@@ -47,28 +59,279 @@ rehearsal_narrow_to_sandbox() {
     bx "[ \"\$(wc -l < ~/duty/repos.txt)\" -eq 1 ] && grep -qxF '$sandbox' ~/duty/repos.txt"
 }
 
-# rehearsal_attention_is_clear SANDBOX — print any parked attention demand this
-# box would pick up from OUTSIDE the sandbox. Empty output means clear.
+# rehearsal_attention_census SANDBOX — print "<repo> <number>" for every parked
+# attention demand this box's identity carries OUTSIDE the sandbox. Empty
+# output means the identity carries none. Returns non-zero when the box would
+# not answer at all.
 #
 # Narrowing repos.txt scopes review, build, triage and hygiene — every module
 # that reads REPOS_FILE. It does NOT scope ATTENTION, which runs first and for
 # every role: duty-attention.sh reads the authenticated-user issues endpoint on
 # purpose ("cross-repo, no search index, reaches repos not in repos.txt"), so
 # an open issue assigned to this box's identity and carrying the `attention`
-# label is a demand it will act on wherever it lives. The drill box borrows a
+# label is a demand it will see wherever it lives. The drill box borrows a
 # fleet identity, so a real parked demand for that identity is exactly the
-# thing at risk.
+# thing this surface is about.
 #
 # So the interlock asserting "repos.txt contains only the sandbox" is TRUE and,
 # for this surface, not sufficient — which is the worst combination, because it
-# reads like coverage (#52). repos.txt cannot be made to scope attention; the
-# honest containment is to check there is nothing outside the sandbox to pick
-# up, and refuse the tick if there is. That is a check, not a claim.
-rehearsal_attention_is_clear() {
+# reads like coverage (#52).
+#
+# THIS USED TO RETURN A VERDICT, AND THE CALLER REFUSED THE ROUND ON IT (#714).
+# The refusal made Gate A unrunnable on the operator's own host: an identity
+# with parked work anywhere else — a real account's normal state — never
+# reached a phase 2 tick, so every role loop stayed UNPROVEN. Its argument was
+# that a regression of crew#66's registry filter costs a real session on a real
+# repo, and that argument is answered by READING the evidence rather than by
+# refusing to produce it. The engine writes, on the very tick the leg is about
+# to run, which demands it saw outside the registry and that it suppressed
+# them; the predicates below read exactly that. So this is a CENSUS now, and it
+# carries the issue number because the assertion is per demand.
+#
+# A read that fails is NOT an empty census. It is the third state this file
+# already spells out for the registry snapshot (#423, round 2): "the box did
+# not say" is not "there was nothing there", and an absence is established by
+# reading the source, never by failing to. The `|| true` that used to swallow
+# it turned an unanswerable box into a clean bill of health.
+rehearsal_attention_census() {
+  local sandbox="$1" out
+  out="$(bx "gh api '/issues?filter=assigned&state=open&labels=attention&per_page=100' \
+          --jq '.[] | select(.repository.full_name != \"$sandbox\") | \"\(.repository.full_name) \(.number)\"'")" \
+    || return 1
+  printf '%s\n' "$out" | sed '/^[[:space:]]*$/d' | sort -u
+  return 0
+}
+
+# --- the census's other half: what the engine did with those demands (#714) --
+#
+# Each predicate prints WHAT IT READ on stdout and returns non-zero when the
+# fact does not hold, so the live row quotes the offender rather than a
+# transcript. None of them touches a box, so CI drives every branch.
+
+# rehearsal_attention_demand_suppressed ID SCOPE LOG — the engine saw this
+# out-of-registry demand and left it alone. ID is "<repo>#<num>".
+#
+#   SCOPE — ~/duty/.suppressed-attention-scope, as the engine left it
+#   LOG   — the duty.log lines written since the census was taken
+#
+# TWO records are accepted and the state file is the primary one, which is the
+# opposite of what the leg's first reading suggests. duty.log carries the
+# `attention: outside repos.txt` line through report_suppressed, and that
+# writes only on a CHANGE of the suppressed set (#59's rule): the first tick
+# that sees a standing demand logs it and every tick after is silent. Every
+# `--reuse` pass, and every box whose cron struck before phase 2, would then
+# read a missing line as a missing suppression. The state file the same call
+# leaves behind is re-derived on every tick from that tick's own partition —
+# rewritten when the set changes, REMOVED when it empties — so it is the live
+# record, and a demand that regressed INTO the registry disappears from it.
+#
+# The freshness that matters is not "this tick" but "the last tick whose fetch
+# succeeded", and the leg's own positive case establishes that: the pickup
+# comment and the label removal it waits for can only come from a tick that
+# fetched, partitioned, and found the sandbox demand INSIDE — the same call,
+# above the same partition, that wrote this file.
+rehearsal_attention_demand_suppressed() {
+  local id="$1" scope="$2" log="$3" line
+  if [ -n "$scope" ] \
+    && awk -v id="$id" '$1 == id { found = 1 } END { exit !found }' <<<"$scope"; then
+    printf 'suppressed-attention-scope names %s\n' "$id"
+    return 0
+  fi
+  line="$(grep -F 'attention: outside repos.txt' <<<"$log" | grep -F "$id(" | tail -1)"
+  if [ -n "$line" ]; then
+    printf '%s\n' "$line"
+    return 0
+  fi
+  printf 'neither ~/duty/.suppressed-attention-scope nor an "attention: outside repos.txt" line names %s\n' "$id"
+  return 1
+}
+
+# rehearsal_attention_no_outside_session SANDBOX LOG — no attention session was
+# launched for any repository but the sandbox. The key on the session record is
+# "<repo>#<num>" (session.sh's `SESSION START kind=... key=...`), so the repo
+# half is what this compares; the census's own rows are not needed, because the
+# fact is stronger without them — a dispatch to ANY outside repo is the failure,
+# including one nothing parked before the round began.
+rehearsal_attention_no_outside_session() {
+  local sandbox="$1" log="$2" stray
+  stray="$(awk -v s="$sandbox" '
+    /SESSION START kind=attention / {
+      for (i = 1; i <= NF; i++)
+        if ($i ~ /^key=/) {
+          k = substr($i, 5); sub(/#[0-9]+$/, "", k)
+          if (k != s) print
+          next
+        }
+    }' <<<"$log")"
+  [ -z "$stray" ] || { printf '%s\n' "$stray"; return 1; }
+  printf 'no SESSION START kind=attention outside %s\n' "$sandbox"
+  return 0
+}
+
+# rehearsal_attention_no_pickup ID BEFORE AFTER MARK — the round's ticks posted
+# no pickup comment on this demand. BEFORE and AFTER are the counts of comments
+# carrying MARK, read either side of the tick; anything that is not a number is
+# a read nobody could make and reds, for the same reason the census does.
+#
+# A DELTA, not an absolute count and not a timestamp window. Counting on the
+# author separates nothing: on the host this issue exists for, the box identity
+# IS the operator, and the operator's own commentary on their own parked issues
+# is not a pickup. Counting absolutely reds a correct round, because a demand
+# some box legitimately picked up in an earlier life carries the mark forever.
+# And a `created_at >` window would hang the verdict on agreement between the
+# drill host's clock and GitHub's. Two reads bracketing the tick need neither.
+rehearsal_attention_no_pickup() {
+  local id="$1" before="$2" after="$3" mark="$4"
+  case "${before:-x}${after:-x}" in
+    *[!0-9]*)
+      printf 'could not read the "%s" comment count of %s (before: %s, after: %s)\n' \
+        "$mark" "$id" "${before:-<nothing>}" "${after:-<nothing>}"
+      return 1
+      ;;
+  esac
+  if [ "$after" -gt "$before" ]; then
+    printf '%s drew %s new "%s" comment(s) across the tick (%s -> %s)\n' \
+      "$id" "$((after - before))" "$mark" "$before" "$after"
+    return 1
+  fi
+  printf '%s drew no new "%s" comment (%s -> %s)\n' "$id" "$mark" "$before" "$after"
+  return 0
+}
+
+# --- the census's two live halves ------------------------------------------
+#
+# Both emit rows through the caller's ok()/fail(), and both take every box read
+# through the caller's bx(), so a fixture drives either one whole.
+
+# rehearsal_attention_pickup_counts ROWS MARK — "<repo>#<num> <count>" per
+# census row, counting the comments that carry MARK. Read from INSIDE the box:
+# the demands sit on boards the drill HOST may not be able to see at all, and
+# the identity the demand is parked for is the box's.
+#
+# The pages are summed rather than tailed. `--paginate` with `--jq` runs the
+# filter per page and prints one number each, so reading the last line counts
+# the last page; and dropping `--paginate` would read the first hundred
+# comments only, which is exactly where an appended pickup is not.
+rehearsal_attention_pickup_counts() {
+  local rows="$1" mark="$2" repo num raw count
+  [ -n "$rows" ] || return 0
+  while read -r repo num; do
+    [ -n "${num:-}" ] || continue
+    if raw="$(bx "gh api 'repos/$repo/issues/$num/comments?per_page=100' --paginate \
+        --jq '[.[] | select(.body | contains(\"$mark\"))] | length'")"; then
+      count="$(printf '%s\n' "$raw" | tr -d ' \r' | awk 'NF{s+=$1} END{print s+0}')"
+    else
+      count=unreadable
+    fi
+    printf '%s#%s %s\n' "$repo" "$num" "$count"
+  done <<<"$rows"
+}
+
+# rehearsal_attention_graded NAME PREDICATE... — run the predicate, print what
+# it read indented under a failure, grade the row. A red names what it read —
+# the state file, the log line, the comment counts — never a transcript.
+#
+# This leg's own copy, for the same reason rehearsal-attention-audit.sh keeps
+# one: the alternative is sourcing a builder-block leg into a role-independent
+# interlock for a six-line function, and that source line then has to be
+# discounted by every reader of both.
+rehearsal_attention_graded() {
+  local name="$1"; shift
+  local read_back rc=0 line
+  read_back="$("$@")" || rc=$?
+  if [ "$rc" -eq 0 ]; then
+    ok "$name"
+    return 0
+  fi
+  if [ -n "$read_back" ]; then
+    while IFS= read -r line; do
+      [ -n "$line" ] && echo "  read: $line"
+    done <<<"$read_back"
+  fi
+  fail "$name"
+  return 1
+}
+
+# rehearsal_attention_census_take SANDBOX — the first half (D1). Record every
+# demand parked outside the sandbox, the pickup-comment counts they arrive
+# with, the mark those counts are keyed on, and duty.log's length, then emit
+# the census row. NEVER a verdict on the demands themselves.
+#
+# Returns non-zero only when the census could not be TAKEN, with the reason in
+# REHEARSAL_ATTENTION_REASON; the caller refuses on that, because every
+# assertion the other half makes reads against what is recorded here, and a
+# leg that establishes an absence by failing to read establishes nothing.
+rehearsal_attention_census_take() {
   local sandbox="$1"
-  bx "gh api '/issues?filter=assigned&state=open&labels=attention&per_page=100' \
-        --jq '.[].repository.full_name' 2>/dev/null \
-      | grep -vxF '$sandbox' || true"
+  REHEARSAL_ATTENTION_REASON=""
+  if ! REHEARSAL_ATTENTION_OUTSIDE="$(rehearsal_attention_census "$sandbox")"; then
+    REHEARSAL_ATTENTION_OUTSIDE=""
+    REHEARSAL_ATTENTION_REASON="the box would not list this identity's parked attention demands"
+    return 1
+  fi
+  REHEARSAL_ATTENTION_OUTSIDE_N="$(printf '%s' "$REHEARSAL_ATTENTION_OUTSIDE" | grep -c . || true)"
+  # The mark the pickup assertion counts, read from the box's OWN installed
+  # configuration rather than spelled here: an absence established against a
+  # needle the engine no longer writes is green on every board.
+  # shellcheck disable=SC2016  # MARK_PICKUP expands inside the box
+  REHEARSAL_ATTENTION_MARK="$(bx 'set -a; . ~/duty/conf/fleet.defaults.conf; printf "%s\n" "$MARK_PICKUP"' | tr -d '\r')"
+  if [ -z "$REHEARSAL_ATTENTION_MARK" ]; then
+    # shellcheck disable=SC2034  # printed by rehearsal.sh's refusal, like REPOS_BACKUP
+    REHEARSAL_ATTENTION_REASON="the box's installed configuration resolved no MARK_PICKUP"
+    return 1
+  fi
+  # duty.log's length BEFORE the first phase-2 tick, so the negative assertion
+  # reads only the lines this round's ticks wrote. A drill box is reused
+  # between passes and its cron has been striking since install; a whole-file
+  # read carries a previous pass's records into this pass's verdict.
+  REHEARSAL_ATTENTION_LOG_BASE="$(bx 'wc -l < ~/duty/duty.log 2>/dev/null || echo 0' | tr -d ' \r')"
+  case "$REHEARSAL_ATTENTION_LOG_BASE" in
+    '' | *[!0-9]*) REHEARSAL_ATTENTION_LOG_BASE=0 ;;
+  esac
+  if [ "$REHEARSAL_ATTENTION_OUTSIDE_N" -eq 0 ]; then
+    REHEARSAL_ATTENTION_PICKUPS_BEFORE=""
+    ok "attention census: 0 demand(s) parked outside $sandbox"
+    return 0
+  fi
+  REHEARSAL_ATTENTION_PICKUPS_BEFORE="$(rehearsal_attention_pickup_counts \
+    "$REHEARSAL_ATTENTION_OUTSIDE" "$REHEARSAL_ATTENTION_MARK")"
+  ok "attention census: $REHEARSAL_ATTENTION_OUTSIDE_N demand(s) parked outside $sandbox — the tick below must suppress every one"
+  local repo num
+  while read -r repo num; do
+    [ -n "${num:-}" ] && echo "  census: $repo#$num"
+  done <<<"$REHEARSAL_ATTENTION_OUTSIDE"
+  return 0
+}
+
+# rehearsal_attention_census_assert SANDBOX — the second half (D2/D3), run
+# after the phase-2 attention tick has proved the wake works. One row per
+# recorded demand plus the negative session row; non-zero if any of them
+# failed, and the caller stops the box's ticks there.
+#
+# An identity carrying nothing outside the sandbox asserts nothing and says so
+# through the census row alone (D4) — the positive case is the whole leg, as
+# it was before this issue.
+rehearsal_attention_census_assert() {
+  local sandbox="$1" scope log pickups_after rc=0 repo num id before after
+  [ "$REHEARSAL_ATTENTION_OUTSIDE_N" -gt 0 ] || return 0
+  scope="$(bx 'cat ~/duty/.suppressed-attention-scope 2>/dev/null || true' | tr -d '\r')"
+  log="$(bx "tail -n +$((REHEARSAL_ATTENTION_LOG_BASE + 1)) ~/duty/duty.log 2>/dev/null || true" | tr -d '\r')"
+  pickups_after="$(rehearsal_attention_pickup_counts \
+    "$REHEARSAL_ATTENTION_OUTSIDE" "$REHEARSAL_ATTENTION_MARK")"
+  rehearsal_attention_graded \
+    "attention census: no attention session launched outside $sandbox" \
+    rehearsal_attention_no_outside_session "$sandbox" "$log" || rc=1
+  while read -r repo num; do
+    [ -n "${num:-}" ] || continue
+    id="$repo#$num"
+    rehearsal_attention_graded "attention census: $id seen and suppressed" \
+      rehearsal_attention_demand_suppressed "$id" "$scope" "$log" || rc=1
+    before="$(awk -v id="$id" '$1 == id { print $2; exit }' <<<"$REHEARSAL_ATTENTION_PICKUPS_BEFORE")"
+    after="$(awk -v id="$id" '$1 == id { print $2; exit }' <<<"$pickups_after")"
+    rehearsal_attention_graded "attention census: $id drew no pickup" \
+      rehearsal_attention_no_pickup "$id" "$before" "$after" "$REHEARSAL_ATTENTION_MARK" || rc=1
+  done <<<"$REHEARSAL_ATTENTION_OUTSIDE"
+  return "$rc"
 }
 
 # --- reading a registry off the box, in the three states it can be in ------

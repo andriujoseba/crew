@@ -653,22 +653,30 @@ else
   # and attention is not one of them (#52).
   ok "safety interlock: repos.txt narrows review/build/triage/hygiene to the sandbox"
 
-  # The surface repos.txt cannot bound, checked rather than assumed.
-  STRAY_ATTENTION="$(rehearsal_attention_is_clear "$SANDBOX" | grep -v '^$' | sort -u | head -5)"
-  if [ -n "$STRAY_ATTENTION" ]; then
+  # The surface repos.txt cannot bound, RECORDED rather than refused (#714).
+  #
+  # This block used to exit 1 on any demand parked outside the sandbox, and
+  # that made Gate A unrunnable on the operator's own host: the only two ways
+  # out it offered were stripping the operator's own `attention` markers off a
+  # production board for the length of a round, or a throwaway account whose
+  # single qualification is carrying no work. Its argument — a drill is the
+  # wrong place to discover crew#66's filter regressed — survives, and is
+  # discharged below by ASSERTING the engine's own suppressed-report on the
+  # very tick it was refusing to let run.
+  #
+  # The demands the identity already carries are, read the other way round, the
+  # best fixture this leg can have. The registry filter's negative case is a
+  # demand OUTSIDE repos.txt being seen and left alone, and no fixture the
+  # drill mints inside the sandbox can produce one: every round that had a real
+  # one stopped here.
+  if ! rehearsal_attention_census_take "$SANDBOX"; then
     echo
-    echo "REFUSING before a phase 2 tick: this box's identity ($ME2) has attention demands"
-    echo "parked outside $SANDBOX:"
-    printf '  %s\n' "$STRAY_ATTENTION"
-    echo "Since crew#66 the engine should IGNORE these — the registry bounds the attention"
-    echo "wake like every other module — so this check is now the independent verification"
-    echo "that the filter holds, not the only thing containing it. It stays a refusal on"
-    echo "purpose: a drill is the wrong place to discover the filter regressed, and the"
-    echo "cost of being wrong is a real session on a real repo. Clear the label, or re-run"
-    echo "on a box whose identity carries no parked demand outside $SANDBOX."
+    echo "REFUSING before a phase 2 tick: $REHEARSAL_ATTENTION_REASON, so the"
+    echo "census cannot be taken. This is not an empty census — an absence is"
+    echo "established by reading the source, never by failing to read it, and the"
+    echo "assertions after the tick have nothing to assert against without one."
     exit 1
   fi
-  ok "safety interlock: no attention demand parked outside the sandbox"
 
   # -- the operator's watch set: repos.txt ∪ notify-repos.txt (#316) --
   # Here and not in a role block: the notifier is role-independent, and the
@@ -698,6 +706,22 @@ else
   # states. Compare inside the filter so a token reaches the shell either way.
   wait_for 300 "attention: label removed (ack re-arms)" bash -c \
     "out=\$(gh api 'repos/$SANDBOX/issues/$inum' --jq '[.labels[].name] | index(\"attention\") == null'); grep -qx true <<<\"\$out\""
+
+  # The census's other half (#714, D2/D3). Deliberately AFTER the two rows
+  # above: they are what establishes that a tick fetched, partitioned and
+  # dispatched the sandbox demand, and the engine's suppressed-report for the
+  # demands OUTSIDE the sandbox is written by that same call, above that same
+  # partition. Reading it before the wake had run would read the last tick to
+  # have run for any other reason.
+  if ! rehearsal_attention_census_assert "$SANDBOX"; then
+    echo
+    echo "REFUSING to continue: the registry bound crew#66 shipped is not holding for"
+    echo "this identity's parked demands, so the round stops before another tick. This"
+    echo "is the cost the old refusal guarded against — caught on the first tick that"
+    echo "shows it, rather than prevented by never ticking at all, and the narrowed"
+    echo "repos.txt and the disarmed cron bound what that one tick could reach."
+    exit 1
+  fi
 
   # ---- role-specific loops ---------------------------------------------
   # duty_attention above is role-independent and already ran. What follows
