@@ -520,6 +520,24 @@ else
   r1=red
 fi
 t rehearsal-breaker-standing-attention-mutation-reds red "$r1"
+# The post-recovery clear reads the label the leg ARMED, which on a box whose
+# operator moved LABEL_ATTENTION is not `attention` (#724). Keyed on the
+# literal, this row passes on a board where the demand is still parked — the
+# clear is certified by looking for a label nothing ever set.
+if rehearsal_breaker_attention_is_clear_from_json \
+    '{"labels":[{"name":"needs-human"}]}' needs-human; then
+  r1=WRONG
+else
+  r1=red
+fi
+t rehearsal-breaker-standing-renamed-attention-mutation-reds red "$r1"
+if rehearsal_breaker_attention_is_clear_from_json \
+    '{"labels":[{"name":"attention"}]}' needs-human; then
+  r1=clear
+else
+  r1=WRONG
+fi
+t rehearsal-breaker-renamed-lane-ignores-the-literal-label clear "$r1"
 
 # Drive the real installed-facts loader against the shipped conf/library
 # shape. SESSION_TERMINAL_THRESHOLD intentionally defers to the operating
@@ -538,6 +556,29 @@ if rehearsal_breaker_load_installed_facts; then r1=resolved; else r1=WRONG; fi
 t rehearsal-breaker-shipped-threshold-resolves resolved "$r1"
 t rehearsal-breaker-shipped-threshold-is-numeric 3 \
   "$REHEARSAL_BREAKER_THRESHOLD"
+# ...and the lane's LABEL off the same box (#724). The leg arms the lane by
+# setting it, and duty_attention fetches `labels=$LABEL_ATTENTION`
+# (duty-attention.sh:115) — so the name has to be the box's, read the way
+# load_fleet_conf resolves it, or the leg arms a label the engine never asks
+# for and then grades a dispatch nobody requested.
+t rehearsal-breaker-shipped-label-resolves attention "$REHEARSAL_BREAKER_LABEL"
+# LABEL_ATTENTION is NOT one of the six wire marks load_fleet_conf restores
+# over fleet.conf (common/conf.sh:14-24), so an operator file genuinely moves
+# it. Driven against a real second file rather than pinned by a grep for the
+# source text: a read that sourced the two in the wrong order passes the grep.
+printf 'LABEL_ATTENTION="needs-human"\n' \
+  >"$BREAKER_FACTS_HOME/duty/conf/fleet.conf"
+if rehearsal_breaker_load_installed_facts; then r1=resolved; else r1=WRONG; fi
+t rehearsal-breaker-operator-label-resolves resolved "$r1"
+t rehearsal-breaker-operator-label-overrides-the-default needs-human \
+  "$REHEARSAL_BREAKER_LABEL"
+# A box whose configuration resolves no label refuses, exactly as it refuses a
+# threshold it cannot read: arming a lane with an empty name arms nothing, and
+# the leg would then report the engine for an absence it created itself.
+printf 'LABEL_ATTENTION=""\n' >"$BREAKER_FACTS_HOME/duty/conf/fleet.conf"
+if rehearsal_breaker_load_installed_facts; then r1=WRONG; else r1=red; fi
+t rehearsal-breaker-empty-label-mutation-reds red "$r1"
+rm -f "$BREAKER_FACTS_HOME/duty/conf/fleet.conf"
 unset -f bx ok fail
 
 BREAKER_FIXTURE_HOME="$TMP/rehearsal-breaker-fixture"
@@ -657,6 +698,7 @@ breaker_hooked_out="$({
     REHEARSAL_BREAKER_THRESHOLD=1
     REHEARSAL_BREAKER_KIND=attention
     REHEARSAL_BREAKER_STATE=/tmp/breaker-state
+    REHEARSAL_BREAKER_LABEL=attention
   }
   rehearsal_breaker_profile_has_hook() { return 0; }
   rehearsal_breaker_terminal_fixture_is_classified() { return 0; }
@@ -668,7 +710,18 @@ breaker_hooked_out="$({
   rehearsal_breaker_restore_cli_for_recovery() { return 0; }
   rehearsal_breaker_restore_cli() { return 0; }
   bx() { return 0; }
-  gh() { return 0; }
+  # Since #724 the arming is graded on a re-read of the issue, so a board that
+  # answers nothing is an unarmed lane and this leg stops at it. The stub now
+  # answers that read; the SHAPE of the read is graded in shared/test/drill.sh,
+  # and what this fixture is still about is the fully-hooked profile reaching
+  # the threshold probe at all.
+  gh() {
+    case "$*" in
+      *' -X '*) return 0 ;;
+      *issues/1) printf '{"state":"open","labels":[{"name":"attention"}]}\n' ;;
+      *) return 0 ;;
+    esac
+  }
   ok() { :; }
   fail() { FAILS+=("$1"); }
   skip() { :; }
