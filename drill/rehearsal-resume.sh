@@ -33,6 +33,20 @@ rehearsal_resume_load_installed_threshold() {
   ok "resume: installed zero-action threshold resolves"
 }
 
+# One row per tick whose negative assertion depends on the sandbox holding no
+# other resume work. It carries its own verdict so a polluted fixture is never
+# silent, and never rides the engine rows' verdict either.
+rehearsal_resume_sole_duty_row() {
+  local repo="$1" pr="$2" log_text="$3" phase="$4"
+  if rehearsal_resume_unrelated_duty_from_log "$repo" "$pr" "$log_text"; then
+    fail "resume: no unrelated resume duty in the sandbox at $phase"
+    rehearsal_resume_roll_call_from_log "$repo" "$log_text"
+    rehearsal_resume_verdict fail "the sandbox bought a resume session this leg did not account for at $phase"
+  else
+    ok "resume: no unrelated resume duty in the sandbox at $phase"
+  fi
+}
+
 rehearsal_resume_tick_log() {
   local first_line="$1"
   bx "tail -n +$first_line ~/duty/duty.log"
@@ -79,6 +93,23 @@ rehearsal_resume_pr_dispatched_from_log() {
     if grep -Eq "(^|[^0-9])$pr([^0-9]|$)" <<<"$fields"; then return 0; fi
   done < <(grep -F "$repo: resume duty (" <<<"$log_text")
   return 1
+}
+
+# rehearsal_resume_unrelated_duty_from_log REPO PR LOG — true when a resume
+# session started in this sandbox that this PR's own lanes did not buy.
+#
+# THE OLD READING IS KEPT, AS ITS OWN ROW (#725). Scoping the two negative rows
+# to the PR would otherwise throw away a real fact: a resume session nobody
+# accounted for means the leg's fixture is not what the leg thinks it is — an
+# orphaned claim from an earlier pass, a second authored PR, a scheduled tick
+# inside the window. That is worth a red. What it is not worth is being reported
+# as the engine resuming a pending head, which is what the `0.1.3-rc2` round
+# recorded and what cost this issue a second candidate cause. Same evidence,
+# named for what it actually shows.
+rehearsal_resume_unrelated_duty_from_log() {
+  local repo="$1" pr="$2" log_text="$3"
+  grep -Fq "SESSION START kind=resume key=$repo" <<<"$log_text" \
+    && ! rehearsal_resume_pr_dispatched_from_log "$repo" "$pr" "$log_text"
 }
 
 # The roll-call lines themselves, for the record a failing row leaves behind. A
@@ -231,6 +262,7 @@ rehearsal_resume_drill() {
     rehearsal_resume_roll_call_from_log "$repo" "$log_text"
     rehearsal_resume_verdict fail "pending head resumed before check conclusion"
   fi
+  rehearsal_resume_sole_duty_row "$repo" "$pr" "$log_text" "the pending tick"
 
   if rehearsal_set_builder_head_status "$repo" "$head" "$context" success \
       'drill releases the check-conclusion wake'; then
@@ -287,6 +319,7 @@ rehearsal_resume_drill() {
     rehearsal_resume_roll_call_from_log "$repo" "$log_text"
     rehearsal_resume_verdict fail "zero-action stop was not observed"
   fi
+  rehearsal_resume_sole_duty_row "$repo" "$pr" "$log_text" "the stop tick"
 
   if [ "$REHEARSAL_RESUME_NOOP_SET" -eq 1 ] && rehearsal_resume_restore_cli; then
     ok "resume: normal builder CLI restored"

@@ -874,14 +874,64 @@ else
   resume_predicate=WRONG
 fi
 t rehearsal-resume-pending-head-unresumed unresumed "$resume_predicate"
+# THE MUTATION IS NOW THE ROLL-CALL, NOT A BARE SESSION (#725). This row used to
+# stage `no resume duty` beside a `SESSION START`, which is a log the engine
+# cannot write — the two contradict each other within one tick — and it read
+# that impossible pair as the engine resuming a pending head. The real shape of
+# the defect is the tick's own roll-call naming this PR, so that is what has to
+# red the row; the bare session moved to its own row below, where it says what
+# it actually shows.
+RESUME_DISPATCH_LOG="2026-08-08T12:00:00Z $RESUME_REPO#$RESUME_PR: green head owed a signal — resuming this tick instead of the twelfth, dispatch 1 of 7 at $RESUME_HEAD (#384)
+2026-08-08T12:00:00Z $RESUME_REPO: resume duty (drafts: none; orphaned claims: none; unsignalled ready PRs: $RESUME_PR; of those, signals that missed the wire: none, green heads owed a signal: $RESUME_PR; drafts owed a flip: none)
+2026-08-08T12:00:01Z SESSION START kind=resume key=$RESUME_REPO"
 if rehearsal_resume_pending_tick_from_log "$RESUME_REPO" "$RESUME_PR" \
-    "$RESUME_PENDING_LOG
-2026-08-08T12:00:01Z SESSION START kind=resume key=$RESUME_REPO"; then
+    "$RESUME_DISPATCH_LOG"; then
   resume_predicate=WRONG
 else
   resume_predicate=refused
 fi
-t rehearsal-resume-pending-session-mutation-reds refused "$resume_predicate"
+t rehearsal-resume-pending-dispatch-mutation-reds refused "$resume_predicate"
+# ...and a session this PR's lanes did not buy does NOT red it. An orphaned
+# claim left by an earlier pass buys one on every tick, and reporting that as a
+# pending head resumed is the reading that minted #725.
+RESUME_OTHER_LOG="2026-08-08T12:00:00Z $RESUME_REPO: resume duty (drafts: none; orphaned claims: 41; unsignalled ready PRs: none; of those, signals that missed the wire: none, green heads owed a signal: none; drafts owed a flip: none)
+2026-08-08T12:00:01Z SESSION START kind=resume key=$RESUME_REPO"
+if rehearsal_resume_pending_tick_from_log "$RESUME_REPO" "$RESUME_PR" \
+    "$RESUME_OTHER_LOG"; then
+  resume_predicate=unresumed
+else
+  resume_predicate=MISATTRIBUTED
+fi
+t rehearsal-resume-other-claims-session-is-not-this-head unresumed "$resume_predicate"
+# THE EVIDENCE IS KEPT, UNDER ITS OWN NAME. A resume session nobody accounted
+# for means the fixture is not what the leg thinks it is, which is worth a red —
+# just not the engine's red.
+if rehearsal_resume_unrelated_duty_from_log "$RESUME_REPO" "$RESUME_PR" \
+    "$RESUME_OTHER_LOG"; then
+  resume_predicate=caught
+else
+  resume_predicate=MISSED
+fi
+t rehearsal-resume-unrelated-duty-is-caught caught "$resume_predicate"
+if rehearsal_resume_unrelated_duty_from_log "$RESUME_REPO" "$RESUME_PR" \
+    "$RESUME_DISPATCH_LOG"; then
+  resume_predicate=MISATTRIBUTED
+else
+  resume_predicate=accounted
+fi
+t rehearsal-resume-this-prs-own-session-is-accounted accounted "$resume_predicate"
+# The row is REPORTED, or the fixture defect is silent and the leg is back to
+# guessing which cause it is looking at.
+RESUME_SOLE_OUT="$({
+  ok() { printf 'ok   %s\n' "$1"; }
+  fail() { printf 'FAIL %s\n' "$1"; }
+  rehearsal_resume_sole_duty_row "$RESUME_REPO" "$RESUME_PR" "$RESUME_OTHER_LOG" "the pending tick"
+})"
+t rehearsal-resume-sole-duty-row-reds-by-name 1 \
+  "$(grep -cFx 'FAIL resume: no unrelated resume duty in the sandbox at the pending tick' \
+    <<<"$RESUME_SOLE_OUT")"
+t rehearsal-resume-sole-duty-row-records-the-roll-call 1 \
+  "$(grep -c 'orphaned claims: 41' <<<"$RESUME_SOLE_OUT")"
 
 RESUME_WAKE_LOG="2026-08-08T12:05:00Z WARN: $RESUME_REPO#$RESUME_PR: green head owed a signal — nothing left to wait for (#384)
 2026-08-08T12:05:00Z $RESUME_REPO#$RESUME_PR: green head owed a signal — resuming this tick instead of the twelfth, dispatch 1 of 7 at $RESUME_HEAD (#384)
@@ -936,14 +986,27 @@ else
   resume_predicate=WRONG
 fi
 t rehearsal-resume-zero-action-threshold-stops stopped "$resume_predicate"
+# A stop that is SAID while the same tick dispatches for this PR anyway is not a
+# stop — the mutation, on the shape the engine can actually write (#725).
 if rehearsal_resume_suppressed_tick_from_log "$RESUME_REPO" "$RESUME_PR" \
     "$RESUME_HEAD" 7 "$RESUME_STOP_LOG
+2026-08-08T12:15:00Z $RESUME_REPO: resume duty (drafts: none; orphaned claims: none; unsignalled ready PRs: $RESUME_PR; of those, signals that missed the wire: none, green heads owed a signal: none; drafts owed a flip: none)
 2026-08-08T12:15:01Z SESSION START kind=resume key=$RESUME_REPO"; then
   resume_predicate=WRONG
 else
   resume_predicate=refused
 fi
-t rehearsal-resume-post-suppression-session-mutation-reds refused "$resume_predicate"
+t rehearsal-resume-post-suppression-dispatch-mutation-reds refused "$resume_predicate"
+# ...while a session another claim bought leaves the stop standing, and is
+# reported by the sole-duty row instead.
+if rehearsal_resume_suppressed_tick_from_log "$RESUME_REPO" "$RESUME_PR" \
+    "$RESUME_HEAD" 7 "$RESUME_STOP_LOG
+$RESUME_OTHER_LOG"; then
+  resume_predicate=stopped
+else
+  resume_predicate=MISATTRIBUTED
+fi
+t rehearsal-resume-stop-survives-another-claims-session stopped "$resume_predicate"
 
 t rehearsal-resume-threshold-not-retyped-in-drill 0 \
   "$(grep -R -E 'breaker=[0-9]+' "$ROOT/drill" | wc -l | tr -d ' ')"
