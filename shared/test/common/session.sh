@@ -636,6 +636,8 @@ SID_TRANSCRIPT_EMPTY="$(sid_of transcript-empty START)"
 SID_TRANSCRIPT_EMPTY_STUB="$(sid_stub_kind transcript-empty review fixture_transcript-empty)"
 t sid-empty-log-tool-transcript-records-productive yes \
   "$(sid_stub_field "$SID_TRANSCRIPT_EMPTY_STUB" productive)"
+t sid-empty-log-fixture-is-zero-bytes 0 \
+  "$(sid_stub_field "$SID_TRANSCRIPT_EMPTY_STUB" log)"
 t sid-empty-log-stays-action-unknown 1 \
   "$(grep -c 'acted=unknown' <<<"$(sid_line transcript-empty END)" || true)"
 sid_transcript_empty_resumed="$(sid_run transcript-empty fixture/transcript-empty 5 reply claude '' review)"
@@ -657,12 +659,14 @@ t sid-error-banner-tool-transcript-resumes-the-same-session same \
   "$(sid_same "$(sid_argv_flag "$sid_transcript_error_resumed" --resume)" \
     "$SID_TRANSCRIPT_ERROR")"
 
-# The third archived-log shape is another empty stdout timeout. Keeping it as
-# an independent dispatch guards against accidentally keying productivity to
-# a previous lane's artifact rather than this session id.
-sid_run transcript-empty-two fixture/transcript-empty-two 1 mute-tool-hang claude >/dev/null
+# The third archived-log shape is the second observed 15-byte banner. Keeping
+# it as an independent dispatch guards against accidentally keying productivity
+# to a previous lane's artifact rather than this session id.
+sid_run transcript-error-two fixture/transcript-error-two 1 error-tool-hang claude >/dev/null
 t sid-third-archived-log-shape-records-productive yes \
-  "$(sid_stub_field "$(sid_stub transcript-empty-two fixture_transcript-empty-two)" productive)"
+  "$(sid_stub_field "$(sid_stub transcript-error-two fixture_transcript-error-two)" productive)"
+t sid-third-archived-log-fixture-is-fifteen-bytes 15 \
+  "$(sid_stub_field "$(sid_stub transcript-error-two fixture_transcript-error-two)" log)"
 
 sid_run transcript-idle fixture/transcript-idle 1 mute-idle-hang claude >/dev/null
 sid_transcript_idle_killed="$(sid_of transcript-idle START)"
