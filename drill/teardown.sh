@@ -291,10 +291,10 @@ if case " $ROLES " in *" builder "*) true ;; *) false ;; esac \
   builder_sandbox="$REPO_OWNER/crew-drill-builder"
   if ! builder_forks="$(gh api "repos/$builder_sandbox/forks?per_page=100" --paginate \
       --jq '.[].full_name' 2>/dev/null)"; then
-    BUILDER_FORK_BLOCKED=1
-    # A measured missing sandbox has no fork network to inspect. Any other
-    # failure is accounted for later by the sandbox's own repo_probe.
+    # A measured missing sandbox has no fork network to inspect and nothing
+    # to preserve. Only a genuine inspection failure blocks the box.
     if gh api "repos/$builder_sandbox" >/dev/null 2>&1; then
+      BUILDER_FORK_BLOCKED=1
       UNINSPECTED+=("builder forks of $builder_sandbox — fork-list API failed")
     fi
   elif [ -n "$builder_forks" ]; then

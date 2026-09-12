@@ -4527,9 +4527,19 @@ unset -f gh
 # shellcheck disable=SC2016  # matching literal rehearsal variable references
 t rehearsal-reuse-cli-calls-clean-start-assertion 1 \
   "$(grep -c 'rehearsal_assert_reuse_sandbox_clean "\$REUSE" "\$SANDBOX"' "$ROOT/drill/rehearsal.sh")"
-t rehearsal-builder-fork-gate-precedes-first-tick 1 \
-  "$(sed -n '/box-owned sandbox fork resolves before first tick/,/bx "~\/duty\/bin\/tick.sh"/p' \
-      "$ROOT/drill/rehearsal.sh" | grep -c 'bx "~/duty/bin/tick.sh"')"
+phase2_line="$(grep -nF '== phase 2: authenticated' "$ROOT/drill/rehearsal.sh" | head -1 | cut -d: -f1)"
+builder_fork_gate_line="$(grep -nF 'box-owned sandbox fork resolves before first tick' \
+  "$ROOT/drill/rehearsal.sh" | head -1 | cut -d: -f1)"
+phase2_first_tick_line="$(awk -v start="$phase2_line" \
+  'NR > start && /bx "~\/duty\/bin\/tick.sh"/ { print NR; exit }' "$ROOT/drill/rehearsal.sh")"
+builder_fork_gate_precedes_tick=0
+if [ -n "$phase2_line" ] && [ -n "$builder_fork_gate_line" ] \
+    && [ -n "$phase2_first_tick_line" ] \
+    && [ "$builder_fork_gate_line" -gt "$phase2_line" ] \
+    && [ "$builder_fork_gate_line" -lt "$phase2_first_tick_line" ]; then
+  builder_fork_gate_precedes_tick=1
+fi
+t rehearsal-builder-fork-gate-precedes-first-tick 1 "$builder_fork_gate_precedes_tick"
 
 # Every object filer records the returned ID in the caller shell immediately;
 # this is what keeps failure paths from escaping the EXIT registry.

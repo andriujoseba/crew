@@ -68,6 +68,11 @@ case "${1:-} ${2:-}" in
     slug="${2#repos/}"
     case "$slug" in
       */forks\?per_page=100)
+        fork_base="${slug%%/forks*}"
+        case " ${STUB_REPOS:-} " in
+          *" $fork_base "*) ;;
+          *) printf 'gh: Not Found (HTTP 404)\n' >&2; exit 1 ;;
+        esac
         [ -z "${STUB_FORK_LIST_RC:-}" ] || exit "$STUB_FORK_LIST_RC"
         printf '%s\n' ${STUB_FORKS:-}
         exit 0 ;;
@@ -374,6 +379,37 @@ if [ "$RC" -eq 2 ] && says "box identity could not be read" \
   ok "unreadable-fork-owner-preserves-box-and-upstream-for-recovery"
 else
   bad "unreadable-fork-owner-preserves-box-and-upstream-for-recovery (rc=$RC, calls='$(cat "$CALLS")', got '$OUT')"
+fi
+
+# GitHub answers the fork-list endpoint with 404 when its base repository is
+# absent. That is a measured empty network, not a reason to preserve the box:
+# phase 1 creates the box before phase 2 creates the sandbox, and teardown
+# must clear that ordinary partial round without claiming nothing existed.
+run "CREW_ROSTER=$FLEET" "STUB_BOXES=crew-drill-builder" \
+    "STUB_LOGIN=danmt" "STUB_REPOS=" \
+  -- --role builder --yes
+if [ "$RC" -eq 0 ] && called "box rm --force crew-drill-builder" \
+    && ! says "NOT inspected" && ! says "nothing to do"; then
+  ok "an-absent-builder-sandbox-does-not-preserve-its-standing-box"
+else
+  bad "an-absent-builder-sandbox-does-not-preserve-its-standing-box (rc=$RC, calls='$(cat "$CALLS")', got '$OUT')"
+fi
+
+# The converse is the recovery boundary: if the sandbox exists but its fork
+# network cannot be listed, a credential-bearing fork may still exist. Name
+# the unknown and preserve both the box credentials and the upstream until a
+# later run can inspect the network.
+run "CREW_ROSTER=$FLEET" "STUB_BOXES=crew-drill-builder" \
+    "STUB_LOGIN=danmt" "STUB_REPOS=danmt/crew-drill-builder" \
+    "STUB_FORK_LIST_RC=1" \
+  -- --role builder --yes
+if [ "$RC" -eq 2 ] && says "builder forks of danmt/crew-drill-builder" \
+    && called "gh api repos/danmt/crew-drill-builder" \
+    && ! called "box rm --force crew-drill-builder" \
+    && ! called "repo delete danmt/crew-drill-builder"; then
+  ok "an-existing-sandbox-with-an-unreadable-fork-network-preserves-recovery-resources"
+else
+  bad "an-existing-sandbox-with-an-unreadable-fork-network-preserves-recovery-resources (rc=$RC, calls='$(cat "$CALLS")', got '$OUT')"
 fi
 # One round, not every round: --role targets a single leg.
 run "CREW_ROSTER=$FLEET" "STUB_BOXES=crew-drill-triage crew-drill-builder" \
