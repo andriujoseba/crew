@@ -2156,6 +2156,11 @@ brk_reset() {
 # exactly as rehearsal.sh supplies them, so a row's GRADE is observed and not
 # inferred: `INCOMPLETE, reason named, never FAIL` is a claim about which of
 # these four a row went to, and nothing else can see that.
+# The subshell-locality is the point: every drive gets a pristine copy of the
+# leg's globals and its own stubs, and nothing here is read back afterwards —
+# a drive's result is its stdout and the files it wrote. SC2030 only began
+# firing once brk_cleanup_drive sourced the leg a second time.
+# shellcheck disable=SC2030
 brk_drive() {
   (
     export REHEARSAL_BREAKER_TICK_TRIES="$BRK_TRIES"
