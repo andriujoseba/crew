@@ -407,10 +407,25 @@ engine when they are taken at their word:
 - Firing a tick. A tick refused by a lock the previous run still holds logs one
   line and exits immediately, so a leg firing them back to back spends its
   whole budget in seconds and grades slices describing ticks that never
-  executed. Those slices are not lane evidence in either direction: the leg
-  waits and re-fires within a bound, and when the bound is spent it reports
-  `INCOMPLETE (<what> never ran: N ticks refused by a held lock)` rather than
-  failing a lane it never reached.
+  executed. Those slices are not lane evidence in either direction.
+
+  The leg therefore reads `tick.sh`'s own evidence contract — exactly one line
+  per boundary, `duty run start`, `tick skipped:` or `tick FAILED:` — and
+  grades a slice only when it carries the **positive** mark. Absence of the
+  lock-skip line is not evidence that a tick ran: a `box exec` that never
+  landed leaves an empty slice, which reads the same way. The box reads that
+  bound the slice are graded too, because a failed `wc -l` would otherwise make
+  the slice the whole log and the leg would grade a previous tick's lines.
+
+  A held lock is waited out and re-fired within a bound. The rest are reported
+  once, against the tick rather than against the lane:
+
+  | reading | row |
+  | --- | --- |
+  | every try inside the bound refused | `INCOMPLETE (<what> never ran: N ticks refused by a held lock)` |
+  | the tick wrote no evidence line | `INCOMPLETE (<what> never ran: the tick wrote no evidence line (tick.sh rc N))` |
+  | the tick logged `FAILED` | `INCOMPLETE (<what> never ran: the tick logged FAILED (tick.sh rc N))` |
+  | the log could not be measured or read back | `INCOMPLETE (<what> never ran: the box's duty.log could not be measured / read back)` |
 
 ### resume — `drill/rehearsal-resume.sh`
 
