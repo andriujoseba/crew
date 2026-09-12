@@ -555,13 +555,13 @@ fail() { :; }
 if rehearsal_breaker_load_installed_facts; then r1=resolved; else r1=WRONG; fi
 t rehearsal-breaker-shipped-threshold-resolves resolved "$r1"
 t rehearsal-breaker-shipped-threshold-is-numeric 3 \
-  "$REHEARSAL_BREAKER_THRESHOLD"
+  "${REHEARSAL_BREAKER_THRESHOLD-}"
 # ...and the lane's LABEL off the same box (#724). The leg arms the lane by
 # setting it, and duty_attention fetches `labels=$LABEL_ATTENTION`
 # (duty-attention.sh:115) — so the name has to be the box's, read the way
 # load_fleet_conf resolves it, or the leg arms a label the engine never asks
 # for and then grades a dispatch nobody requested.
-t rehearsal-breaker-shipped-label-resolves attention "$REHEARSAL_BREAKER_LABEL"
+t rehearsal-breaker-shipped-label-resolves attention "${REHEARSAL_BREAKER_LABEL-}"
 # LABEL_ATTENTION is NOT one of the six wire marks load_fleet_conf restores
 # over fleet.conf (common/conf.sh:14-24), so an operator file genuinely moves
 # it. Driven against a real second file rather than pinned by a grep for the
@@ -571,7 +571,7 @@ printf 'LABEL_ATTENTION="needs-human"\n' \
 if rehearsal_breaker_load_installed_facts; then r1=resolved; else r1=WRONG; fi
 t rehearsal-breaker-operator-label-resolves resolved "$r1"
 t rehearsal-breaker-operator-label-overrides-the-default needs-human \
-  "$REHEARSAL_BREAKER_LABEL"
+  "${REHEARSAL_BREAKER_LABEL-}"
 # A box whose configuration resolves no label refuses, exactly as it refuses a
 # threshold it cannot read: arming a lane with an empty name arms nothing, and
 # the leg would then report the engine for an absence it created itself.
