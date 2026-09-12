@@ -51,7 +51,10 @@ case "${1:-}" in
     printf '[{"name":"%s","created_at":"2026-07-25T09:00:00Z"}]\n' "$n" ;;
   exec)
     [ -n "${STUB_BOX_LOGIN:-}" ] || exit 1
-    printf '%s\n' "$STUB_BOX_LOGIN" ;;
+    case "$*" in
+      *"gh repo delete "*) exit "${STUB_FORK_DELETE_RC:-0}" ;;
+      *) printf '%s\n' "$STUB_BOX_LOGIN" ;;
+    esac ;;
   rm) exit "${STUB_BOX_RM_RC:-0}" ;;
   *) exit 1 ;;
 esac
@@ -81,6 +84,10 @@ case "${1:-} ${2:-}" in
     # 404 — codex's transport failure underneath a perfectly good identity.
     # The message shape is gh's: a 404 says so in as many words and anything
     # else does not, which is the whole of what repo_probe reads.
+    if [ "${STUB_REPO_LOOKUP_FAIL_SLUG:-}" = "$slug" ]; then
+      printf 'error connecting to api.github.com: dial tcp: lookup failed\n' >&2
+      exit "${STUB_REPO_LOOKUP_FAIL_RC:-1}"
+    fi
     if [ -n "${STUB_REPO_LOOKUP_RC:-}" ]; then
       printf 'error connecting to api.github.com: dial tcp: lookup failed\n' >&2
       exit "$STUB_REPO_LOOKUP_RC"
@@ -358,14 +365,52 @@ fi
 
 run "CREW_ROSTER=$FLEET" "STUB_BOXES=crew-drill-builder" \
     "STUB_LOGIN=danmt" "STUB_BOX_LOGIN=builder-bot" \
-    "STUB_FORKS=somebody-else/crew-drill-builder-1" \
-    "STUB_REPOS=danmt/crew-drill-builder somebody-else/crew-drill-builder-1" \
+    "STUB_FORKS=somebody-else/crew-drill-builder builder-bot/crew-drill-builder-1" \
+    "STUB_REPOS=danmt/crew-drill-builder somebody-else/crew-drill-builder builder-bot/crew-drill-builder-1" \
   -- --role builder --yes
-if [ "$RC" -eq 1 ] && says "not by box identity 'builder-bot'" \
-    && ! called "repo delete" && ! called "box rm --force"; then
-  ok "refuses-builder-fork-not-owned-by-box-identity-before-deleting"
+if [ "$RC" -eq 0 ] && ! says "somebody-else/crew-drill-builder" \
+    && called "gh repo delete 'builder-bot/crew-drill-builder-1' --yes" \
+    && ! called "gh repo delete 'somebody-else/crew-drill-builder' --yes" \
+    && called "box rm --force crew-drill-builder" \
+    && called "repo delete danmt/crew-drill-builder"; then
+  ok "ignores-stranger-owned-forks-while-clearing-the-round"
 else
-  bad "refuses-builder-fork-not-owned-by-box-identity-before-deleting (rc=$RC, calls='$(cat "$CALLS")', got '$OUT')"
+  bad "ignores-stranger-owned-forks-while-clearing-the-round (rc=$RC, calls='$(cat "$CALLS")', got '$OUT')"
+fi
+
+# A successful fork-list response does not prove each listed repository can
+# still be inspected. Preserve its credential-bearing box and upstream when
+# the discovered fork's own probe is unanswerable.
+run "CREW_ROSTER=$FLEET" "STUB_BOXES=crew-drill-builder" \
+    "STUB_LOGIN=danmt" "STUB_BOX_LOGIN=builder-bot" \
+    "STUB_FORKS=builder-bot/crew-drill-builder-1" \
+    "STUB_REPOS=danmt/crew-drill-builder builder-bot/crew-drill-builder-1" \
+    "STUB_REPO_LOOKUP_FAIL_SLUG=builder-bot/crew-drill-builder-1" \
+  -- --role builder --yes
+if [ "$RC" -eq 2 ] && says "builder fork builder-bot/crew-drill-builder-1" \
+    && says "could not be looked up" \
+    && ! called "box rm --force crew-drill-builder" \
+    && ! called "repo delete danmt/crew-drill-builder"; then
+  ok "an-unanswerable-discovered-fork-preserves-its-recovery-resources"
+else
+  bad "an-unanswerable-discovered-fork-preserves-its-recovery-resources (rc=$RC, calls='$(cat "$CALLS")', got '$OUT')"
+fi
+
+# A failed delete means the fork still stands. The box credentials and its
+# upstream remain recoverable inputs, so teardown must not remove either one.
+run "CREW_ROSTER=$FLEET" "STUB_BOXES=crew-drill-builder" \
+    "STUB_LOGIN=danmt" "STUB_BOX_LOGIN=builder-bot" \
+    "STUB_FORKS=builder-bot/crew-drill-builder-1" \
+    "STUB_REPOS=danmt/crew-drill-builder builder-bot/crew-drill-builder-1" \
+    "STUB_FORK_DELETE_RC=1" \
+  -- --role builder --yes
+if [ "$RC" -eq 1 ] && says "could not delete builder fork builder-bot/crew-drill-builder-1" \
+    && called "gh repo delete 'builder-bot/crew-drill-builder-1' --yes" \
+    && ! called "box rm --force crew-drill-builder" \
+    && ! called "repo delete danmt/crew-drill-builder"; then
+  ok "a-failed-builder-fork-delete-preserves-its-recovery-resources"
+else
+  bad "a-failed-builder-fork-delete-preserves-its-recovery-resources (rc=$RC, calls='$(cat "$CALLS")', got '$OUT')"
 fi
 
 run "CREW_ROSTER=$FLEET" "STUB_BOXES=crew-drill-builder" \

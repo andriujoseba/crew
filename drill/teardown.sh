@@ -361,6 +361,7 @@ if case " $ROLES " in *" builder "*) true ;; *) false ;; esac \
       while read -r fork; do
         [ -n "$fork" ] || continue
         is_drill_builder_fork "${fork#*/}" || continue
+        [ "${fork%%/*}" = "$builder_box_owner" ] || continue
         BUILDER_FORKS+=("crew-drill-builder|$builder_box_owner|$fork")
       done <<<"$builder_forks"
     fi
@@ -454,6 +455,23 @@ repo_created() {
 }
 
 declare -a DOOMED_BOXES=() DOOMED_REPOS=() DOOMED_BUILDER_FORKS=()
+# Resolve the fork before populating its recovery dependencies. If the fork
+# itself cannot be inspected, the box credentials and upstream sandbox are
+# still potentially needed to remove it on the next run.
+for fork_record in ${BUILDER_FORKS[@]+"${BUILDER_FORKS[@]}"}; do
+  fork_repo="${fork_record##*|}"
+  probe_why=""
+  probe_rc=0
+  probe_why="$(repo_probe "$fork_repo")" || probe_rc=$?
+  case "$probe_rc" in
+    0) DOOMED_BUILDER_FORKS+=("$fork_record") ;;
+    1) ;;
+    *)
+      BUILDER_FORK_BLOCKED=1
+      UNINSPECTED+=("builder fork $fork_repo — could not be looked up: $probe_why") ;;
+  esac
+done
+
 if [ "${#BOXES[@]}" -gt 0 ]; then
   if [ "$have_box" -eq 0 ]; then
     UNINSPECTED+=("boxes (${BOXES[*]}) — no box CLI on this host")
@@ -466,18 +484,6 @@ if [ "${#BOXES[@]}" -gt 0 ]; then
     done
   fi
 fi
-
-for fork_record in ${BUILDER_FORKS[@]+"${BUILDER_FORKS[@]}"}; do
-  fork_repo="${fork_record##*|}"
-  probe_why=""
-  probe_rc=0
-  probe_why="$(repo_probe "$fork_repo")" || probe_rc=$?
-  case "$probe_rc" in
-    0) DOOMED_BUILDER_FORKS+=("$fork_record") ;;
-    1) ;;
-    *) UNINSPECTED+=("builder fork $fork_repo — could not be looked up: $probe_why") ;;
-  esac
-done
 
 if [ "$REPOS_REQUESTED" -eq 1 ] && [ -n "$REPO_INSPECT_FAIL" ]; then
   UNINSPECTED+=("sandbox repositories of this round — $REPO_INSPECT_FAIL")
@@ -555,9 +561,11 @@ if [ "$YES" -ne 1 ]; then
 fi
 
 rc=0
+BUILDER_FORK_DELETE_FAILED=0
 # The fork is owned by the identity authenticated inside the builder box, so
-# delete it there while those credentials still exist. This must precede the
-# box removal below.
+# delete it there while those credentials still exist. The builder box and
+# upstream sandbox are recovery dependencies: neither may be removed unless
+# every discovered builder fork was deleted successfully.
 for fork_record in ${DOOMED_BUILDER_FORKS[@]+"${DOOMED_BUILDER_FORKS[@]}"}; do
   fork_box="${fork_record%%|*}"
   fork_repo="${fork_record##*|}"
@@ -566,14 +574,18 @@ for fork_record in ${DOOMED_BUILDER_FORKS[@]+"${DOOMED_BUILDER_FORKS[@]}"}; do
   else
     echo "FAIL could not delete builder fork $fork_repo through $fork_box" >&2
     echo "     (the box gh identity needs the delete_repo scope)" >&2
+    BUILDER_FORK_DELETE_FAILED=1
     rc=1
   fi
 done
 for name in ${DOOMED_BOXES[@]+"${DOOMED_BOXES[@]}"}; do
+  [ "$BUILDER_FORK_DELETE_FAILED" -eq 1 ] && [ "$name" = crew-drill-builder ] && continue
   if box rm --force "$name"; then echo "ok   removed box $name"
   else echo "FAIL could not remove box $name" >&2; rc=1; fi
 done
 for repo in ${DOOMED_REPOS[@]+"${DOOMED_REPOS[@]}"}; do
+  [ "$BUILDER_FORK_DELETE_FAILED" -eq 1 ] \
+    && [ "$repo" = "$REPO_OWNER/crew-drill-builder" ] && continue
   if gh repo delete "$repo" --yes; then echo "ok   deleted repo $repo"
   else
     echo "FAIL could not delete repo $repo" >&2
