@@ -14,6 +14,10 @@ REHEARSAL_BREAKER_LABEL=""
 REHEARSAL_BREAKER_ARM_READING=""
 # The slice of duty.log written by the last tick this leg CONFIRMED ran.
 REHEARSAL_BREAKER_TICK_LOG=""
+# Why the last fire produced no evidence, in the operator's words. Read into
+# the INCOMPLETE reason so the summary line distinguishes a tick that was
+# locked out from one that never landed at all.
+REHEARSAL_BREAKER_TICK_REASON=""
 
 # The bound on re-firing a tick the box refused, and the pause between tries.
 # A lock-skipped tick returns immediately, so the five ticks the rc2 round
@@ -75,37 +79,54 @@ rehearsal_breaker_summary() {
 }
 
 rehearsal_breaker_load_installed_facts() {
-  local threshold kind state label
+  local threshold kind state label unresolved
   # Read the installed engine's effective value: the shipped conf may defer
   # the default to OPERATING_LIMITS, and parsing that conf would lose it.
   threshold="$(bx "set -a; . ~/duty/conf/fleet.defaults.conf; . ~/duty/lib/common.sh; _session_terminal_threshold")" \
     || threshold=""
   kind="$(bx "sed -n 's/^[[:space:]]*run_session \([^ ]*\) .*/\1/p' ~/duty/lib/duty-attention.sh | head -1")" \
     || kind=""
-  # ...and the lane's LABEL, resolved the way load_fleet_conf resolves it:
-  # shipped defaults, then the operator's fleet.conf OVER them. LABEL_ATTENTION
-  # is NOT one of the six wire marks the loader restores
-  # (shared/lib/common/conf.sh:14-24), so an operator file genuinely moves it
-  # and duty_attention then fetches that name (duty-attention.sh:115). Arming
-  # the lane with the literal `attention` on a box that moved it sets a label
-  # the engine never asks for: the leg would then grade a dispatch it never
-  # requested, which is this issue's defect in its other direction.
+  # ...and the lane's LABEL, read through load_fleet_conf ITSELF rather than
+  # through a copy of its order. LABEL_ATTENTION is NOT one of the six wire
+  # marks the loader restores over fleet.conf (shared/lib/common/conf.sh:14-24),
+  # so an operator file genuinely moves it and duty_attention then fetches that
+  # name (duty-attention.sh:115). Arming the lane with the literal `attention`
+  # on a box that moved it sets a label the engine never asks for: the leg would
+  # then grade a dispatch it never requested, which is this issue's defect in
+  # its other direction. Re-implementing the order inline would assert the leg
+  # against itself — if the loader's order or its wire-mark set ever moves, an
+  # inline copy drifts silently and its test still passes.
+  #
+  # DUTY_DIR is exported before the source and not CONF_DIR after it: common.sh
+  # derives `CONF_DIR="$DUTY_DIR/conf"` unconditionally at source time
+  # (shared/lib/common.sh:11,17), so a CONF_DIR set by this read is overwritten,
+  # and an inherited DUTY_DIR would then point the loader at another tree's conf.
   #
   # No `| head -1` and no `| tr`: this file runs under rehearsal.sh's
   # `pipefail`, where a downstream command that exits early can SIGPIPE the box
   # read and turn a resolved label into an empty one intermittently (#449).
   # The trimming is parameter expansion, which cannot fail.
-  label="$(bx 'set -a
-               . ~/duty/conf/fleet.defaults.conf
-               [ ! -f ~/duty/conf/fleet.conf ] || . ~/duty/conf/fleet.conf
+  label="$(bx 'export DUTY_DIR=$HOME/duty
+               . ~/duty/lib/common.sh
+               load_fleet_conf
                printf "%s\n" "$LABEL_ATTENTION"')" || label=""
   label="${label%%$'\n'*}"
   label="${label//$'\r'/}"
   case "$threshold" in ''|*[!0-9]*|0) threshold="" ;; esac
   case "$kind" in ''|*[!A-Za-z0-9_-]*) kind="" ;; esac
+  # A label carrying whitespace is refused rather than half-supported: GitHub
+  # allows the name, but it would also need percent-encoding in cleanup's
+  # DELETE path, and a lane this leg can arm and cannot disarm is worse than
+  # one it refuses. Fail-closed is only a favour to the operator if they can
+  # tell WHICH of the three refused, hence the reading printed beside the row.
   case "$label" in *[[:space:]]*) label="" ;; esac
-  if [ -z "$threshold" ] || [ -z "$kind" ] || [ -z "$label" ]; then
+  unresolved=""
+  [ -n "$threshold" ] || unresolved="terminal threshold"
+  [ -n "$kind" ] || unresolved="$unresolved${unresolved:+, }lane kind"
+  [ -n "$label" ] || unresolved="$unresolved${unresolved:+, }attention label"
+  if [ -n "$unresolved" ]; then
     fail "breaker: installed threshold, lane kind and attention label resolve for $AGENT"
+    echo "  unresolved: $unresolved"
     return 1
   fi
   state="$(bx "set -a; . ~/duty/conf/fleet.defaults.conf; . ~/duty/lib/common.sh; DUTY_DIR=\$HOME/duty; _session_terminal_state '$kind'")" \
@@ -229,11 +250,18 @@ rehearsal_breaker_attention_is_clear() {
 #
 # So the arming does three things and grades only the last: reopen a closed
 # fixture, request the label, then RE-READ the issue and assert what it now is.
+#
+# JSON first, then the label — the same order as
+# rehearsal_breaker_attention_is_clear_from_json two functions above, which
+# took the opposite one until #724's round.
 rehearsal_breaker_fixture_is_armed_from_json() {
-  local label="$1"
+  local label="$2"
+  # stderr silenced like every other read here: an unparseable body already has
+  # its own reading printed beside the row, and a raw jq parse error in the
+  # transcript sends the operator to the parser rather than to the board.
   jq -e --arg l "$label" \
     '.state == "open" and ([.labels[]?.name] | index($l) != null)' \
-    >/dev/null <<<"$2"
+    >/dev/null 2>&1 <<<"$1"
 }
 
 # What a failed arming row prints beside itself. A bare FAIL sends the operator
@@ -269,7 +297,7 @@ rehearsal_breaker_arm_fixture() {
   REHEARSAL_BREAKER_ARM_READING="$(rehearsal_breaker_fixture_reading_from_json "$json")"
   [ -n "$REHEARSAL_BREAKER_ARM_READING" ] \
     || REHEARSAL_BREAKER_ARM_READING="the fixture issue read back unparseable"
-  rehearsal_breaker_fixture_is_armed_from_json "$label" "$json"
+  rehearsal_breaker_fixture_is_armed_from_json "$json" "$label"
 }
 
 rehearsal_breaker_profile_is_restored() {
@@ -353,27 +381,94 @@ rehearsal_breaker_tick_was_skipped_from_log() {
   grep -Fq 'tick skipped: previous run still holds the lock' <<<"$1"
 }
 
+# Which of tick.sh's evidence shapes this slice carries. The contract at the
+# top of shared/bin/tick.sh guarantees exactly one line per boundary, in one of
+# three shapes, and silence is itself a fourth reading:
+#
+#   <ts> duty run start          — the tick RAN (written by duty.sh:61)
+#   <ts> duty tick skipped: ...  — the lock refused it        -> `locked`
+#   <ts> duty tick FAILED: ...   — the job exited non-zero    -> `failed`
+#   (nothing)                    — the invocation never landed -> `silent`
+#
+# Absence of the lock-skip line is NOT evidence that a tick ran: an invocation
+# that failed, or a log that could not be read, produces a slice that carries
+# no line at all, and grading that as lane behaviour is this issue's defect
+# with the tick in place of the fixture. So the leg reads the POSITIVE mark.
+#
+# `failed` is checked before `run start` deliberately. tick.sh writes FAILED
+# after the job has usually already written its own start record
+# (shared/lib/common/tick-health.sh:60), so the pair means the job began and
+# then aborted: that slice is a partial run, and a lane graded on it is graded
+# on however far the job got. INCOMPLETE with the reason named is the honest
+# reading, and it is the safe direction — never a FAIL against an engine the
+# tick never reached.
+#
+# The job is `duty` because the leg fires tick.sh with no argument, which is
+# what makes these marks constants here rather than a parameter.
+rehearsal_breaker_tick_outcome_from_log() {
+  local slice="$1"
+  if rehearsal_breaker_tick_was_skipped_from_log "$slice"; then
+    printf 'locked\n'
+  elif grep -Fq ' duty tick FAILED:' <<<"$slice"; then
+    printf 'failed\n'
+  elif grep -Fq ' duty run start' <<<"$slice"; then
+    printf 'ran\n'
+  else
+    printf 'silent\n'
+  fi
+}
+
 # Fire one tick and leave its slice in REHEARSAL_BREAKER_TICK_LOG. rc 0 means a
-# tick ran and the slice is evidence; rc 2 means every try inside the bound was
-# refused by a held lock and there is nothing to grade. The result is a global
-# rather than stdout precisely so the caller reads it without a command
-# substitution: a subshell would lose the retry state along with it.
+# tick RAN and the slice is evidence; rc 2 means there is nothing to grade and
+# REHEARSAL_BREAKER_TICK_REASON says why. The result is a global rather than
+# stdout precisely so the caller reads it without a command substitution: a
+# subshell would lose the retry state along with it.
+#
+# Only a held lock is retried. A box that cannot be measured, cannot be read
+# back, or ran a tick that wrote no evidence is not a condition the bound
+# outlasts — it is a box this leg cannot grade, said once.
 rehearsal_breaker_fire_tick() {
-  local first try=1 slice
+  local first try=1 slice outcome lines rc
   REHEARSAL_BREAKER_TICK_LOG=""
+  REHEARSAL_BREAKER_TICK_REASON=""
   while [ "$try" -le "$REHEARSAL_BREAKER_TICK_TRIES" ]; do
-    first="$(( $(bx "wc -l < ~/duty/duty.log") + 1 ))"
-    bx '$HOME/duty/bin/tick.sh' || true
-    slice="$(rehearsal_breaker_tick_log "$first")"
-    if ! rehearsal_breaker_tick_was_skipped_from_log "$slice"; then
-      REHEARSAL_BREAKER_TICK_LOG="$slice"
-      return 0
+    # The boundary read is graded too. Left as `$(( $(bx …) + 1 ))`, a failed
+    # read makes the substitution empty, `$(( + 1 ))` is 1, and the "slice"
+    # becomes the WHOLE log — so the leg grades every earlier tick's lines and
+    # can PASS on stale evidence. A failed boundary read is not a smaller
+    # slice, it is the wrong one.
+    lines="$(bx "wc -l < ~/duty/duty.log")" || lines=""
+    lines="${lines//[[:space:]]/}"
+    case "$lines" in
+      ''|*[!0-9]*)
+        REHEARSAL_BREAKER_TICK_REASON="the box's duty.log could not be measured"
+        return 2 ;;
+    esac
+    first=$((lines + 1))
+    rc=0
+    bx '$HOME/duty/bin/tick.sh' || rc=$?
+    if ! slice="$(rehearsal_breaker_tick_log "$first")"; then
+      REHEARSAL_BREAKER_TICK_REASON="the box's duty.log could not be read back"
+      return 2
     fi
+    outcome="$(rehearsal_breaker_tick_outcome_from_log "$slice")"
+    case "$outcome" in
+      ran)
+        REHEARSAL_BREAKER_TICK_LOG="$slice"
+        return 0 ;;
+      failed)
+        REHEARSAL_BREAKER_TICK_REASON="the tick logged FAILED (tick.sh rc $rc)"
+        return 2 ;;
+      silent)
+        REHEARSAL_BREAKER_TICK_REASON="the tick wrote no evidence line (tick.sh rc $rc)"
+        return 2 ;;
+    esac
     if [ "$try" -lt "$REHEARSAL_BREAKER_TICK_TRIES" ]; then
       sleep "$REHEARSAL_BREAKER_TICK_WAIT"
     fi
     try=$((try + 1))
   done
+  REHEARSAL_BREAKER_TICK_REASON="$REHEARSAL_BREAKER_TICK_TRIES ticks refused by a held lock"
   return 2
 }
 
@@ -384,8 +479,7 @@ rehearsal_breaker_tick_or_incomplete() {
   local what="$1"
   rehearsal_breaker_fire_tick && return 0
   skip "breaker: $what never ran; leg INCOMPLETE"
-  rehearsal_breaker_record_reason \
-    "$what never ran: $REHEARSAL_BREAKER_TICK_TRIES ticks refused by a held lock"
+  rehearsal_breaker_record_reason "$what never ran: $REHEARSAL_BREAKER_TICK_REASON"
   return 2
 }
 
@@ -481,7 +575,7 @@ rehearsal_breaker_drill() {
   log_text="$REHEARSAL_BREAKER_TICK_LOG"
   check "breaker: later tick recovers and launches a session" \
     rehearsal_breaker_recovered_from_log "$kind" "$log_text"
-  wait_for 300 "breaker: attention label removed after recovered session" \
+  wait_for 300 "breaker: $REHEARSAL_BREAKER_LABEL label removed after recovered session" \
     rehearsal_breaker_attention_is_clear "$repo" "$issue" \
       "$REHEARSAL_BREAKER_LABEL"
   check "breaker: state is cleared after recovery" bx "test ! -e '$REHEARSAL_BREAKER_STATE'"
