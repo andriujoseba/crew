@@ -376,8 +376,8 @@ sid_commit() {
     commit -q --allow-empty -m next 2>/dev/null
 }
 
-# sid_run BOX KEY TMO SHAPE [HOOKS] [WORK] — one dispatch into BOX, with the
-# profile hooks D2 lets a CLI carry independently.
+# sid_run BOX KEY TMO SHAPE [HOOKS] [WORK] [KIND] — one dispatch into BOX,
+# with the profile hooks D2 lets a CLI carry independently.
 #
 #   both      a profile that can pin and resume — `claude`'s shape
 #   claude    the shipped claude profile, including both classifiers
@@ -395,6 +395,7 @@ sid_commit() {
 # call be resumed by the next.
 sid_run() (
   local box="$1" key="$2" tmo="$3" shape="$4" hooks="${5:-both}" work="${6:-}"
+  local kind="${7:-build}"
   local sdir; sdir="$(sid_box "$box")"
   DUTY_DIR="$sdir"; LOG_DIR="$sdir/logs"; DUTY_TICK_ID="tick-sid"
   unset -f bot_session_acted bot_session_terminal bot_session_productive
@@ -448,7 +449,7 @@ sid_run() (
   # `log` writes to stdout, so the box's own record file is where the two lines
   # accumulate across dispatches — appended, because a resume is only readable
   # beside the timeout it continues.
-  run_session build "$key" "$work" "$tmo" prompt >>"$sdir/records" 2>&1
+  run_session "$kind" "$key" "$work" "$tmo" prompt >>"$sdir/records" 2>&1
   printf 'returned=%s rc=%s\n' "$?" "$RUN_SESSION_RC"
   printf -- '--argv--\n'
   cat "$sdir/argv" 2>/dev/null
@@ -506,6 +507,7 @@ sid_same() {
   return 0
 }
 sid_stub() { printf '%s/.session-resume.build.%s' "$TMP/sid-$1" "$2"; }
+sid_stub_kind() { printf '%s/.session-resume.%s.%s' "$TMP/sid-$1" "$2" "$3"; }
 sid_stub_field() { # sid_stub_field FILE KEY
   sed -n "s/^$2=//p" "$1" 2>/dev/null
 }
@@ -629,14 +631,14 @@ t sid-timeout-resume-names-the-wall-clock-cause 1 \
 # carries tool use (#723). These are full dispatch/resume paths, not hook-only
 # classifications, and the inverse assertion pins acted=unknown alongside
 # productive=yes on the same end.
-sid_run transcript-empty fixture/transcript-empty 1 mute-tool-hang claude >/dev/null
+sid_run transcript-empty fixture/transcript-empty 1 mute-tool-hang claude '' review >/dev/null
 SID_TRANSCRIPT_EMPTY="$(sid_of transcript-empty START)"
-SID_TRANSCRIPT_EMPTY_STUB="$(sid_stub transcript-empty fixture_transcript-empty)"
+SID_TRANSCRIPT_EMPTY_STUB="$(sid_stub_kind transcript-empty review fixture_transcript-empty)"
 t sid-empty-log-tool-transcript-records-productive yes \
   "$(sid_stub_field "$SID_TRANSCRIPT_EMPTY_STUB" productive)"
 t sid-empty-log-stays-action-unknown 1 \
   "$(grep -c 'acted=unknown' <<<"$(sid_line transcript-empty END)" || true)"
-sid_transcript_empty_resumed="$(sid_run transcript-empty fixture/transcript-empty 5 reply claude)"
+sid_transcript_empty_resumed="$(sid_run transcript-empty fixture/transcript-empty 5 reply claude '' review)"
 t sid-empty-log-tool-transcript-resumes-the-same-session same \
   "$(sid_same "$(sid_argv_flag "$sid_transcript_empty_resumed" --resume)" \
     "$SID_TRANSCRIPT_EMPTY")"
