@@ -92,8 +92,13 @@ rehearsal_resume_roll_call_from_log() {
 
 rehearsal_resume_pending_tick_from_log() {
   local repo="$1" pr="$2" log_text="$3"
+  # The two lane-level lines the engine writes per dispatch, and then the
+  # roll-call. The DRAFT lane is deliberately not a third alternative: it logs
+  # no per-dispatch line at all — only a trip warning at the threshold — so a
+  # pattern for one would be a branch no real log can take, and the roll-call's
+  # `drafts:` field is where a draft dispatch is actually visible.
   ! grep -Fq "$repo#$pr: green head owed a signal" <<<"$log_text" \
-    && ! grep -Eq "$repo#$pr: (near-miss|stranded|draft) resume dispatch" <<<"$log_text" \
+    && ! grep -Eq "$repo#$pr: (near-miss|stranded) resume dispatch" <<<"$log_text" \
     && ! rehearsal_resume_pr_dispatched_from_log "$repo" "$pr" "$log_text"
 }
 

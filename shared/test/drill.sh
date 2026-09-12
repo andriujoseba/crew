@@ -2581,12 +2581,30 @@ t d725-orphan-claim-number-is-not-a-pr-number 0 \
 t d725-prefix-number-is-not-a-dispatch 0 \
   "$(rehearsal_resume_pending_tick_from_log "$D725_REPO" 1 "$D725_RESUMED"; echo $?)"
 # Every dispatching lane, not just the bypass the row's verdict string names:
-# a draft or stranded dispatch at a pending head is the same defect.
-for d725_lane in near-miss stranded draft; do
+# a near-miss or stranded dispatch at a pending head is the same defect. These
+# two are the lane lines `_resume_lane_breaker` writes, verbatim.
+for d725_lane in near-miss stranded; do
   t "d725-pending-row-catches-$d725_lane" 1 \
     "$(rehearsal_resume_pending_tick_from_log "$D725_REPO" "$D725_PR" \
        "$(d725_log "$D725_REPO#$D725_PR: $d725_lane resume dispatch 1 of 3 at $D725_HEAD")"; echo $?)"
 done
+# The DRAFT lane logs no per-dispatch line — only a trip warning at the
+# threshold — so it is caught by the roll-call's `drafts:` field and by nothing
+# else. A fixture for a `draft resume dispatch` line would assert against a
+# shape no log can carry, which is the dead branch head-checks.jq's round 2
+# names; this is the shape the engine does write.
+t d725-pending-row-catches-a-draft-dispatch 1 \
+  "$(rehearsal_resume_pending_tick_from_log "$D725_REPO" "$D725_PR" \
+     "$(d725_log "$D725_REPO: resume duty (drafts: $D725_PR; orphaned claims: none; unsignalled ready PRs: none; of those, signals that missed the wire: none, green heads owed a signal: none; drafts owed a flip: none)")"; echo $?)"
+# MUST FAIL — the lane alternation above is the engine's, or it is decoration.
+# `draft` is absent from it on purpose and the engine must keep writing the two
+# that are there.
+# shellcheck disable=SC2016  # matching shell source literally
+t d725-lane-lines-are-the-engines 1 \
+  "$(grep -c 'log "\$repo#\$num: \$lane resume dispatch \$count of \$breaker at \$head"' \
+     "$SHARED/lib/duty-builder.sh")"
+t d725-no-draft-lane-dispatch-line 0 \
+  "$(grep -c 'draft resume dispatch' "$SHARED/lib/duty-builder.sh")"
 # A roll-call for ANOTHER repository in the same tick window says nothing about
 # this one — every tick sweeps every repo in the registry.
 t d725-other-repos-roll-call-is-not-ours 0 \
