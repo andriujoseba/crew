@@ -2132,6 +2132,7 @@ brk_drive() {
     }
     rehearsal_breaker_restore_cli_for_recovery() { return 0; }
     rehearsal_breaker_restore_cli() { return 0; }
+    # shellcheck disable=SC2317  # reached only through check "$@", which shellcheck cannot follow
     rehearsal_breaker_profile_is_restored() { return 0; }
     bx() { brk_bx "$1"; }
     gh() { brk_gh "$@"; }

@@ -379,7 +379,10 @@ without hand intervention.
 - **Needs** phase 2, and an agent profile that defines both
   `bot_session_terminal` and `bot_session_acted`. It reads
   `SESSION_TERMINAL_THRESHOLD` off the installed config rather than carrying
-  its own number, so an engine change moves the assertion with the engine.
+  its own number, so an engine change moves the assertion with the engine. It
+  reads the lane's label the same way — the box's own effective
+  `LABEL_ATTENTION`, not the literal `attention` — because that is the name
+  `duty_attention` fetches, and a lane armed under any other one is unarmed.
 - **Produces** the `breaker` row: `ok (trip + single alert + recovery)`,
   `FAIL`, `INCOMPLETE (<agent> profile missing bot_session_terminal)` or
   another named blocker, or `skip (--no-breaker-drill)`.
@@ -389,6 +392,25 @@ without hand intervention.
 A profile that declares no terminal classifier is a **skip with a name**, not a
 failed assertion: the breaker has nothing to trip on such a profile, and the
 round says which profile and which hook rather than reporting an absence.
+
+**The leg grades only what it confirmed.** Two things it asks the box for can
+succeed while delivering nothing, and both put red rows against a working
+engine when they are taken at their word:
+
+- Labelling the fixture issue. A label request against a **closed** issue
+  returns success and arms nothing, because `duty_attention` only considers
+  open ones. The leg therefore re-reads the issue after arming and asserts it
+  is open and carries the label; a fixture an earlier leg closed is reopened
+  first, and a re-read that does not hold reds the arming row and prints what
+  it read (`state=… labels=…`) so the operator lands on the harness rather
+  than on the engine.
+- Firing a tick. A tick refused by a lock the previous run still holds logs one
+  line and exits immediately, so a leg firing them back to back spends its
+  whole budget in seconds and grades slices describing ticks that never
+  executed. Those slices are not lane evidence in either direction: the leg
+  waits and re-fires within a bound, and when the bound is spent it reports
+  `INCOMPLETE (<what> never ran: N ticks refused by a held lock)` rather than
+  failing a lane it never reached.
 
 ### resume — `drill/rehearsal-resume.sh`
 
@@ -625,6 +647,7 @@ waiting for:
 |---|---|---|
 | `notify` | the operator channel is unreachable from the host | operator credentials for the channel; without them the union is UNPROVEN, not passing |
 | `breaker` | the drilled agent profile declares no `bot_session_terminal` | a profile that classifies terminal vendor output; `shared/conf/agents/` says which do |
+| `breaker` | every tick it fired was refused by a lock a previous run still holds | a box whose duty lock is free — `~/duty/duty.log` names the holder, and a lock outliving its owner is its own defect |
 | `browser` | `playwright-core` absent, or no browser found | `npm i --no-save playwright-core`, and Chrome/Chromium or `PW_CHROME` |
 | `app-armed` | no `--app-roster`, or no armed, ticking member on it | a roster naming a real armed box — a drill's own fresh boxes are not one |
 | `resume`, `attention` | the builder role was not in `--roles`, or its phase 2 never ran | a builder box that reaches phase 2 |
