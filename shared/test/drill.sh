@@ -1985,31 +1985,32 @@ BRK_KIND=attention
 BRK_LABEL=attention
 BRK_THRESHOLD=3
 BRK_TRIES=3
-BRK_SLICES=(NOTHING)
+BRK_SLICES=(SILENT)
 BRK_ISSUE_STATE=open
 BRK_ISSUE_LABELS=""
 BRK_ISSUE_READABLE=1
+BRK_ISSUE_JSON=""
 BRK_REOPEN_WORKS=1
 BRK_LABEL_STICKS=1
+BRK_RECOVERY_CLEARS=1
+BRK_WC_READABLE=1
+BRK_LOG_READABLE=1
+BRK_TICK_RC=0
 BRK_TICK_N=0
 BRK_REOPENS=0
 
 brk_note() { printf '%s\n' "$1" >>"$BRK_TRACE"; }
 
-# One tick's worth of duty.log, by name. `LOCK` is the line tick.sh writes when
-# flock refuses it (shared/bin/tick.sh:90) — the slice that is not evidence.
-brk_slice_lines() {
+# The SESSION lines the JOB writes inside a tick, without tick.sh's own framing.
+brk_session_lines() {
   case "$1" in
-    LOCK)
-      printf '%s duty tick skipped: previous run still holds the lock (running unknown)\n' \
-        "$BRK_TS" ;;
     TERMINAL)
       printf '%s SESSION START kind=%s key=owner/repo#1 timeout=5s log=/tmp/t\n' \
         "$BRK_TS" "$BRK_KIND"
       printf '%s SESSION END kind=%s key=owner/repo#1 rc=1 dur=1s outcome=TERMINAL acted=no\n' \
         "$BRK_TS" "$BRK_KIND" ;;
     TRIP)
-      brk_slice_lines TERMINAL
+      brk_session_lines TERMINAL
       printf '%s WARN: session breaker: kind=%s tripped after %s consecutive terminal failures\n' \
         "$BRK_TS" "$BRK_KIND" "$BRK_THRESHOLD" ;;
     SUPPRESSED)
@@ -2020,7 +2021,35 @@ brk_slice_lines() {
         "$BRK_TS" "$BRK_KIND"
       printf '%s SESSION START kind=%s key=owner/repo#1 timeout=5s log=/tmp/r\n' \
         "$BRK_TS" "$BRK_KIND" ;;
-    NOTHING) ;;
+  esac
+}
+
+# One tick's worth of duty.log, by name — in the shapes tick.sh's evidence
+# contract guarantees (shared/bin/tick.sh:4-8), because that contract is what
+# the leg now reads. A tick that RAN is framed by `duty run start` / `duty run
+# end` (duty.sh:61,234); the three shapes that are NOT evidence each say so in
+# their own way:
+#
+#   LOCK    the lock refused it     — retried within the bound
+#   FAILED  the job exited non-zero — a partial run, not a lane reading
+#   SILENT  nothing was written     — the invocation never landed
+#
+# SILENT is the one that matters most: it is what a failed `box exec` leaves
+# behind, and before #724's round the leg read it as "not a lock-skip, so it
+# must have run" and graded the empty slice as lane behaviour.
+brk_slice_lines() {
+  case "$1" in
+    LOCK)
+      printf '%s duty tick skipped: previous run still holds the lock (running unknown)\n' \
+        "$BRK_TS" ;;
+    SILENT) ;;
+    FAILED)
+      printf '%s duty run start\n' "$BRK_TS"
+      printf '%s duty tick FAILED: duty.sh exited 1\n' "$BRK_TS" ;;
+    *)
+      printf '%s duty run start\n' "$BRK_TS"
+      brk_session_lines "$1"
+      printf '%s duty run end\n' "$BRK_TS" ;;
   esac
 }
 
@@ -2037,9 +2066,15 @@ brk_tick() {
   fi
   # The recovered session acks the demand, which is what the post-recovery
   # clear assertion reads. Modelled here so that row is graded against the
-  # board rather than against a stub that always says yes.
-  [ "$spec" != RECOVERED ] || BRK_ISSUE_LABELS=""
+  # board rather than against a stub that always says yes. BRK_RECOVERY_CLEARS=0
+  # is the board where the demand is still PARKED after recovery: the clear
+  # assertion must red there, and it only can if it reads the label the leg
+  # armed rather than the literal `attention`.
+  if [ "$spec" = RECOVERED ] && [ "$BRK_RECOVERY_CLEARS" -eq 1 ]; then
+    BRK_ISSUE_LABELS=""
+  fi
   brk_slice_lines "$spec" >>"$BRK_HOME/duty/duty.log"
+  return "$BRK_TICK_RC"
 }
 
 brk_bx() {
@@ -2048,11 +2083,17 @@ brk_bx() {
     *alerts.log*)
       printf '🚨 crew-drill: %s session dispatch stopped after %s terminal failures (acted=no) — /tmp/s.log\n' \
         "$BRK_KIND" "$BRK_THRESHOLD" ;;
-    *'wc -l < ~/duty/duty.log'*) wc -l <"$BRK_HOME/duty/duty.log" ;;
+    # Both box reads can fail on a real host, and a leg that grades their
+    # output without grading their status reads a failure as a fact.
+    *'wc -l < ~/duty/duty.log'*)
+      [ "$BRK_WC_READABLE" -eq 1 ] || return 1
+      wc -l <"$BRK_HOME/duty/duty.log" ;;
     *'duty/bin/tick.sh'*) brk_tick ;;
     # A real box runs the command in a fresh shell with `~` expanded against
     # its own HOME, which is how the slice boundary gets exercised at all.
-    *'tail -n +'*) ( HOME="$BRK_HOME"; bash -c "$cmd" 2>/dev/null ) ;;
+    *'tail -n +'*)
+      [ "$BRK_LOG_READABLE" -eq 1 ] || return 1
+      ( HOME="$BRK_HOME"; bash -c "$cmd" 2>/dev/null ) ;;
     *) return 0 ;;
   esac
 }
@@ -2085,8 +2126,17 @@ brk_gh() {
   case "$method:$url" in
     GET:*)
       [ "$BRK_ISSUE_READABLE" -eq 1 ] || return 1
-      jq -nc --arg s "$BRK_ISSUE_STATE" --arg l "$BRK_ISSUE_LABELS" \
-        '{state:$s,labels:($l|split(",")|map(select(length>0)|{name:.}))}' ;;
+      # A board that answers with something that is not JSON: the read
+      # SUCCEEDS and is non-empty, so only parsing it says otherwise.
+      if [ -n "$BRK_ISSUE_JSON" ]; then
+        printf '%s\n' "$BRK_ISSUE_JSON"
+      else
+        jq -nc --arg s "$BRK_ISSUE_STATE" --arg l "$BRK_ISSUE_LABELS" \
+          '{state:$s,labels:($l|split(",")|map(select(length>0)|{name:.}))}'
+      fi ;;
+    # Traced by URL, not by field: the label cleanup DELETEs is in the PATH,
+    # so a `-f`-only trace cannot see which name the leg is disarming.
+    DELETE:*) brk_note "delete:$url" ;;
   esac
   return 0
 }
@@ -2146,6 +2196,25 @@ brk_drive() {
     printf 'RC=%s\nTICKS=%s\nREOPENS=%s\n' "$rc" "$BRK_TICK_N" "$BRK_REOPENS"
   )
 }
+# brk_cleanup_drive LABEL — the teardown path, driven directly. It has to be:
+# `rehearsal_breaker_cleanup` is reached through rehearsal.sh's `cleanup_all`
+# (drill/rehearsal.sh:210) and never through the leg, so the round above cannot
+# reach it and its DELETE goes out unobserved.
+brk_cleanup_drive() {
+  (
+    # shellcheck source=drill/rehearsal-breaker.sh
+    . "$ROOT/drill/rehearsal-breaker.sh"
+    bx() { brk_bx "$1"; }
+    gh() { brk_gh "$@"; }
+    REHEARSAL_BREAKER_REPO=owner/repo
+    REHEARSAL_BREAKER_ISSUE=1
+    REHEARSAL_BREAKER_LABEL="$1"
+    REHEARSAL_BREAKER_STATE=/tmp/breaker-state
+    REHEARSAL_BREAKER_DIR=""
+    rehearsal_breaker_cleanup
+  )
+}
+
 brk_ok()   { grep -c '^ok ' <<<"$1" || true; }
 brk_fail() { grep -c '^FAIL ' <<<"$1" || true; }
 brk_v()    { grep -c "^$2=$3\$" <<<"$1" || true; }
@@ -2326,6 +2395,130 @@ t drill-breaker-recovery-refusal-names-the-tick 1 \
   "$(grep -c '^skip breaker: recovery tick never ran; leg INCOMPLETE$' <<<"$BRK_RECOVERY_LOCKED" || true)"
 t drill-breaker-recovery-refusal-does-not-grade-recovery 0 \
   "$(grep -c 'later tick recovers and launches a session' <<<"$BRK_RECOVERY_LOCKED" || true)"
-BRK_SLICES=(NOTHING)
+
+# (k) A TICK THAT WROTE NOTHING. The absence of the lock-skip line is not
+# evidence that a tick ran: an invocation that failed, or a box exec that never
+# landed, leaves an EMPTY slice, and reading "not a lock-skip, therefore it ran"
+# grades that emptiness as lane behaviour. This is the same defect as (b) and
+# (g) one layer in — a request's shape standing in for a confirmed state — and
+# it is the one an unreachable box actually produces.
+#
+# Unlike a held lock this is not retried: a box that ran a tick which wrote no
+# evidence is not a condition the bound outlasts, so the leg says so once.
+BRK_SLICES=(SILENT)
+brk_reset
+BRK_SILENT="$(brk_drive)"
+t drill-breaker-silent-tick-is-never-graded 0 \
+  "$(grep -c 'remains below installed threshold' <<<"$BRK_SILENT" || true)"
+t drill-breaker-silent-tick-fails-nothing 0 "$(brk_fail "$BRK_SILENT")"
+t drill-breaker-silent-tick-is-incomplete 1 "$(brk_v "$BRK_SILENT" RC 2)"
+t drill-breaker-silent-tick-names-the-tick 1 \
+  "$(grep -c '^skip breaker: terminal dispatch 1 never ran; leg INCOMPLETE$' <<<"$BRK_SILENT" || true)"
+t drill-breaker-silent-tick-records-the-reason \
+  'terminal dispatch 1 never ran: the tick wrote no evidence line (tick.sh rc 0)' \
+  "$(cat "$BRK_REASON" 2>/dev/null)"
+t drill-breaker-silent-tick-does-not-refire 1 "$(brk_v "$BRK_SILENT" TICKS 1)"
+
+# (l) A TICK THAT LOGGED FAILED — the third shape of tick.sh's contract. The
+# job began and aborted, so the slice is a partial run and a lane graded on it
+# is graded on however far the job got. The invocation's own rc rides into the
+# reason: a leg that discards it with `|| true` cannot name it.
+BRK_SLICES=(FAILED)
+BRK_TICK_RC=1
+brk_reset
+BRK_TICK_FAILED="$(brk_drive)"
+t drill-breaker-failed-tick-is-never-graded 0 \
+  "$(grep -c 'remains below installed threshold' <<<"$BRK_TICK_FAILED" || true)"
+t drill-breaker-failed-tick-fails-nothing 0 "$(brk_fail "$BRK_TICK_FAILED")"
+t drill-breaker-failed-tick-is-incomplete 1 "$(brk_v "$BRK_TICK_FAILED" RC 2)"
+t drill-breaker-failed-tick-records-the-reason-and-the-rc \
+  'terminal dispatch 1 never ran: the tick logged FAILED (tick.sh rc 1)' \
+  "$(cat "$BRK_REASON" 2>/dev/null)"
+BRK_TICK_RC=0
+
+# (m) THE SLICE BOUNDARY IS A BOX READ, AND IT IS GRADED TOO. Written as
+# `first="$(( $(bx "wc -l < ~/duty/duty.log") + 1 ))"`, a failed read leaves the
+# substitution empty, `$(( + 1 ))` is 1, and the "slice" becomes the WHOLE log
+# — so the leg grades every earlier tick's lines and can PASS on stale
+# evidence. A failed boundary read is not a smaller slice, it is the wrong one.
+# The no-tick row is what says so: the boundary is read BEFORE the tick fires.
+BRK_SLICES=(TERMINAL TERMINAL TRIP SUPPRESSED SUPPRESSED RECOVERED)
+BRK_WC_READABLE=0
+brk_reset
+BRK_UNMEASURED="$(brk_drive)"
+t drill-breaker-unmeasurable-log-fails-nothing 0 "$(brk_fail "$BRK_UNMEASURED")"
+t drill-breaker-unmeasurable-log-is-incomplete 1 "$(brk_v "$BRK_UNMEASURED" RC 2)"
+t drill-breaker-unmeasurable-log-records-the-reason \
+  "terminal dispatch 1 never ran: the box's duty.log could not be measured" \
+  "$(cat "$BRK_REASON" 2>/dev/null)"
+t drill-breaker-unmeasurable-log-fires-no-tick 1 "$(brk_v "$BRK_UNMEASURED" TICKS 0)"
+BRK_WC_READABLE=1
+
+# (n) ...and so is the read-back. `tail -n +$first` runs on the box and can
+# fail there; its output inside a command substitution is an empty string
+# either way, which is indistinguishable from a tick that wrote nothing unless
+# the status is read. The tick DID fire here, which is what separates this row
+# from (m).
+BRK_LOG_READABLE=0
+brk_reset
+BRK_UNREADABLE_LOG="$(brk_drive)"
+t drill-breaker-unreadable-log-fails-nothing 0 "$(brk_fail "$BRK_UNREADABLE_LOG")"
+t drill-breaker-unreadable-log-is-incomplete 1 "$(brk_v "$BRK_UNREADABLE_LOG" RC 2)"
+t drill-breaker-unreadable-log-records-the-reason \
+  "terminal dispatch 1 never ran: the box's duty.log could not be read back" \
+  "$(cat "$BRK_REASON" 2>/dev/null)"
+t drill-breaker-unreadable-log-fired-the-tick 1 "$(brk_v "$BRK_UNREADABLE_LOG" TICKS 1)"
+BRK_LOG_READABLE=1
+
+# (o) THE POST-RECOVERY CLEAR READS THE ARMED LABEL. Group (f) cannot show
+# this: its recovery ACKS the demand, so the board reads clear under either
+# name and a clear keyed on the literal `attention` passes it. Here the demand
+# is still parked after recovery on a box that moved the label — the one board
+# where the two readings disagree, and the assertion must red.
+BRK_LABEL=needs-human
+BRK_RECOVERY_CLEARS=0
+brk_reset
+BRK_STANDING="$(brk_drive)"
+t drill-breaker-standing-renamed-label-reds-the-clear 1 \
+  "$(grep -c '^FAIL breaker: needs-human label removed after recovered session$' <<<"$BRK_STANDING" || true)"
+t drill-breaker-standing-renamed-label-never-certifies-the-literal 0 \
+  "$(grep -c '^ok breaker: attention label removed after recovered session$' <<<"$BRK_STANDING" || true)"
+BRK_RECOVERY_CLEARS=1
+brk_reset
+BRK_ACKED="$(brk_drive)"
+t drill-breaker-acked-renamed-label-passes-the-clear 1 \
+  "$(grep -c '^ok breaker: needs-human label removed after recovered session$' <<<"$BRK_ACKED" || true)"
+BRK_LABEL=attention
+
+# (p) ...and so does cleanup's DELETE, which disarms the lane on the way out.
+# Nothing above reaches it: rehearsal.sh calls it through `cleanup_all`, not
+# through the leg. Keyed on the literal, a box that moved the label keeps the
+# demand standing after the drill — the leg would leave the lane it armed armed.
+brk_reset
+brk_cleanup_drive needs-human
+t drill-breaker-cleanup-deletes-the-effective-label 1 \
+  "$(grep -c '^delete:repos/owner/repo/issues/1/labels/needs-human$' "$BRK_TRACE" || true)"
+t drill-breaker-cleanup-never-deletes-the-literal 0 \
+  "$(grep -c '^delete:repos/owner/repo/issues/1/labels/attention$' "$BRK_TRACE" || true)"
+# The documented fallback: a cleanup that runs before the facts resolved armed
+# nothing, and the DELETE is a no-op under either name.
+brk_reset
+brk_cleanup_drive ""
+t drill-breaker-cleanup-falls-back-to-the-literal 1 \
+  "$(grep -c '^delete:repos/owner/repo/issues/1/labels/attention$' "$BRK_TRACE" || true)"
+
+# (q) A BOARD THAT ANSWERS WITH SOMETHING THAT IS NOT JSON. The read succeeds
+# and is non-empty, so only parsing it says otherwise — the one arming branch
+# the groups above do not drive.
+BRK_ISSUE_JSON='<html>502 Bad Gateway</html>'
+brk_reset
+BRK_JUNK="$(brk_drive)"
+t drill-breaker-unparseable-fixture-fails-arming 1 \
+  "$(grep -c '^FAIL breaker: attention lane fixture armed$' <<<"$BRK_JUNK" || true)"
+t drill-breaker-unparseable-fixture-names-what-it-read 1 \
+  "$(grep -c '^  read: the fixture issue read back unparseable$' <<<"$BRK_JUNK" || true)"
+t drill-breaker-unparseable-fixture-fires-no-tick 1 "$(brk_v "$BRK_JUNK" TICKS 0)"
+BRK_ISSUE_JSON=""
+BRK_SLICES=(SILENT)
 
 suite_finish
