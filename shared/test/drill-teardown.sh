@@ -49,6 +49,12 @@ case "${1:-}" in
     n="${2:-}"
     case " ${STUB_BOXES:-} " in *" $n "*) ;; *) exit 1 ;; esac
     printf '[{"name":"%s","created_at":"2026-07-25T09:00:00Z"}]\n' "$n" ;;
+  exec)
+    [ -n "${STUB_BOX_LOGIN:-}" ] || exit 1
+    case "$*" in
+      *"gh repo delete "*) exit "${STUB_FORK_DELETE_RC:-0}" ;;
+      *) printf '%s\n' "$STUB_BOX_LOGIN" ;;
+    esac ;;
   rm) exit "${STUB_BOX_RM_RC:-0}" ;;
   *) exit 1 ;;
 esac
@@ -63,10 +69,25 @@ case "${1:-} ${2:-}" in
     printf '%s\n' "$STUB_LOGIN" ;;
   "api repos/"*)
     slug="${2#repos/}"
+    case "$slug" in
+      */forks\?per_page=100)
+        fork_base="${slug%%/forks*}"
+        case " ${STUB_REPOS:-} " in
+          *" $fork_base "*) ;;
+          *) printf 'gh: Not Found (HTTP 404)\n' >&2; exit 1 ;;
+        esac
+        [ -z "${STUB_FORK_LIST_RC:-}" ] || exit "$STUB_FORK_LIST_RC"
+        printf '%s\n' ${STUB_FORKS:-}
+        exit 0 ;;
+    esac
     # STUB_REPO_LOOKUP_RC is the lookup failing for a reason that is NOT a
     # 404 — codex's transport failure underneath a perfectly good identity.
     # The message shape is gh's: a 404 says so in as many words and anything
     # else does not, which is the whole of what repo_probe reads.
+    if [ "${STUB_REPO_LOOKUP_FAIL_SLUG:-}" = "$slug" ]; then
+      printf 'error connecting to api.github.com: dial tcp: lookup failed\n' >&2
+      exit "${STUB_REPO_LOOKUP_FAIL_RC:-1}"
+    fi
     if [ -n "${STUB_REPO_LOOKUP_RC:-}" ]; then
       printf 'error connecting to api.github.com: dial tcp: lookup failed\n' >&2
       exit "$STUB_REPO_LOOKUP_RC"
@@ -319,6 +340,138 @@ else
   bad "names-boxes-and-repos-with-their-creation-dates (got '$OUT')"
 fi
 
+# The builder's head repository is owned by the box identity, not the host.
+# GitHub may suffix its name when an unrelated repository already occupies
+# the conventional one; teardown discovers that exact fork and deletes it
+# through the box before removing the credential-bearing box itself.
+run "CREW_ROSTER=$FLEET" "STUB_BOXES=crew-drill-builder" \
+    "STUB_LOGIN=danmt" "STUB_BOX_LOGIN=builder-bot" \
+    "STUB_FORKS=builder-bot/crew-drill-builder-1" \
+    "STUB_REPOS=danmt/crew-drill-builder builder-bot/crew-drill-builder-1" \
+  -- --role builder --yes
+if [ "$RC" -eq 0 ] && called "box exec crew-drill-builder -- bash -lc gh repo delete 'builder-bot/crew-drill-builder-1' --yes"; then
+  ok "deletes-renamed-builder-fork-through-box-identity"
+else
+  bad "deletes-renamed-builder-fork-through-box-identity (rc=$RC, calls='$(cat "$CALLS")', got '$OUT')"
+fi
+fork_delete_line="$(grep -nF "gh repo delete 'builder-bot/crew-drill-builder-1'" "$CALLS" | cut -d: -f1)"
+box_delete_line="$(grep -nF 'box rm --force crew-drill-builder' "$CALLS" | cut -d: -f1)"
+if [ -n "$fork_delete_line" ] && [ -n "$box_delete_line" ] \
+    && [ "$fork_delete_line" -lt "$box_delete_line" ]; then
+  ok "deletes-builder-fork-before-credential-bearing-box"
+else
+  bad "deletes-builder-fork-before-credential-bearing-box (calls='$(cat "$CALLS")')"
+fi
+
+run "CREW_ROSTER=$FLEET" "STUB_BOXES=crew-drill-builder" \
+    "STUB_LOGIN=danmt" "STUB_BOX_LOGIN=builder-bot" \
+    "STUB_FORKS=somebody-else/crew-drill-builder builder-bot/crew-drill-builder-1" \
+    "STUB_REPOS=danmt/crew-drill-builder somebody-else/crew-drill-builder builder-bot/crew-drill-builder-1" \
+  -- --role builder --yes
+if [ "$RC" -eq 0 ] && ! says "somebody-else/crew-drill-builder" \
+    && called "gh repo delete 'builder-bot/crew-drill-builder-1' --yes" \
+    && ! called "gh repo delete 'somebody-else/crew-drill-builder' --yes" \
+    && called "box rm --force crew-drill-builder" \
+    && called "repo delete danmt/crew-drill-builder"; then
+  ok "ignores-stranger-owned-forks-while-clearing-the-round"
+else
+  bad "ignores-stranger-owned-forks-while-clearing-the-round (rc=$RC, calls='$(cat "$CALLS")', got '$OUT')"
+fi
+
+# A successful fork-list response does not prove each listed repository can
+# still be inspected. Preserve its credential-bearing box and upstream when
+# the discovered fork's own probe is unanswerable.
+run "CREW_ROSTER=$FLEET" "STUB_BOXES=crew-drill-builder" \
+    "STUB_LOGIN=danmt" "STUB_BOX_LOGIN=builder-bot" \
+    "STUB_FORKS=builder-bot/crew-drill-builder-1" \
+    "STUB_REPOS=danmt/crew-drill-builder builder-bot/crew-drill-builder-1" \
+    "STUB_REPO_LOOKUP_FAIL_SLUG=builder-bot/crew-drill-builder-1" \
+  -- --role builder --yes
+if [ "$RC" -eq 2 ] && says "builder fork builder-bot/crew-drill-builder-1" \
+    && says "could not be looked up" \
+    && ! called "box rm --force crew-drill-builder" \
+    && ! called "repo delete danmt/crew-drill-builder"; then
+  ok "an-unanswerable-discovered-fork-preserves-its-recovery-resources"
+else
+  bad "an-unanswerable-discovered-fork-preserves-its-recovery-resources (rc=$RC, calls='$(cat "$CALLS")', got '$OUT')"
+fi
+
+# A failed delete means the fork still stands. The box credentials and its
+# upstream remain recoverable inputs, so teardown must not remove either one.
+run "CREW_ROSTER=$FLEET" "STUB_BOXES=crew-drill-builder" \
+    "STUB_LOGIN=danmt" "STUB_BOX_LOGIN=builder-bot" \
+    "STUB_FORKS=builder-bot/crew-drill-builder-1" \
+    "STUB_REPOS=danmt/crew-drill-builder builder-bot/crew-drill-builder-1" \
+    "STUB_FORK_DELETE_RC=1" \
+  -- --role builder --yes
+if [ "$RC" -eq 1 ] && says "could not delete builder fork builder-bot/crew-drill-builder-1" \
+    && called "gh repo delete 'builder-bot/crew-drill-builder-1' --yes" \
+    && ! called "box rm --force crew-drill-builder" \
+    && ! called "repo delete danmt/crew-drill-builder"; then
+  ok "a-failed-builder-fork-delete-preserves-its-recovery-resources"
+else
+  bad "a-failed-builder-fork-delete-preserves-its-recovery-resources (rc=$RC, calls='$(cat "$CALLS")', got '$OUT')"
+fi
+
+run "CREW_ROSTER=$FLEET" "STUB_BOXES=crew-drill-builder" \
+    "STUB_LOGIN=danmt" "STUB_BOX_LOGIN=" \
+    "STUB_FORKS=builder-bot/crew-drill-builder" \
+    "STUB_REPOS=danmt/crew-drill-builder builder-bot/crew-drill-builder" \
+  -- --role builder --yes
+if [ "$RC" -eq 2 ] && says "box identity could not be read" \
+    && ! called "box rm --force crew-drill-builder" \
+    && ! called "repo delete danmt/crew-drill-builder"; then
+  ok "unreadable-fork-owner-preserves-box-and-upstream-for-recovery"
+else
+  bad "unreadable-fork-owner-preserves-box-and-upstream-for-recovery (rc=$RC, calls='$(cat "$CALLS")', got '$OUT')"
+fi
+
+# GitHub answers the fork-list endpoint with 404 when its base repository is
+# absent. That is a measured empty network, not a reason to preserve the box:
+# phase 1 creates the box before phase 2 creates the sandbox, and teardown
+# must clear that ordinary partial round without claiming nothing existed.
+run "CREW_ROSTER=$FLEET" "STUB_BOXES=crew-drill-builder" \
+    "STUB_LOGIN=danmt" "STUB_REPOS=" \
+  -- --role builder --yes
+if [ "$RC" -eq 0 ] && called "box rm --force crew-drill-builder" \
+    && ! says "NOT inspected" && ! says "nothing to do"; then
+  ok "an-absent-builder-sandbox-does-not-preserve-its-standing-box"
+else
+  bad "an-absent-builder-sandbox-does-not-preserve-its-standing-box (rc=$RC, calls='$(cat "$CALLS")', got '$OUT')"
+fi
+
+# The converse is the recovery boundary: if the sandbox exists but its fork
+# network cannot be listed, a credential-bearing fork may still exist. Name
+# the unknown and preserve both the box credentials and the upstream until a
+# later run can inspect the network.
+run "CREW_ROSTER=$FLEET" "STUB_BOXES=crew-drill-builder" \
+    "STUB_LOGIN=danmt" "STUB_REPOS=danmt/crew-drill-builder" \
+    "STUB_FORK_LIST_RC=1" \
+  -- --role builder --yes
+if [ "$RC" -eq 2 ] && says "builder forks of danmt/crew-drill-builder" \
+    && called "gh api repos/danmt/crew-drill-builder" \
+    && ! called "box rm --force crew-drill-builder" \
+    && ! called "repo delete danmt/crew-drill-builder"; then
+  ok "an-existing-sandbox-with-an-unreadable-fork-network-preserves-recovery-resources"
+else
+  bad "an-existing-sandbox-with-an-unreadable-fork-network-preserves-recovery-resources (rc=$RC, calls='$(cat "$CALLS")', got '$OUT')"
+fi
+
+# Neither adjacent failure proves absence. If the fork list and its fallback
+# sandbox probe both fail without a 404, preserve the only credentials that
+# can remove a possibly standing box-owned fork and name both unknowns.
+run "CREW_ROSTER=$FLEET" "STUB_BOXES=crew-drill-builder" \
+    "STUB_LOGIN=danmt" "STUB_REPOS=danmt/crew-drill-builder" \
+    "STUB_FORK_LIST_RC=1" "STUB_REPO_LOOKUP_RC=1" \
+  -- --role builder --yes
+if [ "$RC" -eq 2 ] && says "builder forks of danmt/crew-drill-builder" \
+    && says "sandbox lookup also failed" \
+    && ! called "box rm --force crew-drill-builder" \
+    && ! called "repo delete danmt/crew-drill-builder"; then
+  ok "an-unanswerable-sandbox-probe-preserves-builder-fork-recovery-resources"
+else
+  bad "an-unanswerable-sandbox-probe-preserves-builder-fork-recovery-resources (rc=$RC, calls='$(cat "$CALLS")', got '$OUT')"
+fi
 # One round, not every round: --role targets a single leg.
 run "CREW_ROSTER=$FLEET" "STUB_BOXES=crew-drill-triage crew-drill-builder" \
     "STUB_LOGIN=danmt" "STUB_REPOS=danmt/crew-drill-triage danmt/crew-drill-builder" \

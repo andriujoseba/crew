@@ -7,7 +7,8 @@
 #
 # The rehearsal mints real infrastructure — one box per role on the host, and
 # two PUBLIC sandbox repositories per role under the host's gh identity (the
-# work sandbox, plus the notifier union leg's watch-only one, #423) — and
+# work sandbox, plus the notifier union leg's watch-only one, #423), plus the
+# builder box identity's fork of its work sandbox — and
 # nothing in the tree removed either, so rounds accreted. Four boxes at 2 CPU
 # / 4 GiB / 20 GiB with two snapshots apiece, still ARMED and still ticking
 # against their sandboxes for a rehearsal that ended days ago, and four public
@@ -61,6 +62,7 @@ KNOWN_ROLES="triage builder reviewer"
 ROLES=""
 declare -a BOXES=()
 declare -a REPOS=()
+declare -a BUILDER_FORKS=()
 DRY=0
 YES=0
 [ -n "${CREW_YES:-}" ] && YES=1
@@ -135,6 +137,14 @@ drill_repo_names() {
 
 is_drill_box()  { local names; names="$(drill_box_names)"; grep -qxF -- "$1" <<<"$names"; }
 is_drill_repo() { local names; names="$(drill_repo_names)"; grep -qxF -- "$1" <<<"$names"; }
+is_drill_builder_fork() {
+  case "$1" in
+    crew-drill-builder) return 0 ;;
+    crew-drill-builder-[0-9]*)
+      case "${1#crew-drill-builder-}" in *[!0-9]*|'') return 1 ;; *) return 0 ;; esac ;;
+    *) return 1 ;;
+  esac
+}
 
 # --- the roster, as protection rather than as selection -------------------
 # cli/crew RESOLVES one fleet definition: CREW_ROSTER, else CREW_CONFIG_DIR,
@@ -194,6 +204,7 @@ command -v gh >/dev/null 2>&1 && have_gh=1
 # naming the class and the reason. A non-empty list is exit 2 and forbids the
 # clean-host claim, whatever else the run managed to delete.
 declare -a UNINSPECTED=()
+BUILDER_FORK_BLOCKED=0
 
 # Order-preserving dedupe of an array, through a scratch global. No `mapfile`
 # and no namerefs, so this stays where the rest of the drill scripts are, and
@@ -270,6 +281,93 @@ if [ "$REPOS_REQUESTED" -eq 1 ]; then
   fi
 fi
 
+# `gh repo view` cannot tell "no such repository" from "the API did not
+# answer": it is GraphQL, and both come back as exit 1. Reading that non-zero
+# as absence is how a live identity and a dead network together reported a
+# clean host while every sandbox stood — the class-level gates above catch no
+# gh, no login and an unanswerable `gh api user`, and caught nothing at all
+# once the identity resolved and the per-repository lookup was the thing that
+# failed.
+#
+# The REST endpoint CAN tell them apart, so the probe answers three ways and
+# only ONE of them is absence:
+#
+#   0  it exists
+#   1  measured absent — HTTP 404, and nothing else reaches this
+#   2  could not tell — gh's own reason on stdout, for UNINSPECTED
+#
+# Worth writing down rather than papering over: GitHub answers 404 for a
+# PRIVATE repository the token cannot see, so a measured absence is really
+# "absent to this identity". That is the API's shape and not this script's,
+# and it is still the safe direction — a repository this identity cannot see
+# is not one this identity can delete either.
+repo_probe() {
+  local err rc=0
+  err="$(gh api "repos/$1" --jq .full_name 2>&1 >/dev/null)" || rc=$?
+  [ "$rc" -eq 0 ] && return 0
+  case "$err" in
+    *"HTTP 404"*|*"Not Found"*) return 1 ;;
+  esac
+  err="${err:-gh api repos/$1 exited $rc and said nothing}"
+  # One line, bounded: this reason is printed inside a NOT inspected list, and
+  # gh answers some failures with a whole JSON body.
+  err="${err//$'\n'/ }"
+  err="${err//$'\r'/ }"
+  printf '%.200s\n' "$err"
+  return 2
+}
+
+# The builder role has a third resource: the box identity's direct fork of
+# the host-owned sandbox. Discover its GitHub-assigned name from the fork
+# network (it may carry a numeric collision suffix), then validate it below
+# beside every other target. The box identity is read while the box still
+# exists, and deletion likewise happens before `box rm` destroys its creds.
+if case " $ROLES " in *" builder "*) true ;; *) false ;; esac \
+    && [ "$have_gh" -eq 1 ] && [ -n "$REPO_OWNER" ]; then
+  builder_sandbox="$REPO_OWNER/crew-drill-builder"
+  if ! builder_forks="$(gh api "repos/$builder_sandbox/forks?per_page=100" --paginate \
+      --jq '.[].full_name' 2>&1)"; then
+    # A measured missing sandbox has no fork network to inspect and nothing
+    # to preserve. An existing OR uninspectable sandbox may still carry the
+    # box-owned fork, so both preserve the credential-bearing box. Keep a
+    # 404 from the fork-list endpoint itself: it already measured absence,
+    # and a second call cannot make that answer less certain.
+    case "$builder_forks" in
+      *"HTTP 404"*|*"Not Found"*) ;;
+      *)
+        builder_sandbox_why=""
+        builder_sandbox_rc=0
+        builder_sandbox_why="$(repo_probe "$builder_sandbox")" || builder_sandbox_rc=$?
+        case "$builder_sandbox_rc" in
+          1) ;;
+          0)
+            BUILDER_FORK_BLOCKED=1
+            UNINSPECTED+=("builder forks of $builder_sandbox — fork-list API failed") ;;
+          *)
+            BUILDER_FORK_BLOCKED=1
+            UNINSPECTED+=("builder forks of $builder_sandbox — fork-list API failed; sandbox lookup also failed: $builder_sandbox_why") ;;
+        esac ;;
+    esac
+  elif [ -n "$builder_forks" ]; then
+    builder_box_owner=""
+    if [ "$have_box" -eq 1 ]; then
+      builder_box_owner="$(box exec crew-drill-builder -- bash -lc 'gh api user --jq .login' 2>/dev/null \
+        | tr -d '\r\n' || true)"
+    fi
+    if [ -z "$builder_box_owner" ]; then
+      BUILDER_FORK_BLOCKED=1
+      UNINSPECTED+=("builder fork of $builder_sandbox — box identity could not be read")
+    else
+      while read -r fork; do
+        [ -n "$fork" ] || continue
+        is_drill_builder_fork "${fork#*/}" || continue
+        [ "${fork%%/*}" = "$builder_box_owner" ] || continue
+        BUILDER_FORKS+=("crew-drill-builder|$builder_box_owner|$fork")
+      done <<<"$builder_forks"
+    fi
+  fi
+fi
+
 dedupe ${REPOS[@]+"${REPOS[@]}"}
 REPOS=(${DEDUPED[@]+"${DEDUPED[@]}"})
 
@@ -298,6 +396,17 @@ for repo in ${REPOS[@]+"${REPOS[@]}"}; do
   # recoverable by logging in as that identity, deleting is not.
   elif [ -n "$REPO_OWNER" ] && [ "${repo%%/*}" != "$REPO_OWNER" ]; then
     REFUSALS+=("sandbox $repo is owned by '${repo%%/*}', not by this host's gh identity '$REPO_OWNER' — a round's sandboxes are always $REPO_OWNER/crew-drill-<role> or $REPO_OWNER/crew-drill-<role>-notify")
+  fi
+done
+
+for fork_record in ${BUILDER_FORKS[@]+"${BUILDER_FORKS[@]}"}; do
+  fork_rest="${fork_record#*|}"
+  fork_owner="${fork_rest%%|*}"
+  fork_repo="${fork_rest#*|}"
+  if ! is_drill_builder_fork "${fork_repo#*/}"; then
+    REFUSALS+=("builder fork $fork_repo is not a drill builder-fork name")
+  elif [ "${fork_repo%%/*}" != "$fork_owner" ]; then
+    REFUSALS+=("builder fork $fork_repo is owned by '${fork_repo%%/*}', not by box identity '$fork_owner'")
   fi
 done
 
@@ -345,43 +454,24 @@ repo_created() {
   printf '%s\n' "${d:-unknown}"
 }
 
-# `gh repo view` cannot tell "no such repository" from "the API did not
-# answer": it is GraphQL, and both come back as exit 1. Reading that non-zero
-# as absence is how a live identity and a dead network together reported a
-# clean host while every sandbox stood — the class-level gates above catch no
-# gh, no login and an unanswerable `gh api user`, and caught nothing at all
-# once the identity resolved and the per-repository lookup was the thing that
-# failed.
-#
-# The REST endpoint CAN tell them apart, so the probe answers three ways and
-# only ONE of them is absence:
-#
-#   0  it exists
-#   1  measured absent — HTTP 404, and nothing else reaches this
-#   2  could not tell — gh's own reason on stdout, for UNINSPECTED
-#
-# Worth writing down rather than papering over: GitHub answers 404 for a
-# PRIVATE repository the token cannot see, so a measured absence is really
-# "absent to this identity". That is the API's shape and not this script's,
-# and it is still the safe direction — a repository this identity cannot see
-# is not one this identity can delete either.
-repo_probe() {
-  local err rc=0
-  err="$(gh api "repos/$1" --jq .full_name 2>&1 >/dev/null)" || rc=$?
-  [ "$rc" -eq 0 ] && return 0
-  case "$err" in
-    *"HTTP 404"*|*"Not Found"*) return 1 ;;
+declare -a DOOMED_BOXES=() DOOMED_REPOS=() DOOMED_BUILDER_FORKS=()
+# Resolve the fork before populating its recovery dependencies. If the fork
+# itself cannot be inspected, the box credentials and upstream sandbox are
+# still potentially needed to remove it on the next run.
+for fork_record in ${BUILDER_FORKS[@]+"${BUILDER_FORKS[@]}"}; do
+  fork_repo="${fork_record##*|}"
+  probe_why=""
+  probe_rc=0
+  probe_why="$(repo_probe "$fork_repo")" || probe_rc=$?
+  case "$probe_rc" in
+    0) DOOMED_BUILDER_FORKS+=("$fork_record") ;;
+    1) ;;
+    *)
+      BUILDER_FORK_BLOCKED=1
+      UNINSPECTED+=("builder fork $fork_repo — could not be looked up: $probe_why") ;;
   esac
-  err="${err:-gh api repos/$1 exited $rc and said nothing}"
-  # One line, bounded: this reason is printed inside a NOT inspected list, and
-  # gh answers some failures with a whole JSON body.
-  err="${err//$'\n'/ }"
-  err="${err//$'\r'/ }"
-  printf '%.200s\n' "$err"
-  return 2
-}
+done
 
-declare -a DOOMED_BOXES=() DOOMED_REPOS=()
 if [ "${#BOXES[@]}" -gt 0 ]; then
   if [ "$have_box" -eq 0 ]; then
     UNINSPECTED+=("boxes (${BOXES[*]}) — no box CLI on this host")
@@ -389,6 +479,7 @@ if [ "${#BOXES[@]}" -gt 0 ]; then
     UNINSPECTED+=("boxes (${BOXES[*]}) — 'box list --json' could not be read or parsed")
   else
     for name in "${BOXES[@]}"; do
+      [ "$BUILDER_FORK_BLOCKED" -eq 1 ] && [ "$name" = crew-drill-builder ] && continue
       box_exists "$name" && DOOMED_BOXES+=("$name")
     done
   fi
@@ -398,6 +489,8 @@ if [ "$REPOS_REQUESTED" -eq 1 ] && [ -n "$REPO_INSPECT_FAIL" ]; then
   UNINSPECTED+=("sandbox repositories of this round — $REPO_INSPECT_FAIL")
 else
   for repo in ${REPOS[@]+"${REPOS[@]}"}; do
+    [ "$BUILDER_FORK_BLOCKED" -eq 1 ] \
+      && [ "$repo" = "$REPO_OWNER/crew-drill-builder" ] && continue
     # Per repository, not per class: the identity resolving says the API can be
     # asked, not that it answered. An unanswered lookup names ITS OWN
     # repository on the list, so the operator is told which one is unaccounted
@@ -429,7 +522,8 @@ fi
 # wire into rehearsal-all.sh unconditionally — but ONLY when every requested
 # class was actually inspected. "I found nothing" and "I could not look" are
 # the same sentence to an operator and must not be the same exit status.
-if [ "${#DOOMED_BOXES[@]}" -eq 0 ] && [ "${#DOOMED_REPOS[@]}" -eq 0 ]; then
+if [ "${#DOOMED_BOXES[@]}" -eq 0 ] && [ "${#DOOMED_REPOS[@]}" -eq 0 ] \
+    && [ "${#DOOMED_BUILDER_FORKS[@]}" -eq 0 ]; then
   if [ "${#UNINSPECTED[@]}" -gt 0 ]; then
     echo "teardown: nothing to delete among what could be inspected — see NOT inspected above."
     exit 2
@@ -444,6 +538,10 @@ for name in ${DOOMED_BOXES[@]+"${DOOMED_BOXES[@]}"}; do
 done
 for repo in ${DOOMED_REPOS[@]+"${DOOMED_REPOS[@]}"}; do
   echo "  repo  $repo (created $(repo_created "$repo")) — with its issues, PRs and history"
+done
+for fork_record in ${DOOMED_BUILDER_FORKS[@]+"${DOOMED_BUILDER_FORKS[@]}"}; do
+  fork_repo="${fork_record##*|}"
+  echo "  fork  $fork_repo (created $(repo_created "$fork_repo")) — box-owned head repository"
 done
 
 if [ "$DRY" -eq 1 ]; then
@@ -463,11 +561,31 @@ if [ "$YES" -ne 1 ]; then
 fi
 
 rc=0
+BUILDER_FORK_DELETE_FAILED=0
+# The fork is owned by the identity authenticated inside the builder box, so
+# delete it there while those credentials still exist. The builder box and
+# upstream sandbox are recovery dependencies: neither may be removed unless
+# every discovered builder fork was deleted successfully.
+for fork_record in ${DOOMED_BUILDER_FORKS[@]+"${DOOMED_BUILDER_FORKS[@]}"}; do
+  fork_box="${fork_record%%|*}"
+  fork_repo="${fork_record##*|}"
+  if box exec "$fork_box" -- bash -lc "gh repo delete '$fork_repo' --yes"; then
+    echo "ok   deleted builder fork $fork_repo"
+  else
+    echo "FAIL could not delete builder fork $fork_repo through $fork_box" >&2
+    echo "     (the box gh identity needs the delete_repo scope)" >&2
+    BUILDER_FORK_DELETE_FAILED=1
+    rc=1
+  fi
+done
 for name in ${DOOMED_BOXES[@]+"${DOOMED_BOXES[@]}"}; do
+  [ "$BUILDER_FORK_DELETE_FAILED" -eq 1 ] && [ "$name" = crew-drill-builder ] && continue
   if box rm --force "$name"; then echo "ok   removed box $name"
   else echo "FAIL could not remove box $name" >&2; rc=1; fi
 done
 for repo in ${DOOMED_REPOS[@]+"${DOOMED_REPOS[@]}"}; do
+  [ "$BUILDER_FORK_DELETE_FAILED" -eq 1 ] \
+    && [ "$repo" = "$REPO_OWNER/crew-drill-builder" ] && continue
   if gh repo delete "$repo" --yes; then echo "ok   deleted repo $repo"
   else
     echo "FAIL could not delete repo $repo" >&2

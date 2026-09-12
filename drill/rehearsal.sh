@@ -18,8 +18,9 @@
 # gh and selected-agent CLIs are authenticated (the
 # operator logs the box in between runs; the script never touches
 # credentials): it mints its own GitHub fixtures — a sandbox repo under the
-# HOST's gh identity, a collaborator invite the box accepts itself, an
-# attention-labelled issue, a scratch PR with a review request — and
+# HOST's gh identity, a builder fork under the builder BOX identity, a
+# collaborator invite the box accepts itself, an attention-labelled issue, a
+# scratch PR with a review request — and
 # verifies the attention wake, the review round through both one-shot
 # gates, head dedup, the re-request auto-approve, and gate abuse.
 #
@@ -630,6 +631,43 @@ else
   fi
   if [ "$REUSE" -eq 1 ]; then
     ok "reuse: sandbox starts with no open fixture objects"
+  fi
+  # A builder writes through its own fork, never through the host-owned
+  # sandbox. Create that prerequisite as the box identity and resolve it from
+  # the fork network, where GitHub's collision suffix is authoritative.
+  if [ "$ROLE" = builder ]; then
+    builder_fork=""
+    builder_fork_probe="$(rehearsal_resolve_builder_fork "$SANDBOX" "$ME2" 2>&1)"
+    builder_fork_probe_rc=$?
+    if [ "$builder_fork_probe_rc" -eq 0 ]; then
+      builder_fork="$builder_fork_probe"
+    elif grep -Fq "no fork of $SANDBOX is owned by box identity $ME2" \
+        <<<"$builder_fork_probe"; then
+      if rehearsal_create_builder_fork "$SANDBOX" >/dev/null; then
+        ok "builder: create box-owned fork of sandbox"
+      else
+        fail "builder: create box-owned fork of sandbox"
+      fi
+      # GitHub may return from fork creation before the direct-fork endpoint
+      # exposes the repository. Bound that propagation wait well below the PR
+      # fixture's 1800-second wait, which this prerequisite must precede.
+      builder_fork_deadline=$((SECONDS + 60))
+      while [ "$SECONDS" -lt "$builder_fork_deadline" ]; do
+        builder_fork="$(rehearsal_resolve_builder_fork "$SANDBOX" "$ME2" 2>/dev/null || true)"
+        [ -n "$builder_fork" ] && break
+        sleep 2
+      done
+    else
+      printf '%s\n' "$builder_fork_probe" >&2
+    fi
+    if [ -n "$builder_fork" ]; then
+      echo "builder: resolved box-owned fork $builder_fork"
+      ok "builder: box-owned sandbox fork resolves before first tick"
+    else
+      fail "builder: box-owned sandbox fork resolves before first tick"
+      echo "REFUSING before a phase 2 tick: the builder has no unique head repository." >&2
+      exit 1
+    fi
   fi
   # Create the whole board vocabulary. Triage reads its queue-label set from
   # the installed configuration below, while the builder keys on ready. A
