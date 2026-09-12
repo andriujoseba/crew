@@ -2526,4 +2526,140 @@ t drill-breaker-unparseable-fixture-fires-no-tick 1 "$(brk_v "$BRK_JUNK" TICKS 0
 BRK_ISSUE_JSON=""
 BRK_SLICES=(SILENT)
 
+# --- #725: the resume leg's log predicates -----------------------------------
+#
+# `drill/rehearsal-resume.sh` opens by saying the live leg runs only from an
+# authenticated drill host "so CI can mutate their inputs without a drill
+# host". Nothing did: the predicates shipped with no fixture at all, and the
+# `0.1.3-rc2` round was the first thing that ever ran them. It read two rows
+# FAIL and the record could say no more than the verdict strings, because the
+# negative rows asked whether ANY resume session started in the sandbox — true
+# of every resume that repository buys for any reason, and a question whose
+# answer is not about the head under test.
+#
+# The fixtures below are `duty.log` windows, which is the one input these
+# predicates have. The engine's line shapes are pinned in shared/test/builder.sh
+# against the engine itself; what is pinned here is what the leg CONCLUDES from
+# them.
+# shellcheck source=drill/rehearsal-resume.sh
+. "$ROOT/drill/rehearsal-resume.sh"
+D725_REPO=danmt/crew-drill-builder
+D725_PR=12
+D725_HEAD="$(printf 'b%.0s' $(seq 1 40))"
+d725_log() { printf '%s\n' "$@"; }
+# The tick the leg wants on a pending head: the roll-call names nothing, and
+# nothing dispatched.
+D725_QUIET="$(d725_log "$D725_REPO: no resume duty")"
+# The tick the leg is FOR: the green-head bypass named this PR and resumed.
+D725_RESUMED="$(d725_log \
+  "$D725_REPO#$D725_PR: green head owed a signal — resuming this tick instead of the twelfth, dispatch 1 of 3 at $D725_HEAD (#384)" \
+  "$D725_REPO: resume duty (drafts: none; orphaned claims: none; unsignalled ready PRs: $D725_PR; of those, signals that missed the wire: none, green heads owed a signal: $D725_PR; drafts owed a flip: none)" \
+  "SESSION START kind=resume key=$D725_REPO")"
+# THE READING THAT MINTED #725, and the one this block exists for: a resume
+# session for something else entirely. An orphaned claim — the leg's own fixture
+# issue is claimed for the length of the leg, and an earlier pass can leave
+# another — buys a session on every tick, and the old predicate reported it as
+# this PR's pending head being resumed. Nothing here names PR 12.
+D725_OTHER="$(d725_log \
+  "$D725_REPO: resume duty (drafts: none; orphaned claims: 41; unsignalled ready PRs: none; of those, signals that missed the wire: none, green heads owed a signal: none; drafts owed a flip: none)" \
+  "SESSION START kind=resume key=$D725_REPO")"
+t d725-pending-quiet-tick-passes 0 \
+  "$(rehearsal_resume_pending_tick_from_log "$D725_REPO" "$D725_PR" "$D725_QUIET"; echo $?)"
+t d725-pending-row-catches-a-real-resume 1 \
+  "$(rehearsal_resume_pending_tick_from_log "$D725_REPO" "$D725_PR" "$D725_RESUMED"; echo $?)"
+t d725-pending-row-ignores-another-lanes-session 0 \
+  "$(rehearsal_resume_pending_tick_from_log "$D725_REPO" "$D725_PR" "$D725_OTHER"; echo $?)"
+# An orphaned claim whose ISSUE number equals this PR's number is the conflation
+# in miniature, and the field is cut before the scan for exactly that reason.
+D725_CLAIM_COLLIDES="$(d725_log \
+  "$D725_REPO: resume duty (drafts: none; orphaned claims: $D725_PR; unsignalled ready PRs: none; of those, signals that missed the wire: none, green heads owed a signal: none; drafts owed a flip: none)")"
+t d725-orphan-claim-number-is-not-a-pr-number 0 \
+  "$(rehearsal_resume_pending_tick_from_log "$D725_REPO" "$D725_PR" "$D725_CLAIM_COLLIDES"; echo $?)"
+# A PR number that is a PREFIX of a dispatched one is not a dispatch of it: 1
+# against a roll-call naming 12 must read clean, or every leg with a
+# single-digit fixture PR reds on its neighbour.
+t d725-prefix-number-is-not-a-dispatch 0 \
+  "$(rehearsal_resume_pending_tick_from_log "$D725_REPO" 1 "$D725_RESUMED"; echo $?)"
+# Every dispatching lane, not just the bypass the row's verdict string names:
+# a near-miss or stranded dispatch at a pending head is the same defect. These
+# two are the lane lines `_resume_lane_breaker` writes, verbatim.
+for d725_lane in near-miss stranded; do
+  t "d725-pending-row-catches-$d725_lane" 1 \
+    "$(rehearsal_resume_pending_tick_from_log "$D725_REPO" "$D725_PR" \
+       "$(d725_log "$D725_REPO#$D725_PR: $d725_lane resume dispatch 1 of 3 at $D725_HEAD")"; echo $?)"
+done
+# The DRAFT lane logs no per-dispatch line — only a trip warning at the
+# threshold — so it is caught by the roll-call's `drafts:` field and by nothing
+# else. A fixture for a `draft resume dispatch` line would assert against a
+# shape no log can carry, which is the dead branch head-checks.jq's round 2
+# names; this is the shape the engine does write.
+t d725-pending-row-catches-a-draft-dispatch 1 \
+  "$(rehearsal_resume_pending_tick_from_log "$D725_REPO" "$D725_PR" \
+     "$(d725_log "$D725_REPO: resume duty (drafts: $D725_PR; orphaned claims: none; unsignalled ready PRs: none; of those, signals that missed the wire: none, green heads owed a signal: none; drafts owed a flip: none)")"; echo $?)"
+# MUST FAIL — the lane alternation above is the engine's, or it is decoration.
+# `draft` is absent from it on purpose and the engine must keep writing the two
+# that are there.
+# shellcheck disable=SC2016  # matching shell source literally
+t d725-lane-lines-are-the-engines 1 \
+  "$(grep -c 'log "\$repo#\$num: \$lane resume dispatch \$count of \$breaker at \$head"' \
+     "$SHARED/lib/duty-builder.sh")"
+t d725-no-draft-lane-dispatch-line 0 \
+  "$(grep -c 'draft resume dispatch' "$SHARED/lib/duty-builder.sh")"
+# A roll-call for ANOTHER repository in the same tick window says nothing about
+# this one — every tick sweeps every repo in the registry.
+t d725-other-repos-roll-call-is-not-ours 0 \
+  "$(rehearsal_resume_pending_tick_from_log "$D725_REPO" "$D725_PR" \
+     "$(d725_log "other/repo: resume duty (drafts: $D725_PR; orphaned claims: none; unsignalled ready PRs: none; of those, signals that missed the wire: none, green heads owed a signal: none; drafts owed a flip: none)")"; echo $?)"
+
+# THE STOP ROW, both halves. The lane must SAY it stopped — a suppression
+# nobody can see is the failure #59 names, not a fix — and this PR must be
+# absent from the roll-call.
+D725_STOP="$(d725_log \
+  "no resume duty: $D725_REPO#$D725_PR near-miss lane suppressed at $D725_HEAD after 3 zero-action dispatches — only a push clears it (#314)" \
+  "$D725_REPO: no resume duty")"
+t d725-stop-row-passes-on-a-said-stop 0 \
+  "$(rehearsal_resume_suppressed_tick_from_log "$D725_REPO" "$D725_PR" "$D725_HEAD" 3 "$D725_STOP"; echo $?)"
+t d725-stop-row-fails-on-silence 1 \
+  "$(rehearsal_resume_suppressed_tick_from_log "$D725_REPO" "$D725_PR" "$D725_HEAD" 3 "$D725_QUIET"; echo $?)"
+# The threshold is part of the assertion: a lane that stopped at a DIFFERENT
+# count than the installed one is not the contract the leg reads.
+t d725-stop-row-is-threshold-scoped 1 \
+  "$(rehearsal_resume_suppressed_tick_from_log "$D725_REPO" "$D725_PR" "$D725_HEAD" 4 "$D725_STOP"; echo $?)"
+# A stop that is said while the same tick dispatches for this PR anyway is not a
+# stop, and this is the half the roll-call scan adds.
+t d725-stop-row-fails-when-it-dispatches-anyway 1 \
+  "$(rehearsal_resume_suppressed_tick_from_log "$D725_REPO" "$D725_PR" "$D725_HEAD" 3 \
+     "$(d725_log "$D725_STOP" \
+        "$D725_REPO: resume duty (drafts: none; orphaned claims: none; unsignalled ready PRs: $D725_PR; of those, signals that missed the wire: none, green heads owed a signal: none; drafts owed a flip: none)")"; echo $?)"
+# ...and a stop said while ANOTHER claim buys the tick's session still passes:
+# that is the reading the round could not make.
+t d725-stop-row-ignores-another-lanes-session 0 \
+  "$(rehearsal_resume_suppressed_tick_from_log "$D725_REPO" "$D725_PR" "$D725_HEAD" 3 \
+     "$(d725_log "$D725_STOP" "$D725_OTHER")"; echo $?)"
+
+# THE POSITIVE ROWS ARE UNCHANGED, and are fixtured here for the first time so
+# that "scope the negatives" cannot quietly become "assert nothing". Both keep
+# the repo-wide SESSION START: a session is what the wake BUYS, and no unrelated
+# session can forge the per-PR dispatch line beside it.
+t d725-wake-row-reads-a-real-wake 0 \
+  "$(rehearsal_resume_wake_tick_from_log "$D725_REPO" "$D725_PR" "$D725_HEAD" "$D725_RESUMED"; echo $?)"
+t d725-wake-row-fails-on-a-quiet-tick 1 \
+  "$(rehearsal_resume_wake_tick_from_log "$D725_REPO" "$D725_PR" "$D725_HEAD" "$D725_QUIET"; echo $?)"
+D725_NEAR="$(d725_log \
+  "$D725_REPO#$D725_PR: comment 77 opens with an unrendered marker slot and names head $D725_HEAD — not a signal (#133), but the round was answered there; resuming this tick instead of the twelfth (#319)" \
+  "$D725_REPO#$D725_PR: near-miss resume dispatch 1 of 3 at $D725_HEAD" \
+  "SESSION START kind=resume key=$D725_REPO")"
+t d725-near-miss-row-reads-a-real-near-miss 0 \
+  "$(rehearsal_resume_near_miss_tick_from_log "$D725_REPO" "$D725_PR" "$D725_HEAD" 77 "$D725_NEAR"; echo $?)"
+t d725-near-miss-row-fails-on-a-quiet-tick 1 \
+  "$(rehearsal_resume_near_miss_tick_from_log "$D725_REPO" "$D725_PR" "$D725_HEAD" 77 "$D725_QUIET"; echo $?)"
+# THE EVIDENCE A FAILING ROW LEAVES. The rc2 record carries the verdict strings
+# and nothing else, which is why #725 had to be opened against two candidates at
+# once. A failing row now prints the tick's roll-call.
+t d725-roll-call-is-recoverable 1 \
+  "$(rehearsal_resume_roll_call_from_log "$D725_REPO" "$D725_OTHER" | grep -c 'orphaned claims: 41')"
+t d725-roll-call-falls-back-to-the-quiet-line 1 \
+  "$(rehearsal_resume_roll_call_from_log "$D725_REPO" "$D725_QUIET" | grep -c 'no resume duty')"
+unset -f d725_log
+
 suite_finish

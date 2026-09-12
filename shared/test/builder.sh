@@ -2786,6 +2786,222 @@ else
 fi
 t p384-green-breaker-has-its-own-state-file separate "$r1"
 
+# --- #725: THE RESUME LANES AS THE DRILL DRIVES THEM ------------------------
+#
+# Every assertion above drives ONE lane. `drill/rehearsal-resume.sh` drives all
+# of them at once, in a fixed order, against one PR — and the `0.1.3-rc2` round
+# read two of its rows FAIL: a pending head was reported resumed, and the
+# unchanged head was reported not to stop at the installed threshold. A
+# per-lane suite cannot answer that report either way, because the report is
+# about the COMPOSITION: which lane may name this PR on each of the leg's six
+# ticks. This block is that composition, replayed tick for tick.
+#
+# IT IS THE LEG'S SEQUENCE AND NOT AN ILLUSTRATION OF IT. Tick 1 is the pending
+# head; tick 2 flips the same head green; the drill's unrendered-marker comment
+# lands before tick 3; ticks 3–5 are the threshold's worth of near-miss
+# dispatches; tick 6 is the one the leg asserts stops. Change the leg's shape
+# and this block must change with it, which is the point — the two were tested
+# against different subjects until now, and only one of them ran.
+#
+# THE COMPOSITION IS COPIED FROM THE ENGINE, and that is its one weakness: a
+# copy can drift from `_builder_repo`. The wiring greps above (#319's two lane
+# call sites, #384's four) are what hold the copy to the original, so they are
+# the assertions to read first if this block ever disagrees with a real host.
+P725="$TMP/p725"; P725_LOG="$P725/tick.log"
+mkdir -p "$P725"
+P725_SAVED_DUTY="$DUTY_DIR"; P725_SAVED_ME="${ME-}"; P725_ME_WAS_SET="${ME+x}"
+DUTY_DIR="$P725"; ME=me
+P725_MARK="📣 round answered at head"
+P725_OLD="$(printf 'a%.0s' $(seq 1 40))"   # the head the round was answered at
+P725_HEAD="$(printf 'b%.0s' $(seq 1 40))"  # the head the drill advances to
+P725_STATE=PENDING     # the drill's own status context, flipped by the leg
+P725_NEAR=0            # 1 once the leg posts its unrendered-marker comment
+p725_listing() {
+  jq -cn --arg h "$P725_HEAD" --arg s "$P725_STATE" '[{
+    number: 42, isDraft: false, headRefOid: $h, body: "Closes #41",
+    reviewRequests: [{login: "host-reviewer"}],
+    statusCheckRollup: [{__typename: "StatusContext",
+      context: "drill/resume-head-settle", state: $s,
+      startedAt: "2026-09-12T10:00:00Z", targetUrl: ""}]}]'
+}
+# The thread the leg leaves behind: the fix round's real signal, at the head the
+# drill then pushes past, and — from tick 3 — the unrendered marker naming the
+# CURRENT head, which is #319's evidence and not a signal.
+p725_comments() {
+  local thread
+  thread="$(jq -cn --arg me "$ME" --arg m "$P725_MARK" --arg h "$P725_OLD" \
+    '[{author:{login:$me}, body:"🔨 addressing round", createdAt:"2026-09-12T09:00:00Z", id:"1"},
+      {author:{login:$me}, body:"\($m) \($h)", createdAt:"2026-09-12T09:30:00Z", id:"2"}]')"
+  [ "$P725_NEAR" -eq 1 ] && thread="$(printf '%s' "$thread" \
+    | jq -c --arg me "$ME" --arg h "$P725_HEAD" \
+        '. + [{author:{login:$me}, body:"{{MARK_ANSWERED}} \($h)",
+               createdAt:"2026-09-12T10:10:00Z", id:"77"}]')"
+  printf '%s' "$thread"
+}
+# shellcheck disable=SC2317  # called indirectly by the resume block below
+gh() {
+  local args="$*"
+  case "$args" in
+    */issues/42/comments*) p725_comments | jq -c '.[]' ;;
+    */comments*|*/reviews*) : ;;
+    *) printf '2026-09-12T09:00:00Z\n' ;;   # the issue half of the fingerprint
+  esac
+  return 0
+}
+# One duty tick's resume block, in `_builder_repo`'s order and with its names.
+# The globals are cleared rather than assumed so a tree missing a lane fails its
+# own assertion instead of taking the suite down under `set -u`.
+p725_tick() {
+  local resume_json draft_nums stranded_keys stranded_due_nums stranded_due_keys=""
+  local near_miss_rows near_miss_keys="" green_head_rows key num
+  P725_DRAFTS=""; P725_STRANDED=""; P725_NEAR_MISS=""; P725_GREEN=""; P725_FLIP=""
+  NEAR_MISS_ROWS=""; GREEN_HEAD_ROWS=""; FLIP_OWED_ROWS=""; RESUME_FORCE_FRESH=""
+  RESUME_LANE_DISPATCH_NUMS=""; GREEN_HEAD_DISPATCH_NUMS=""; RESUME_DISPATCH_NUMS=""
+  {
+    resume_json="$(p725_listing)"
+    draft_nums="$(printf '%s' "$resume_json" | jq -r '.[] | select(.isDraft) | .number' | tr '\n' ' ')"
+    _resume_attach_comments o/r "$resume_json"
+    resume_json="${RESUME_LISTING:-$resume_json}"
+    stranded_keys="$(printf '%s' "$resume_json" | _stranded_resume_keys o/r "$ME" "$P725_MARK")"
+    _near_miss_resume_rows o/r "$ME" "$P725_MARK" "$resume_json"
+    near_miss_rows="$NEAR_MISS_ROWS"
+    _green_head_resume_rows o/r "$ME" "$P725_MARK" "$resume_json"
+    green_head_rows="$GREEN_HEAD_ROWS"
+    _flip_owed_resume_rows o/r "$ME" "$P725_MARK" '[]' "$resume_json"
+    P725_FLIP="$(printf '%s' "$FLIP_OWED_ROWS" | tr '\n' ' ')"
+    stranded_due_nums="$(printf '%s\n' "$stranded_keys" \
+      | _stranded_resume_due "$DUTY_DIR/.resume-unsignalled.o__r" 12 | tr '\n' ' ')"
+    while IFS= read -r key; do
+      [ -n "$key" ] || continue
+      num="${key#*#}"; num="${num%@*}"
+      case " $stranded_due_nums " in
+        *" $num "*) stranded_due_keys="$stranded_due_keys$key"$'\n' ;;
+      esac
+    done <<<"$stranded_keys"
+    _resume_lane_breaker o/r stranded "$DUTY_DIR/.resume-zero-action-stranded.o__r" "$stranded_due_keys"
+    P725_STRANDED="$RESUME_LANE_DISPATCH_NUMS"
+    while IFS=$'\t' read -r num _; do
+      [ -n "$num" ] || continue
+      while IFS= read -r key; do
+        [ -n "$key" ] || continue
+        [ "${key%@*}" = "o/r#$num" ] || continue
+        near_miss_keys="$near_miss_keys$key"$'\n'
+      done <<<"$stranded_keys"
+    done <<<"$near_miss_rows"
+    _resume_lane_breaker o/r near-miss "$DUTY_DIR/.resume-zero-action-nearmiss.o__r" "$near_miss_keys"
+    P725_NEAR_MISS="$RESUME_LANE_DISPATCH_NUMS"
+    _green_head_breaker o/r o__r "$green_head_rows"
+    P725_GREEN="$GREEN_HEAD_DISPATCH_NUMS"
+    if _resume_gate o/r o__r "$resume_json"; then P725_DRAFTS="$RESUME_DISPATCH_NUMS"; fi
+  } >"$P725_LOG" 2>&1
+  # The engine's own union: every lane that may buy this tick's session.
+  P725_UNION="$(printf '%s %s %s %s\n' "$P725_DRAFTS" "$P725_STRANDED" \
+    "$P725_NEAR_MISS" "$P725_GREEN" | tr ' ' '\n' | awk 'NF && !seen[$0]++' | tr '\n' ' ')"
+  P725_UNION="${P725_UNION% }"
+}
+
+# TICK 1 — THE PENDING HEAD. The leg's first assertion, and the row the round
+# read FAIL. No lane may name this PR: green-head declines a head that has not
+# concluded, the near-miss lane has no marker to read yet, and twelve ticks of
+# silence have not been bought. A session on this tick is a session spent on
+# evidence that does not exist.
+P725_STATE=PENDING; P725_NEAR=0
+p725_tick
+t p725-pending-head-buys-no-lane "" "$P725_UNION"
+t p725-pending-head-is-graded-pending "$(printf '42\tpending')" \
+  "$(_resume_check_states o/r "$(p725_listing)")"
+# MUST FAIL, each on its own line, so a regression names the lane that broke it
+# rather than "the union moved".
+t p725-pending-head-no-green-bypass "" "$P725_GREEN"
+t p725-pending-head-no-near-miss "" "$P725_NEAR_MISS"
+t p725-pending-head-no-stranded-dispatch "" "$P725_STRANDED"
+t p725-pending-head-no-draft-dispatch "" "$P725_DRAFTS"
+t p725-pending-head-no-flip "" "${P725_FLIP// /}"
+# And it is SILENT about resuming, not merely undispatched: the leg reads the
+# log, so a detection WARN naming this head would be indistinguishable from a
+# resume to the only instrument that watches it.
+t p725-pending-head-detects-nothing 0 \
+  "$(grep -c 'green and no signal names that head' "$P725_LOG")"
+t p725-pending-head-dispatches-nothing 0 "$(grep -c 'resume dispatch' "$P725_LOG")"
+# The twelve-tick counter still advanced — the pending head is not excused from
+# the ordinary path, it is only excused from the bypass.
+t p725-pending-head-still-counts-toward-twelve 1 \
+  "$(awk -F'\t' -v k="o/r#42@$P725_HEAD" '$1 == k {print $2}' "$P725/.resume-unsignalled.o__r")"
+
+# TICK 2 — THE CONCLUSION WAKE. The same head, now green. This is the row the
+# round read `ok`, and it is asserted here so the fix for the two failing rows
+# cannot be "stop resuming", which would pass both of them and break this one.
+P725_STATE=SUCCESS
+p725_tick
+t p725-green-head-wakes-the-lane 42 "$P725_GREEN"
+t p725-green-head-wake-is-said 1 \
+  "$(grep -c "o/r#42: green head owed a signal .* dispatch 1 of 3 at $P725_HEAD" "$P725_LOG")"
+
+# TICKS 3–5 — THE NEAR-MISS LANE, one dispatch per tick for the threshold's
+# worth, beside the green-head lane which is spending its own last two.
+P725_NEAR=1
+for _p725_i in 1 2 3; do
+  p725_tick
+  t "p725-near-miss-dispatch-$_p725_i" 42 "$P725_NEAR_MISS"
+done
+t p725-near-miss-trips-at-three 1 \
+  "$(grep -c "o/r#42: near-miss resume dispatch 3 of 3 at head" "$P725_LOG")"
+
+# TICK 6 — THE STOP. The leg's second failing row. Both bypass lanes have spent
+# their three at this head, nothing pushed, and the twelve-tick counter is at
+# six — so the union is empty and the suppression is SAID, which is the half the
+# leg greps for. Silence here would be #59's failure, not a fix.
+p725_tick
+t p725-unchanged-head-stops "" "$P725_UNION"
+t p725-unchanged-head-stop-is-said 1 \
+  "$(grep -c "no resume duty: o/r#42 near-miss lane suppressed at $P725_HEAD after 3 zero-action dispatches" "$P725_LOG")"
+t p725-unchanged-head-green-bypass-also-stopped 1 \
+  "$(grep -c "no resume duty: o/r#42 green-head bypass suppressed at $P725_HEAD after 3 zero-action dispatches" "$P725_LOG")"
+# The leg's threshold is READ FROM THE INSTALLED ENGINE (`breaker=<n>` in
+# `_resume_lane_breaker`), so the number the drill counts to and the number the
+# engine stops at are one fact. A rename or a move here leaves the leg unable to
+# resolve a threshold at all, which is a leg that cannot run rather than a leg
+# that lies — but it is still a break, and this is where it reds first.
+t p725-installed-threshold-is-readable 3 \
+  "$(sed -n '/^_resume_lane_breaker()/,/^}/p' "$SHARED/lib/duty-builder.sh" \
+     | sed -n 's/.*breaker=\([0-9][0-9]*\).*/\1/p' | head -1)"
+# A PUSH ends both episodes at once, which is what the leg's next round depends
+# on: the head is in the key, so a moved head is a key neither lane has seen.
+P725_HEAD="$(printf 'c%.0s' $(seq 1 40))"
+p725_tick
+t p725-push-reopens-the-lanes 42 "$P725_UNION"
+DUTY_DIR="$P725_SAVED_DUTY"
+if [ -n "$P725_ME_WAS_SET" ]; then ME="$P725_SAVED_ME"; else unset ME; fi
+unset -f gh p725_tick p725_listing p725_comments
+RESUME_FORCE_FRESH=""
+
+# THE THRESHOLD COMPARISON AT ITS BOUNDARY, one below and one at, and at a
+# threshold that is not the shipped 3 — the whole point of a boundary case is
+# that it fails for an off-by-one, and `-ge 3` and `-gt 3` are told apart by the
+# fourth attempt while `-ge 1` and `-gt 1` are told apart by the SECOND, which
+# is where an off-by-one actually hides. Driven through `_resume_breaker`
+# itself, the one comparison all four lanes share.
+p725_breaker() {  # p725_breaker STATE THRESHOLD — one attempt, verdict only
+  printf 'o/r#42@head\tfresh\n' | _resume_breaker "$1" "$2" | cut -f2
+}
+P725_B1="$TMP/p725-breaker-1"
+t p725-threshold-1-dispatches-the-first dispatch "$(p725_breaker "$P725_B1" 1)"
+t p725-threshold-1-suppresses-the-second suppress "$(p725_breaker "$P725_B1" 1)"
+P725_B5="$TMP/p725-breaker-5"
+for _p725_i in 1 2 3 4; do P725_B5_OUT="$(p725_breaker "$P725_B5" 5)"; done
+t p725-threshold-5-dispatches-below dispatch "$P725_B5_OUT"
+t p725-threshold-5-dispatches-at-the-last dispatch "$(p725_breaker "$P725_B5" 5)"
+t p725-threshold-5-suppresses-past-it suppress "$(p725_breaker "$P725_B5" 5)"
+# A HELD tick is not an attempt: the count is of consecutive DISPATCHES, so the
+# comparison must not advance on a tick the ledger withheld. An off-by-one that
+# counted ticks would suppress this one attempt early.
+P725_B2="$TMP/p725-breaker-2"
+printf 'o/r#42@head\tfresh\n' | _resume_breaker "$P725_B2" 2 >/dev/null
+printf 'o/r#42@head\theld\n' | _resume_breaker "$P725_B2" 2 >/dev/null
+t p725-held-tick-is-not-an-attempt dispatch "$(p725_breaker "$P725_B2" 2)"
+t p725-held-tick-then-suppresses suppress "$(p725_breaker "$P725_B2" 2)"
+unset -f p725_breaker
+
 # A ci-red session returning zero does not consume an unsettled same-head item.
 # Red is terminal and remains one-shot; a moved head settles the old key and
 # will independently enter under its new id if it is red.
