@@ -64,6 +64,7 @@ claude_productive_fixture() ( # MODE
       printf '%s\n' '{not-json' \
         >"$HOME/.claude/projects/${dir//\//-}/$sid.jsonl" ;;
     absent) : ;;
+    invalid) sid='../another-session' ;;
   esac
   # shellcheck disable=SC1091  # production profile under test
   source "$SHARED/conf/agents/claude.conf"
@@ -78,6 +79,8 @@ t session-claude-missing-transcript-is-unknown unknown \
   "$(claude_productive_fixture absent)"
 t session-claude-malformed-transcript-is-unknown unknown \
   "$(claude_productive_fixture malformed)"
+t session-claude-invalid-transcript-id-is-unknown unknown \
+  "$(claude_productive_fixture invalid)"
 
 # Exercise run_session itself so a helper-only implementation cannot pass.
 SA_WORK="$TMP/session-work"; mkdir -p "$SA_WORK"
