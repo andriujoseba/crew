@@ -90,11 +90,17 @@ rehearsal_breaker_load_installed_facts() {
   # the lane with the literal `attention` on a box that moved it sets a label
   # the engine never asks for: the leg would then grade a dispatch it never
   # requested, which is this issue's defect in its other direction.
+  #
+  # No `| head -1` and no `| tr`: this file runs under rehearsal.sh's
+  # `pipefail`, where a downstream command that exits early can SIGPIPE the box
+  # read and turn a resolved label into an empty one intermittently (#449).
+  # The trimming is parameter expansion, which cannot fail.
   label="$(bx 'set -a
                . ~/duty/conf/fleet.defaults.conf
                [ ! -f ~/duty/conf/fleet.conf ] || . ~/duty/conf/fleet.conf
-               printf "%s\n" "$LABEL_ATTENTION"' | tr -d '\r' | head -1)" \
-    || label=""
+               printf "%s\n" "$LABEL_ATTENTION"')" || label=""
+  label="${label%%$'\n'*}"
+  label="${label//$'\r'/}"
   case "$threshold" in ''|*[!0-9]*|0) threshold="" ;; esac
   case "$kind" in ''|*[!A-Za-z0-9_-]*) kind="" ;; esac
   case "$label" in *[[:space:]]*) label="" ;; esac
