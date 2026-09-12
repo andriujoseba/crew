@@ -4485,11 +4485,51 @@ fi
 t rehearsal-non-reuse-does-not-query-sandbox 0 "$fresh_sandbox_rc"
 unset -f gh
 
+# The builder prerequisite resolves from the fork network, not from the
+# conventional repository name. This is the collision GitHub answers by
+# naming the fork crew-drill-builder-1.
+gh() {
+  printf '%s\n' '[
+    {"full_name":"box-bot/crew-drill-builder-1","owner":{"login":"box-bot"}},
+    {"full_name":"other/crew-drill-builder","owner":{"login":"other"}}
+  ]'
+}
+t rehearsal-builder-renamed-fork-resolves box-bot/crew-drill-builder-1 \
+  "$(rehearsal_resolve_builder_fork host/crew-drill-builder box-bot)"
+
+if missing_fork_out="$(rehearsal_resolve_builder_fork host/crew-drill-builder nobody 2>&1)"; then
+  missing_fork_rc=0
+else
+  missing_fork_rc=$?
+fi
+t rehearsal-builder-missing-fork-refuses 1 "$missing_fork_rc"
+t rehearsal-builder-missing-fork-names-prerequisite 1 \
+  "$(grep -cF 'no fork of host/crew-drill-builder is owned by box identity nobody' <<<"$missing_fork_out")"
+
+gh() {
+  printf '%s\n' '[
+    {"full_name":"box-bot/crew-drill-builder","owner":{"login":"box-bot"}},
+    {"full_name":"box-bot/crew-drill-builder-1","owner":{"login":"box-bot"}}
+  ]'
+}
+if ambiguous_fork_out="$(rehearsal_resolve_builder_fork host/crew-drill-builder box-bot 2>&1)"; then
+  ambiguous_fork_rc=0
+else
+  ambiguous_fork_rc=$?
+fi
+t rehearsal-builder-ambiguous-forks-refuse 1 "$ambiguous_fork_rc"
+t rehearsal-builder-ambiguous-forks-name-both 2 \
+  "$(grep -Ec 'box-bot/crew-drill-builder(-1)?$' <<<"$ambiguous_fork_out")"
+unset -f gh
+
 # The executable helper above is also bound to the CLI path. Removing the
 # --reuse refusal call from rehearsal.sh makes this mutation guard fail.
 # shellcheck disable=SC2016  # matching literal rehearsal variable references
 t rehearsal-reuse-cli-calls-clean-start-assertion 1 \
   "$(grep -c 'rehearsal_assert_reuse_sandbox_clean "\$REUSE" "\$SANDBOX"' "$ROOT/drill/rehearsal.sh")"
+t rehearsal-builder-fork-gate-precedes-first-tick 1 \
+  "$(sed -n '/box-owned sandbox fork resolves before first tick/,/bx "~\/duty\/bin\/tick.sh"/p' \
+      "$ROOT/drill/rehearsal.sh" | grep -c 'bx "~/duty/bin/tick.sh"')"
 
 # Every object filer records the returned ID in the caller shell immediately;
 # this is what keeps failure paths from escaping the EXIT registry.

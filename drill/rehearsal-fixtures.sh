@@ -174,6 +174,45 @@ rehearsal_assert_reuse_sandbox_clean() {
   fi
 }
 
+# A builder checkout needs a head repository owned by the identity inside the
+# box.  The sandbox belongs to the host identity, so being its collaborator is
+# not enough: ensure_main_clone deliberately refuses to invent a push target.
+# Read the upstream's direct-fork endpoint rather than guessing GitHub's name;
+# an unrelated repository may make GitHub choose crew-drill-builder-1.
+rehearsal_builder_forks() { # <sandbox> <box-identity>
+  local repo="$1" owner="$2"
+  gh api --paginate "repos/$repo/forks?per_page=100" \
+    | jq -sr --arg owner "$owner" '
+        add
+        | .[]
+        | select(.owner.login == $owner)
+        | .full_name'
+}
+
+rehearsal_resolve_builder_fork() { # <sandbox> <box-identity>
+  local repo="$1" owner="$2" matches count
+  if ! matches="$(rehearsal_builder_forks "$repo" "$owner")"; then
+    echo "builder: cannot inspect forks of $repo" >&2
+    return 1
+  fi
+  count="$(awk 'NF { n++ } END { print n+0 }' <<<"$matches")"
+  case "$count" in
+    1) awk 'NF { print; exit }' <<<"$matches" ;;
+    0)
+      echo "builder: no fork of $repo is owned by box identity $owner" >&2
+      return 1 ;;
+    *)
+      echo "builder: $count forks of $repo are owned by box identity $owner; refusing ambiguity:" >&2
+      while read -r fork; do [ -n "$fork" ] && echo "  $fork" >&2; done <<<"$matches"
+      return 1 ;;
+  esac
+}
+
+rehearsal_create_builder_fork() { # <sandbox>
+  local repo="$1"
+  bx "gh api -X POST 'repos/$repo/forks' --jq .full_name"
+}
+
 rehearsal_open_sandbox_objects() {
   local repo="$1"
   gh api "repos/$repo/issues?state=open&per_page=100" --paginate \

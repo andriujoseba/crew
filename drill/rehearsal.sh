@@ -631,6 +631,24 @@ else
   if [ "$REUSE" -eq 1 ]; then
     ok "reuse: sandbox starts with no open fixture objects"
   fi
+  # A builder writes through its own fork, never through the host-owned
+  # sandbox. Create that prerequisite as the box identity and resolve it from
+  # the fork network, where GitHub's collision suffix is authoritative.
+  if [ "$ROLE" = builder ]; then
+    builder_fork="$(rehearsal_resolve_builder_fork "$SANDBOX" "$ME2" 2>/dev/null || true)"
+    if [ -z "$builder_fork" ]; then
+      rehearsal_create_builder_fork "$SANDBOX" >/dev/null \
+        || fail "builder: create box-owned fork of sandbox"
+    fi
+    if builder_fork="$(rehearsal_resolve_builder_fork "$SANDBOX" "$ME2")"; then
+      echo "builder: resolved box-owned fork $builder_fork"
+      ok "builder: box-owned sandbox fork resolves before first tick"
+    else
+      fail "builder: box-owned sandbox fork resolves before first tick"
+      echo "REFUSING before a phase 2 tick: the builder has no unique head repository." >&2
+      exit 1
+    fi
+  fi
   # Create the whole board vocabulary. Triage reads its queue-label set from
   # the installed configuration below, while the builder keys on ready. A
   # missing label makes a fixture silently unbuildable.
