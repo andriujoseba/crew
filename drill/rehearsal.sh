@@ -18,8 +18,9 @@
 # gh and selected-agent CLIs are authenticated (the
 # operator logs the box in between runs; the script never touches
 # credentials): it mints its own GitHub fixtures — a sandbox repo under the
-# HOST's gh identity, a collaborator invite the box accepts itself, an
-# attention-labelled issue, a scratch PR with a review request — and
+# HOST's gh identity, a builder fork under the builder BOX identity, a
+# collaborator invite the box accepts itself, an attention-labelled issue, a
+# scratch PR with a review request — and
 # verifies the attention wake, the review round through both one-shot
 # gates, head dedup, the re-request auto-approve, and gate abuse.
 #

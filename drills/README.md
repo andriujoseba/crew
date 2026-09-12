@@ -439,7 +439,11 @@ operator's GitHub account that carry it.
 
 - a **box** on the host, `crew-drill-<role>`, at 2 CPU / 4 GiB / 20 GiB;
 - a **public sandbox repository**, `<host-gh-identity>/crew-drill-<role>`,
-  which the round then fills with issues, PRs and review traffic.
+  which the round then fills with issues, PRs and review traffic;
+- for the builder role, a **public fork of that sandbox** under the box's
+  GitHub identity. Phase 2 creates it before the first tick and resolves its
+  actual fork-network name, including GitHub's numeric suffix when the
+  conventional name is already occupied.
 
 **A green round tears itself down.** `rehearsal-all.sh` runs
 [`drill/teardown.sh`](../drill/teardown.sh) when every leg passed, removing
@@ -458,6 +462,11 @@ matches the drill pattern, and a name that merely starts with `crew-drill` is
 not a drill box. A sandbox repository has the same two gates — the `<repo>`
 half must be a drill name *and* the owner must be this host's `gh` identity,
 since a round's sandboxes are always `<host-gh-identity>/crew-drill-<role>`.
+The builder fork carries the same two gates in its own ownership domain: its
+name must be `crew-drill-builder` or GitHub's numeric-suffixed form, and its
+owner must equal the identity read from `crew-drill-builder`. Teardown deletes
+the fork through that box before removing the credential-bearing box, then
+deletes the host-owned sandboxes.
 Every target is validated before any is deleted, so a command carrying one bad
 name removes nothing at all, and naming the same target twice deletes it once.
 

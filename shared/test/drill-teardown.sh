@@ -49,6 +49,9 @@ case "${1:-}" in
     n="${2:-}"
     case " ${STUB_BOXES:-} " in *" $n "*) ;; *) exit 1 ;; esac
     printf '[{"name":"%s","created_at":"2026-07-25T09:00:00Z"}]\n' "$n" ;;
+  exec)
+    [ -n "${STUB_BOX_LOGIN:-}" ] || exit 1
+    printf '%s\n' "$STUB_BOX_LOGIN" ;;
   rm) exit "${STUB_BOX_RM_RC:-0}" ;;
   *) exit 1 ;;
 esac
@@ -63,6 +66,12 @@ case "${1:-} ${2:-}" in
     printf '%s\n' "$STUB_LOGIN" ;;
   "api repos/"*)
     slug="${2#repos/}"
+    case "$slug" in
+      */forks\?per_page=100)
+        [ -z "${STUB_FORK_LIST_RC:-}" ] || exit "$STUB_FORK_LIST_RC"
+        printf '%s\n' ${STUB_FORKS:-}
+        exit 0 ;;
+    esac
     # STUB_REPO_LOOKUP_RC is the lookup failing for a reason that is NOT a
     # 404 — codex's transport failure underneath a perfectly good identity.
     # The message shape is gh's: a 404 says so in as many words and anything
@@ -319,6 +328,40 @@ else
   bad "names-boxes-and-repos-with-their-creation-dates (got '$OUT')"
 fi
 
+# The builder's head repository is owned by the box identity, not the host.
+# GitHub may suffix its name when an unrelated repository already occupies
+# the conventional one; teardown discovers that exact fork and deletes it
+# through the box before removing the credential-bearing box itself.
+run "CREW_ROSTER=$FLEET" "STUB_BOXES=crew-drill-builder" \
+    "STUB_LOGIN=danmt" "STUB_BOX_LOGIN=builder-bot" \
+    "STUB_FORKS=builder-bot/crew-drill-builder-1" \
+    "STUB_REPOS=danmt/crew-drill-builder builder-bot/crew-drill-builder-1" \
+  -- --role builder --yes
+if [ "$RC" -eq 0 ] && called "box exec crew-drill-builder -- bash -lc gh repo delete 'builder-bot/crew-drill-builder-1' --yes"; then
+  ok "deletes-renamed-builder-fork-through-box-identity"
+else
+  bad "deletes-renamed-builder-fork-through-box-identity (rc=$RC, calls='$(cat "$CALLS")', got '$OUT')"
+fi
+fork_delete_line="$(grep -nF "gh repo delete 'builder-bot/crew-drill-builder-1'" "$CALLS" | cut -d: -f1)"
+box_delete_line="$(grep -nF 'box rm --force crew-drill-builder' "$CALLS" | cut -d: -f1)"
+if [ -n "$fork_delete_line" ] && [ -n "$box_delete_line" ] \
+    && [ "$fork_delete_line" -lt "$box_delete_line" ]; then
+  ok "deletes-builder-fork-before-credential-bearing-box"
+else
+  bad "deletes-builder-fork-before-credential-bearing-box (calls='$(cat "$CALLS")')"
+fi
+
+run "CREW_ROSTER=$FLEET" "STUB_BOXES=crew-drill-builder" \
+    "STUB_LOGIN=danmt" "STUB_BOX_LOGIN=builder-bot" \
+    "STUB_FORKS=somebody-else/crew-drill-builder-1" \
+    "STUB_REPOS=danmt/crew-drill-builder somebody-else/crew-drill-builder-1" \
+  -- --role builder --yes
+if [ "$RC" -eq 1 ] && says "not by box identity 'builder-bot'" \
+    && ! called "repo delete" && ! called "box rm --force"; then
+  ok "refuses-builder-fork-not-owned-by-box-identity-before-deleting"
+else
+  bad "refuses-builder-fork-not-owned-by-box-identity-before-deleting (rc=$RC, calls='$(cat "$CALLS")', got '$OUT')"
+fi
 # One round, not every round: --role targets a single leg.
 run "CREW_ROSTER=$FLEET" "STUB_BOXES=crew-drill-triage crew-drill-builder" \
     "STUB_LOGIN=danmt" "STUB_REPOS=danmt/crew-drill-triage danmt/crew-drill-builder" \
