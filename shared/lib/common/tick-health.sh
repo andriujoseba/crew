@@ -49,9 +49,17 @@ tick_health_report() { # [duty.log] [now epoch] [window seconds] [notify.log]
         if (ts > last_tick) last_tick=ts
       } else if ((job == "duty" || job == "notify") && $3 == "run" && $4 == "end") {
         active[job]=0
+      # Both lock-skip wordings tick.sh writes, and a boundary is busy under
+      # either: the tick was refused, and whether the holder was the previous
+      # run or a descriptor it left behind (#726) changes who to go looking
+      # for, never whether this boundary produced a tick. Matching one wording
+      # only would have dropped the other from ticks as well as busy, which
+      # ages last_tick toward the reading this log exists to rule out — cron
+      # is dead.
       } else if ((job == "duty" || job == "notify") &&
                  $3 == "tick" && $4 == "skipped:" &&
-                 $0 ~ /previous run still holds the lock/) {
+                 ($0 ~ /previous run still holds the lock/ ||
+                  $0 ~ /lock held with no live holder/)) {
         ticks++
         busy++
         if (ts > last_tick) last_tick=ts

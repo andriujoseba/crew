@@ -44,6 +44,21 @@ fi
 # in-place edit under a running tick corrupts the reader's byte offset
 # (claude-bot, 2026-07-22). The snapshot dies with the run.
 if [ -z "${DUTY_SNAPSHOT:-}" ]; then
+  # The liveness sidecar is written HERE, before the snapshot, and not only
+  # below (#726). tick.sh reads its absence under a refused lock as "the run
+  # that owns this lock has already exited", so every instant between taking
+  # the lock and writing this file is an instant in which a second tick reads
+  # a live run as a leftover descriptor. Measured at ~4ms on an idle box —
+  # invisible to cron's five-minute cadence, and reachable by anything ticking
+  # back to back, which is how the drill reads this engine.
+  #
+  # Its own trap, because traps do not survive `exec`: the re-exec'd image
+  # sets the one below and removes the file on every ordinary exit, while this
+  # one covers the paths that never reach it — a failing `mktemp` or `cp`
+  # under `set -e`, which would otherwise leak a sidecar that outlives its
+  # lock and leave the floor rendering a run that is not there.
+  trap 'rm -f "$DUTY_DIR/.duty.lock.since"' EXIT
+  date +%s >"$DUTY_DIR/.duty.lock.since"
   snap="$(mktemp "${TMPDIR:-/tmp}/duty-snapshot.XXXXXX.sh")"
   cp "$0" "$snap"
   DUTY_SNAPSHOT="$snap" exec bash "$snap"

@@ -4,7 +4,7 @@
 # evidence line per 5-minute boundary, in one of three shapes:
 #
 #   <ts> duty run start            — normal tick (logged by the job itself)
-#   <ts> duty tick skipped: ...    — previous run still holds the lock
+#   <ts> duty tick skipped: ...    — the lock refused this boundary
 #   <ts> duty tick FAILED: ...     — the job exited non-zero
 #
 # Silence at a boundary therefore means exactly one thing: cron itself is
@@ -83,11 +83,40 @@ env "$LOCKVAR=1" DUTY_DIR="$DUTY_DIR" flock -n -E 199 "$LOCK" "$TARGET" >>"$LOG"
 rc=$?
 
 if [ "$rc" -eq 199 ]; then
-  since="unknown"
+  # Two claims, and the sidecar decides which one this boundary gets (#726).
+  #
+  # duty.sh and notify.sh write `$LOCK.since` immediately after taking the
+  # lock and remove it from an EXIT trap, so the file is present for exactly
+  # as long as the run that owns the lock is alive. The floor's probe reads it
+  # on that same invariant — "a value here means a run is in flight RIGHT NOW"
+  # (fleet-floor/server/probe.sh).
+  #
+  # So an ABSENT sidecar under a refused lock is not a missing decoration: it
+  # is evidence that the owner has already exited. `flock` hands the lock on a
+  # descriptor every child inherits, and the lock stands while ANY holder of
+  # that descriptor does — so a run that has exited can leave the lock held by
+  # something it spawned. Until #726 this branch said `previous run still
+  # holds the lock (running unknown)`, which sends an operator hunting for a
+  # duty process that the same line's own evidence says is gone. What to look
+  # for instead is on the preceding SESSION END record: `left=` counts the
+  # processes that outlived that session, and one of them is holding this.
+  #
+  # A sidecar that is present but unreadable is a THIRD state and not the
+  # second: the trap has not run, so the owner IS alive and only its start
+  # time is lost. That state keeps the old wording, which is accurate there —
+  # and it is the only thing that still writes `running unknown`, so that
+  # phrase now means a live run with a corrupt stamp and never an absent one.
   if [ -f "$LOCK.since" ]; then
-    since="$(( $(date +%s) - $(cat "$LOCK.since" 2>/dev/null || echo 0) ))s"
+    since="unknown"
+    stamp="$(cat "$LOCK.since" 2>/dev/null || echo)"
+    case "$stamp" in
+      '' | *[!0-9]*) ;;                                # truncated mid-write
+      *) since="$(( $(date +%s) - stamp ))s" ;;
+    esac
+    echo "$(ts) $JOB tick skipped: previous run still holds the lock (running $since)" >>"$LOG"
+  else
+    echo "$(ts) $JOB tick skipped: lock held with no live holder — the previous run exited; its descriptor was inherited by a process it left behind" >>"$LOG"
   fi
-  echo "$(ts) $JOB tick skipped: previous run still holds the lock (running $since)" >>"$LOG"
 elif [ "$rc" -ne 0 ]; then
   echo "$(ts) $JOB tick FAILED: $JOB.sh exited $rc" >>"$LOG"
 fi
