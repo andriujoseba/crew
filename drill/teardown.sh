@@ -204,6 +204,7 @@ command -v gh >/dev/null 2>&1 && have_gh=1
 # naming the class and the reason. A non-empty list is exit 2 and forbids the
 # clean-host claim, whatever else the run managed to delete.
 declare -a UNINSPECTED=()
+BUILDER_FORK_BLOCKED=0
 
 # Order-preserving dedupe of an array, through a scratch global. No `mapfile`
 # and no namerefs, so this stays where the rest of the drill scripts are, and
@@ -290,6 +291,7 @@ if case " $ROLES " in *" builder "*) true ;; *) false ;; esac \
   builder_sandbox="$REPO_OWNER/crew-drill-builder"
   if ! builder_forks="$(gh api "repos/$builder_sandbox/forks?per_page=100" --paginate \
       --jq '.[].full_name' 2>/dev/null)"; then
+    BUILDER_FORK_BLOCKED=1
     # A measured missing sandbox has no fork network to inspect. Any other
     # failure is accounted for later by the sandbox's own repo_probe.
     if gh api "repos/$builder_sandbox" >/dev/null 2>&1; then
@@ -302,6 +304,7 @@ if case " $ROLES " in *" builder "*) true ;; *) false ;; esac \
         | tr -d '\r\n' || true)"
     fi
     if [ -z "$builder_box_owner" ]; then
+      BUILDER_FORK_BLOCKED=1
       UNINSPECTED+=("builder fork of $builder_sandbox — box identity could not be read")
     else
       while read -r fork; do
@@ -443,6 +446,7 @@ if [ "${#BOXES[@]}" -gt 0 ]; then
     UNINSPECTED+=("boxes (${BOXES[*]}) — 'box list --json' could not be read or parsed")
   else
     for name in "${BOXES[@]}"; do
+      [ "$BUILDER_FORK_BLOCKED" -eq 1 ] && [ "$name" = crew-drill-builder ] && continue
       box_exists "$name" && DOOMED_BOXES+=("$name")
     done
   fi
@@ -464,6 +468,8 @@ if [ "$REPOS_REQUESTED" -eq 1 ] && [ -n "$REPO_INSPECT_FAIL" ]; then
   UNINSPECTED+=("sandbox repositories of this round — $REPO_INSPECT_FAIL")
 else
   for repo in ${REPOS[@]+"${REPOS[@]}"}; do
+    [ "$BUILDER_FORK_BLOCKED" -eq 1 ] \
+      && [ "$repo" = "$REPO_OWNER/crew-drill-builder" ] && continue
     # Per repository, not per class: the identity resolving says the API can be
     # asked, not that it answered. An unanswered lookup names ITS OWN
     # repository on the list, so the operator is told which one is unaccounted

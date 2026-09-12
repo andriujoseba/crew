@@ -362,6 +362,19 @@ if [ "$RC" -eq 1 ] && says "not by box identity 'builder-bot'" \
 else
   bad "refuses-builder-fork-not-owned-by-box-identity-before-deleting (rc=$RC, calls='$(cat "$CALLS")', got '$OUT')"
 fi
+
+run "CREW_ROSTER=$FLEET" "STUB_BOXES=crew-drill-builder" \
+    "STUB_LOGIN=danmt" "STUB_BOX_LOGIN=" \
+    "STUB_FORKS=builder-bot/crew-drill-builder" \
+    "STUB_REPOS=danmt/crew-drill-builder builder-bot/crew-drill-builder" \
+  -- --role builder --yes
+if [ "$RC" -eq 2 ] && says "box identity could not be read" \
+    && ! called "box rm --force crew-drill-builder" \
+    && ! called "repo delete danmt/crew-drill-builder"; then
+  ok "unreadable-fork-owner-preserves-box-and-upstream-for-recovery"
+else
+  bad "unreadable-fork-owner-preserves-box-and-upstream-for-recovery (rc=$RC, calls='$(cat "$CALLS")', got '$OUT')"
+fi
 # One round, not every round: --role targets a single leg.
 run "CREW_ROSTER=$FLEET" "STUB_BOXES=crew-drill-triage crew-drill-builder" \
     "STUB_LOGIN=danmt" "STUB_REPOS=danmt/crew-drill-triage danmt/crew-drill-builder" \

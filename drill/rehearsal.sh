@@ -636,12 +636,31 @@ else
   # sandbox. Create that prerequisite as the box identity and resolve it from
   # the fork network, where GitHub's collision suffix is authoritative.
   if [ "$ROLE" = builder ]; then
-    builder_fork="$(rehearsal_resolve_builder_fork "$SANDBOX" "$ME2" 2>/dev/null || true)"
-    if [ -z "$builder_fork" ]; then
-      rehearsal_create_builder_fork "$SANDBOX" >/dev/null \
-        || fail "builder: create box-owned fork of sandbox"
+    builder_fork=""
+    builder_fork_probe="$(rehearsal_resolve_builder_fork "$SANDBOX" "$ME2" 2>&1)"
+    builder_fork_probe_rc=$?
+    if [ "$builder_fork_probe_rc" -eq 0 ]; then
+      builder_fork="$builder_fork_probe"
+    elif grep -Fq "no fork of $SANDBOX is owned by box identity $ME2" \
+        <<<"$builder_fork_probe"; then
+      if rehearsal_create_builder_fork "$SANDBOX" >/dev/null; then
+        ok "builder: create box-owned fork of sandbox"
+      else
+        fail "builder: create box-owned fork of sandbox"
+      fi
+      # GitHub may return from fork creation before the direct-fork endpoint
+      # exposes the repository. Bound that propagation wait well below the PR
+      # fixture's 1800-second wait, which this prerequisite must precede.
+      builder_fork_deadline=$((SECONDS + 60))
+      while [ "$SECONDS" -lt "$builder_fork_deadline" ]; do
+        builder_fork="$(rehearsal_resolve_builder_fork "$SANDBOX" "$ME2" 2>/dev/null || true)"
+        [ -n "$builder_fork" ] && break
+        sleep 2
+      done
+    else
+      printf '%s\n' "$builder_fork_probe" >&2
     fi
-    if builder_fork="$(rehearsal_resolve_builder_fork "$SANDBOX" "$ME2")"; then
+    if [ -n "$builder_fork" ]; then
       echo "builder: resolved box-owned fork $builder_fork"
       ok "builder: box-owned sandbox fork resolves before first tick"
     else
