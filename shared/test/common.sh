@@ -589,7 +589,15 @@ cp "$SHARED/lib/common.sh" "$SHARED/lib/duty-attention.sh" \
   "$BREAKER_FACTS_HOME/duty/lib/"
 ln -s "$SHARED/lib/common" "$BREAKER_FACTS_HOME/duty/lib/common"
 AGENT=claude
-bx() { HOME="$BREAKER_FACTS_HOME" bash -c "$1"; }
+# DUTY_DIR is exported, and points somewhere else. A real drill box's login
+# shell exports it, and common.sh derives `CONF_DIR="$DUTY_DIR/conf"`
+# unconditionally at source time (shared/lib/common.sh:11,17) — so a read that
+# sets CONF_DIR and then sources the library has its value overwritten and
+# resolves another tree's conf. Pinning DUTY_DIR here is what makes the rows
+# below assert the box's OWN configuration rather than this machine's.
+bx() {
+  HOME="$BREAKER_FACTS_HOME" DUTY_DIR=/nonexistent-duty bash -c "$1"
+}
 ok() { :; }
 fail() { :; }
 if rehearsal_breaker_load_installed_facts; then r1=resolved; else r1=WRONG; fi
