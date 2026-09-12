@@ -411,6 +411,22 @@ if [ "$RC" -eq 2 ] && says "builder forks of danmt/crew-drill-builder" \
 else
   bad "an-existing-sandbox-with-an-unreadable-fork-network-preserves-recovery-resources (rc=$RC, calls='$(cat "$CALLS")', got '$OUT')"
 fi
+
+# Neither adjacent failure proves absence. If the fork list and its fallback
+# sandbox probe both fail without a 404, preserve the only credentials that
+# can remove a possibly standing box-owned fork and name both unknowns.
+run "CREW_ROSTER=$FLEET" "STUB_BOXES=crew-drill-builder" \
+    "STUB_LOGIN=danmt" "STUB_REPOS=danmt/crew-drill-builder" \
+    "STUB_FORK_LIST_RC=1" "STUB_REPO_LOOKUP_RC=1" \
+  -- --role builder --yes
+if [ "$RC" -eq 2 ] && says "builder forks of danmt/crew-drill-builder" \
+    && says "sandbox lookup also failed" \
+    && ! called "box rm --force crew-drill-builder" \
+    && ! called "repo delete danmt/crew-drill-builder"; then
+  ok "an-unanswerable-sandbox-probe-preserves-builder-fork-recovery-resources"
+else
+  bad "an-unanswerable-sandbox-probe-preserves-builder-fork-recovery-resources (rc=$RC, calls='$(cat "$CALLS")', got '$OUT')"
+fi
 # One round, not every round: --role targets a single leg.
 run "CREW_ROSTER=$FLEET" "STUB_BOXES=crew-drill-triage crew-drill-builder" \
     "STUB_LOGIN=danmt" "STUB_REPOS=danmt/crew-drill-triage danmt/crew-drill-builder" \

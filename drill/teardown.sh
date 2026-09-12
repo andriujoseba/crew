@@ -281,6 +281,42 @@ if [ "$REPOS_REQUESTED" -eq 1 ]; then
   fi
 fi
 
+# `gh repo view` cannot tell "no such repository" from "the API did not
+# answer": it is GraphQL, and both come back as exit 1. Reading that non-zero
+# as absence is how a live identity and a dead network together reported a
+# clean host while every sandbox stood — the class-level gates above catch no
+# gh, no login and an unanswerable `gh api user`, and caught nothing at all
+# once the identity resolved and the per-repository lookup was the thing that
+# failed.
+#
+# The REST endpoint CAN tell them apart, so the probe answers three ways and
+# only ONE of them is absence:
+#
+#   0  it exists
+#   1  measured absent — HTTP 404, and nothing else reaches this
+#   2  could not tell — gh's own reason on stdout, for UNINSPECTED
+#
+# Worth writing down rather than papering over: GitHub answers 404 for a
+# PRIVATE repository the token cannot see, so a measured absence is really
+# "absent to this identity". That is the API's shape and not this script's,
+# and it is still the safe direction — a repository this identity cannot see
+# is not one this identity can delete either.
+repo_probe() {
+  local err rc=0
+  err="$(gh api "repos/$1" --jq .full_name 2>&1 >/dev/null)" || rc=$?
+  [ "$rc" -eq 0 ] && return 0
+  case "$err" in
+    *"HTTP 404"*|*"Not Found"*) return 1 ;;
+  esac
+  err="${err:-gh api repos/$1 exited $rc and said nothing}"
+  # One line, bounded: this reason is printed inside a NOT inspected list, and
+  # gh answers some failures with a whole JSON body.
+  err="${err//$'\n'/ }"
+  err="${err//$'\r'/ }"
+  printf '%.200s\n' "$err"
+  return 2
+}
+
 # The builder role has a third resource: the box identity's direct fork of
 # the host-owned sandbox. Discover its GitHub-assigned name from the fork
 # network (it may carry a numeric collision suffix), then validate it below
@@ -290,13 +326,28 @@ if case " $ROLES " in *" builder "*) true ;; *) false ;; esac \
     && [ "$have_gh" -eq 1 ] && [ -n "$REPO_OWNER" ]; then
   builder_sandbox="$REPO_OWNER/crew-drill-builder"
   if ! builder_forks="$(gh api "repos/$builder_sandbox/forks?per_page=100" --paginate \
-      --jq '.[].full_name' 2>/dev/null)"; then
+      --jq '.[].full_name' 2>&1)"; then
     # A measured missing sandbox has no fork network to inspect and nothing
-    # to preserve. Only a genuine inspection failure blocks the box.
-    if gh api "repos/$builder_sandbox" >/dev/null 2>&1; then
-      BUILDER_FORK_BLOCKED=1
-      UNINSPECTED+=("builder forks of $builder_sandbox — fork-list API failed")
-    fi
+    # to preserve. An existing OR uninspectable sandbox may still carry the
+    # box-owned fork, so both preserve the credential-bearing box. Keep a
+    # 404 from the fork-list endpoint itself: it already measured absence,
+    # and a second call cannot make that answer less certain.
+    case "$builder_forks" in
+      *"HTTP 404"*|*"Not Found"*) ;;
+      *)
+        builder_sandbox_why=""
+        builder_sandbox_rc=0
+        builder_sandbox_why="$(repo_probe "$builder_sandbox")" || builder_sandbox_rc=$?
+        case "$builder_sandbox_rc" in
+          1) ;;
+          0)
+            BUILDER_FORK_BLOCKED=1
+            UNINSPECTED+=("builder forks of $builder_sandbox — fork-list API failed") ;;
+          *)
+            BUILDER_FORK_BLOCKED=1
+            UNINSPECTED+=("builder forks of $builder_sandbox — fork-list API failed; sandbox lookup also failed: $builder_sandbox_why") ;;
+        esac ;;
+    esac
   elif [ -n "$builder_forks" ]; then
     builder_box_owner=""
     if [ "$have_box" -eq 1 ]; then
@@ -400,42 +451,6 @@ repo_created() {
   local d
   d="$(gh api "repos/$1" --jq '.created_at // "unknown"' 2>/dev/null | tr -d '\r\n' || true)"
   printf '%s\n' "${d:-unknown}"
-}
-
-# `gh repo view` cannot tell "no such repository" from "the API did not
-# answer": it is GraphQL, and both come back as exit 1. Reading that non-zero
-# as absence is how a live identity and a dead network together reported a
-# clean host while every sandbox stood — the class-level gates above catch no
-# gh, no login and an unanswerable `gh api user`, and caught nothing at all
-# once the identity resolved and the per-repository lookup was the thing that
-# failed.
-#
-# The REST endpoint CAN tell them apart, so the probe answers three ways and
-# only ONE of them is absence:
-#
-#   0  it exists
-#   1  measured absent — HTTP 404, and nothing else reaches this
-#   2  could not tell — gh's own reason on stdout, for UNINSPECTED
-#
-# Worth writing down rather than papering over: GitHub answers 404 for a
-# PRIVATE repository the token cannot see, so a measured absence is really
-# "absent to this identity". That is the API's shape and not this script's,
-# and it is still the safe direction — a repository this identity cannot see
-# is not one this identity can delete either.
-repo_probe() {
-  local err rc=0
-  err="$(gh api "repos/$1" --jq .full_name 2>&1 >/dev/null)" || rc=$?
-  [ "$rc" -eq 0 ] && return 0
-  case "$err" in
-    *"HTTP 404"*|*"Not Found"*) return 1 ;;
-  esac
-  err="${err:-gh api repos/$1 exited $rc and said nothing}"
-  # One line, bounded: this reason is printed inside a NOT inspected list, and
-  # gh answers some failures with a whole JSON body.
-  err="${err//$'\n'/ }"
-  err="${err//$'\r'/ }"
-  printf '%.200s\n' "$err"
-  return 2
 }
 
 declare -a DOOMED_BOXES=() DOOMED_REPOS=() DOOMED_BUILDER_FORKS=()
