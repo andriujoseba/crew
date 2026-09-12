@@ -655,6 +655,7 @@ _session_resume_admitted() { # _session_resume_admitted RC VERDICT
 _session_resume_record() {
   local kind="$1" key="$2" dir="$3" rc="$4" wall="$5" logb="$6" survivor_count="$7"
   local verdict="$8" acted="$9" slog="${10}" productive=no state record_sid
+  local transcript_productive=unknown hook_rc
   state="$(_session_resume_state "$kind" "$key")"
   # TIMEOUT keeps its 124 invariant. MEMORY instead requires only a dirty end:
   # its raw status varies with which kernel/timeout signal reached reap first.
@@ -669,13 +670,23 @@ _session_resume_record() {
   [ "$record_sid" != unknown ] || record_sid="$_SESSION_OBSERVED_SID"
   _session_sid_valid "$record_sid" \
     || { rm -f "$state" 2>/dev/null || true; return 0; }
-  # `acted` is resolved through the active shipped profile before this call.
-  # Only a positive classification earns a resume: `no` did no durable work,
-  # and `unknown` includes the incident's real 15-byte `Execution error` body.
-  # Keep terminal as a second refusal so vendor endings never become resumable
-  # if a profile's action vocabulary later recognizes text around the banner.
-  if [ "$acted" = yes ] && ! session_terminal "$slog"; then
-    productive=yes
+  # The optional profile hook reads the killed session's own addressable
+  # artifact. Its positive or negative answer outranks stdout; an absent hook
+  # or `cannot tell` preserves the shipped action-classifier fallback. Keep
+  # terminal as a second refusal so vendor endings never become resumable if a
+  # profile's transcript vocabulary later recognizes work around the banner.
+  if declare -F bot_session_productive >/dev/null 2>&1; then
+    bot_session_productive "$record_sid" "$dir" && hook_rc=0 || hook_rc=$?
+    case "$hook_rc" in
+      0) transcript_productive=yes ;;
+      1) transcript_productive=no ;;
+    esac
+  fi
+  if ! session_terminal "$slog"; then
+    if [ "$transcript_productive" = yes ] \
+        || { [ "$transcript_productive" = unknown ] && [ "$acted" = yes ]; }; then
+      productive=yes
+    fi
   fi
   case "$wall" in '' | *[!0-9]*) wall=0 ;; esac
   printf 'kind=%s\nkey=%s\nsid=%s\nhead=%s\nwall=%s\ntry=%s\nlog=%s\noutcome=%s\nproductive=%s\nleft=%s\n' \
