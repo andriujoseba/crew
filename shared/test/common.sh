@@ -5438,6 +5438,114 @@ t notify-lock-sentinel-rc 199 "$nlock_rc"
 case "$nlock_out" in *"already holds"*) r1=message ;; *) r1=silent ;; esac
 t notify-lock-sentinel-message message "$r1"
 
+# --- tick.sh's refused tick: which holder refused it (#726) ---------------
+#
+# The 199 branch had one sentence for two states, and wrote `previous run
+# still holds the lock (running unknown)` exactly when the sidecar was already
+# gone — which is exactly when the run that owns the lock has run its EXIT
+# trap and left. What still holds the lock there is a descriptor a child
+# inherited, so the one state where the line could say something useful was
+# the state where it sent an operator hunting for a process that is not there.
+#
+# Driven against the REAL tick.sh in the installed tree above, with the lock
+# genuinely held and the sidecar staged present and absent, so nothing here is
+# a fixture standing in for the wording. The holder is a background flock on
+# fd 9 — the shape the defect describes, a descriptor outliving nothing in
+# particular — released by removing a sentinel file rather than by a sleep,
+# because a tick fired one instant early would RUN duty.sh instead of skipping
+# and the row would read as a wording failure.
+#
+# The holder announces itself with a file rather than the test probing the
+# lock: a probe is a second contender, and one that wins the race refuses the
+# holder instead of observing it — the lock then never gets taken, every tick
+# below RUNS, and nine rows red for a reason that has nothing to do with the
+# wording they assert. The producer signals; the reader follows.
+TK_HOLD="$TMP/tick-lock-held"
+TK_READY="$TMP/tick-lock-ready"
+TK_ERR="$TMP/tick-lock-stderr"
+tk_take() {
+  local i=0
+  : >"$TK_HOLD"
+  rm -f "$TK_READY"
+  ( flock -n 9 || exit 1; : >"$TK_READY"; while [ -e "$TK_HOLD" ]; do sleep 0.05; done ) \
+    9>"$LHOME/duty/.duty.lock" &
+  TK_PID=$!
+  while [ "$i" -lt 200 ]; do
+    [ ! -e "$TK_READY" ] || return 0
+    sleep 0.05
+    i=$((i + 1))
+  done
+  return 1
+}
+tk_drop() { rm -f "$TK_HOLD"; wait "$TK_PID" 2>/dev/null || true; }
+tk_skip_line() { # STAMP|absent -> the one line that boundary produced
+  case "$1" in
+    absent) rm -f "$LHOME/duty/.duty.lock.since" ;;
+    *) printf '%s\n' "$1" >"$LHOME/duty/.duty.lock.since" ;;
+  esac
+  env HOME="$LHOME" DUTY_DIR="$LHOME/duty" /bin/bash "$LHOME/duty/bin/tick.sh" duty \
+    >/dev/null 2>>"$TK_ERR"
+  grep 'tick skipped:' "$LHOME/duty/duty.log" | tail -1
+}
+: >"$TK_ERR"
+if tk_take; then r1=held; else r1=FREE; fi
+t tick-skip-fixture-really-holds-the-lock held "$r1"
+TK_ORPHAN="$(tk_skip_line absent)"
+TK_LIVE="$(tk_skip_line "$(( $(date +%s) - 42 ))")"
+TK_CORRUPT="$(tk_skip_line not-a-number)"
+tk_drop
+
+# The absent sidecar: the second claim, and the whole of the issue.
+t tick-skip-orphan-names-no-live-holder 1 \
+  "$(grep -c 'lock held with no live holder' <<<"$TK_ORPHAN" || true)"
+t tick-skip-orphan-names-the-descriptor-as-inherited 1 \
+  "$(grep -c 'descriptor was inherited' <<<"$TK_ORPHAN" || true)"
+# ...and it says nothing about a run that is still going. This row is the
+# defect, stated as its own assertion: the old branch reached this state and
+# printed the sentence below it.
+t tick-skip-orphan-never-claims-a-running-previous-run 0 \
+  "$(grep -c 'previous run still holds the lock' <<<"$TK_ORPHAN" || true)"
+# The evidence contract is untouched: still one line, still the skip shape
+# tick.sh's header promises, so every reader that partitions a boundary on
+# `<job> tick skipped:` sees this one exactly as it saw the other.
+t tick-skip-orphan-keeps-the-evidence-shape 1 \
+  "$(grep -cE '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z duty tick skipped: ' \
+    <<<"$TK_ORPHAN" || true)"
+
+# The present, readable sidecar: unchanged, duration and all.
+t tick-skip-live-holder-is-unchanged 1 \
+  "$(grep -cF 'previous run still holds the lock (running 42s)' <<<"$TK_LIVE" || true)"
+
+# The present but unreadable sidecar is a THIRD state and not the second: the
+# trap has not run, so the owner is alive and only its stamp is lost. It keeps
+# the old wording, which is accurate there — and it is now the only producer of
+# `running unknown`, so that phrase stops meaning "no holder" for good.
+t tick-skip-corrupt-stamp-still-names-a-live-run 1 \
+  "$(grep -cF 'previous run still holds the lock (running unknown)' <<<"$TK_CORRUPT" || true)"
+# ...and it produces a line at all. Before this, a non-numeric stamp reached
+# `$(( now - <word> ))` under `set -u`, which aborted tick.sh at that line and
+# wrote NOTHING — silence at a boundary, the one reading the evidence contract
+# reserves for a dead cron.
+t tick-skip-corrupt-stamp-is-not-an-error 0 "$(wc -c <"$TK_ERR" | tr -d ' ')"
+
+# --- and both wordings reach both readers of the line --------------------
+#
+# The coupling is the risk this fix creates: two files partition boundaries by
+# matching the sentence, and a wording that reaches only one of them drops a
+# refused tick from `ticks` as well as `busy` — which ages `last_tick` toward
+# the one reading duty.log exists to rule out. Both rows below are fed the
+# strings tick.sh ACTUALLY emitted above, so a future rewording that misses a
+# reader reds here instead of going quiet on a box.
+t tick-skip-orphan-line-reads-as-locked-to-the-breaker locked \
+  "$(rehearsal_breaker_tick_outcome_from_log "$TK_ORPHAN")"
+t tick-skip-live-line-reads-as-locked-to-the-breaker locked \
+  "$(rehearsal_breaker_tick_outcome_from_log "$TK_LIVE")"
+TK_HEALTH_LOG="$TMP/tick-health-726.log"
+printf '%s\n%s\n%s\n' "$TK_ORPHAN" "$TK_LIVE" "$TK_CORRUPT" >"$TK_HEALTH_LOG"
+t tick-skip-both-wordings-are-busy-ticks 'ticks=3 busy=3' \
+  "$(sed -n 's/^TICK_HEALTH .* \(ticks=[0-9]* busy=[0-9]*\)$/\1/p' \
+    <<<"$(tick_health_report "$TK_HEALTH_LOG" "$(date -u +%s)" 86400 "$TK_HEALTH_LOG")")"
+
 # --- notify repo set: work repos union additive handoff targets (#316) ----
 # Run the real notifier with an empty-board gh shim. This observes every
 # repository it queries without network access or duplicating its set logic in
