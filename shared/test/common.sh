@@ -476,6 +476,46 @@ else
 fi
 t rehearsal-breaker-hand-resume-mutation-reds red "$r1"
 
+# --- which of tick.sh's evidence shapes a slice carries (#724) ------------
+#
+# The contract guarantees exactly one line per boundary (shared/bin/tick.sh:4-8),
+# and the leg grades a lane only on the POSITIVE one. Driven against the
+# emitters byte for byte: `duty run start` is duty.sh:61, the skip line is
+# tick.sh:90, the FAILED line is tick.sh:92.
+BREAKER_RAN_SLICE="2026-09-12T15:54:29Z duty run start
+2026-09-12T15:54:29Z SESSION START kind=$BREAKER_KIND key=owner/repo#1 timeout=5s log=/tmp/t
+2026-09-12T15:54:30Z duty run end"
+t rehearsal-breaker-outcome-run-start-is-evidence ran \
+  "$(rehearsal_breaker_tick_outcome_from_log "$BREAKER_RAN_SLICE")"
+t rehearsal-breaker-outcome-lock-skip-is-locked locked \
+  "$(rehearsal_breaker_tick_outcome_from_log \
+    '2026-09-12T15:54:29Z duty tick skipped: previous run still holds the lock (running unknown)')"
+t rehearsal-breaker-outcome-failed-tick-is-failed failed \
+  "$(rehearsal_breaker_tick_outcome_from_log \
+    '2026-09-12T15:54:29Z duty tick FAILED: duty.sh exited 3')"
+# An empty slice is what an invocation that never landed leaves behind, and
+# before #724's round it was read as "not a lock-skip, therefore it ran".
+t rehearsal-breaker-outcome-empty-slice-is-silent silent \
+  "$(rehearsal_breaker_tick_outcome_from_log '')"
+# ...and so is a slice of SESSION lines with no framing: the mark the leg reads
+# is tick.sh's, not the job's, so a lane cannot vouch for its own tick.
+t rehearsal-breaker-outcome-unframed-session-lines-are-silent silent \
+  "$(rehearsal_breaker_tick_outcome_from_log \
+    "2026-09-12T15:54:29Z SESSION START kind=$BREAKER_KIND key=owner/repo#1 timeout=5s log=/tmp/t")"
+# tick.sh writes FAILED after the job has usually already written its own start
+# record (common/tick-health.sh:60). That pair is a job that began and aborted,
+# so the slice is a partial run: `failed` has to be read BEFORE `ran`.
+t rehearsal-breaker-outcome-started-then-failed-is-failed failed \
+  "$(rehearsal_breaker_tick_outcome_from_log \
+    "$BREAKER_RAN_SLICE
+2026-09-12T15:54:31Z duty tick FAILED: duty.sh exited 3")"
+# A lock-skipped tick never reaches the job, so it can carry no start record —
+# but a leg reading the marks in the wrong order would call this one `ran`.
+t rehearsal-breaker-outcome-lock-skip-outranks-a-stale-start locked \
+  "$(rehearsal_breaker_tick_outcome_from_log \
+    "$BREAKER_RAN_SLICE
+2026-09-12T15:54:31Z duty tick skipped: previous run still holds the lock (running unknown)")"
+
 t rehearsal-breaker-summary-skipped-phase-incomplete \
   "INCOMPLETE breaker  (phase 2 skipped)" \
   "$(rehearsal_breaker_summary 1 ' builder' 2)"
@@ -520,6 +560,24 @@ else
   r1=red
 fi
 t rehearsal-breaker-standing-attention-mutation-reds red "$r1"
+# The post-recovery clear reads the label the leg ARMED, which on a box whose
+# operator moved LABEL_ATTENTION is not `attention` (#724). Keyed on the
+# literal, this row passes on a board where the demand is still parked — the
+# clear is certified by looking for a label nothing ever set.
+if rehearsal_breaker_attention_is_clear_from_json \
+    '{"labels":[{"name":"needs-human"}]}' needs-human; then
+  r1=WRONG
+else
+  r1=red
+fi
+t rehearsal-breaker-standing-renamed-attention-mutation-reds red "$r1"
+if rehearsal_breaker_attention_is_clear_from_json \
+    '{"labels":[{"name":"attention"}]}' needs-human; then
+  r1=clear
+else
+  r1=WRONG
+fi
+t rehearsal-breaker-renamed-lane-ignores-the-literal-label clear "$r1"
 
 # Drive the real installed-facts loader against the shipped conf/library
 # shape. SESSION_TERMINAL_THRESHOLD intentionally defers to the operating
@@ -531,13 +589,58 @@ cp "$SHARED/lib/common.sh" "$SHARED/lib/duty-attention.sh" \
   "$BREAKER_FACTS_HOME/duty/lib/"
 ln -s "$SHARED/lib/common" "$BREAKER_FACTS_HOME/duty/lib/common"
 AGENT=claude
-bx() { HOME="$BREAKER_FACTS_HOME" bash -c "$1"; }
+# DUTY_DIR is exported, and points somewhere else. A real drill box's login
+# shell exports it, and common.sh derives `CONF_DIR="$DUTY_DIR/conf"`
+# unconditionally at source time (shared/lib/common.sh:11,17) — so a read that
+# sets CONF_DIR and then sources the library has its value overwritten and
+# resolves another tree's conf. Pinning DUTY_DIR here is what makes the rows
+# below assert the box's OWN configuration rather than this machine's.
+bx() {
+  HOME="$BREAKER_FACTS_HOME" DUTY_DIR=/nonexistent-duty bash -c "$1"
+}
 ok() { :; }
 fail() { :; }
 if rehearsal_breaker_load_installed_facts; then r1=resolved; else r1=WRONG; fi
 t rehearsal-breaker-shipped-threshold-resolves resolved "$r1"
 t rehearsal-breaker-shipped-threshold-is-numeric 3 \
-  "$REHEARSAL_BREAKER_THRESHOLD"
+  "${REHEARSAL_BREAKER_THRESHOLD-}"
+# ...and the lane's LABEL off the same box (#724). The leg arms the lane by
+# setting it, and duty_attention fetches `labels=$LABEL_ATTENTION`
+# (duty-attention.sh:115) — so the name has to be the box's, read the way
+# load_fleet_conf resolves it, or the leg arms a label the engine never asks
+# for and then grades a dispatch nobody requested.
+t rehearsal-breaker-shipped-label-resolves attention "${REHEARSAL_BREAKER_LABEL-}"
+# LABEL_ATTENTION is NOT one of the six wire marks load_fleet_conf restores
+# over fleet.conf (common/conf.sh:14-24), so an operator file genuinely moves
+# it. Driven against a real second file rather than pinned by a grep for the
+# source text: a read that sourced the two in the wrong order passes the grep.
+printf 'LABEL_ATTENTION="needs-human"\n' \
+  >"$BREAKER_FACTS_HOME/duty/conf/fleet.conf"
+if rehearsal_breaker_load_installed_facts; then r1=resolved; else r1=WRONG; fi
+t rehearsal-breaker-operator-label-resolves resolved "$r1"
+t rehearsal-breaker-operator-label-overrides-the-default needs-human \
+  "${REHEARSAL_BREAKER_LABEL-}"
+# A box whose configuration resolves no label refuses, exactly as it refuses a
+# threshold it cannot read: arming a lane with an empty name arms nothing, and
+# the leg would then report the engine for an absence it created itself.
+printf 'LABEL_ATTENTION=""\n' >"$BREAKER_FACTS_HOME/duty/conf/fleet.conf"
+if rehearsal_breaker_load_installed_facts; then r1=WRONG; else r1=red; fi
+t rehearsal-breaker-empty-label-mutation-reds red "$r1"
+# ...and it says WHICH of the three did not resolve. Fail-closed is only a
+# favour to the operator if they can tell the box's configuration apart from
+# the box being unreachable, and one row name covers all three facts.
+r1="$(rehearsal_breaker_load_installed_facts)" || true
+t rehearsal-breaker-refusal-names-the-unresolved-fact \
+  '  unresolved: attention label' "$r1"
+# The list is built from what actually refused, not written out: with the
+# library gone, the threshold read and the label read both fail and the lane
+# kind — read with `sed` off duty-attention.sh — still resolves.
+mv "$BREAKER_FACTS_HOME/duty/lib/common.sh" "$BREAKER_FACTS_HOME/common.sh.away"
+r1="$(rehearsal_breaker_load_installed_facts 2>/dev/null)" || true
+t rehearsal-breaker-refusal-names-every-unresolved-fact \
+  '  unresolved: terminal threshold, attention label' "$r1"
+mv "$BREAKER_FACTS_HOME/common.sh.away" "$BREAKER_FACTS_HOME/duty/lib/common.sh"
+rm -f "$BREAKER_FACTS_HOME/duty/conf/fleet.conf"
 unset -f bx ok fail
 
 BREAKER_FIXTURE_HOME="$TMP/rehearsal-breaker-fixture"
@@ -657,6 +760,7 @@ breaker_hooked_out="$({
     REHEARSAL_BREAKER_THRESHOLD=1
     REHEARSAL_BREAKER_KIND=attention
     REHEARSAL_BREAKER_STATE=/tmp/breaker-state
+    REHEARSAL_BREAKER_LABEL=attention
   }
   rehearsal_breaker_profile_has_hook() { return 0; }
   rehearsal_breaker_terminal_fixture_is_classified() { return 0; }
@@ -664,11 +768,35 @@ breaker_hooked_out="$({
     REHEARSAL_BREAKER_DIR=/tmp/breaker-fixture
     return 0
   }
-  rehearsal_breaker_tick_log() { :; }
+  # Since #724's round the leg grades a tick on the POSITIVE mark tick.sh
+  # guarantees, so a box that answers every command with success and writes
+  # nothing is an unreachable box and this leg stops at it — which is the fix
+  # working. This stub is about a fully-hooked profile reaching the threshold
+  # probe, so it models a box whose ticks RUN: a measurable log, and a slice
+  # carrying the `duty run start` a real tick's job writes.
+  rehearsal_breaker_tick_log() {
+    printf '%s\n' '2026-09-12T15:54:29Z duty run start'
+  }
   rehearsal_breaker_restore_cli_for_recovery() { return 0; }
   rehearsal_breaker_restore_cli() { return 0; }
-  bx() { return 0; }
-  gh() { return 0; }
+  bx() {
+    case "$1" in
+      *'wc -l'*) printf '0\n' ;;
+      *) return 0 ;;
+    esac
+  }
+  # Since #724 the arming is graded on a re-read of the issue, so a board that
+  # answers nothing is an unarmed lane and this leg stops at it. The stub now
+  # answers that read; the SHAPE of the read is graded in shared/test/drill.sh,
+  # and what this fixture is still about is the fully-hooked profile reaching
+  # the threshold probe at all.
+  gh() {
+    case "$*" in
+      *' -X '*) return 0 ;;
+      *issues/1) printf '{"state":"open","labels":[{"name":"attention"}]}\n' ;;
+      *) return 0 ;;
+    esac
+  }
   ok() { :; }
   fail() { FAILS+=("$1"); }
   skip() { :; }
