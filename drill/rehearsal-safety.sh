@@ -38,6 +38,26 @@ REHEARSAL_ATTENTION_PICKUPS_BEFORE=""
 # Why the census half said no, in the words the caller's refusal prints.
 REHEARSAL_ATTENTION_REASON=""
 
+# Builder and reviewer fixtures need the host and box to be counterparties.
+# GitHub cannot create either fixture when one account occupies both sides:
+# an owner cannot fork its own repository into itself, and a pull request
+# author cannot be requested for or submit a review on that pull request.
+# Triage has neither dependency and remains valid under the same identity.
+# Kept here so shared/test/drill.sh can drive both sides without a box host.
+rehearsal_phase2_identity_guard() { # <role> <box-identity> <host-identity>
+  local role="$1" box_identity="$2" host_identity="$3"
+  case "$role" in
+    triage) return 0 ;;
+    builder|reviewer)
+      if [ "$box_identity" = "$host_identity" ]; then
+        printf '%s\n' "phase 2 $role refused: box identity '$box_identity' equals host identity '$host_identity'; GitHub forbids forking a repository into its own owner and requesting or submitting a review on one's own pull request"
+        return 1
+      fi
+      ;;
+    *) return 1 ;;
+  esac
+}
+
 rehearsal_disarm_cron() {
   bx "if command -v crontab >/dev/null 2>&1; then
         tmp=\$(mktemp)

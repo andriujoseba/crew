@@ -42,6 +42,14 @@ The three boxes may share ONE GitHub identity. That is safe **only** because
 disjoint registries, disjoint work. Under the previous org-wide review sweep
 all three would have raced for the same verdicts.
 
+That shared box identity must differ from the **host's** GitHub identity for
+the `builder` and `reviewer` roles. GitHub does not let an owner fork its own
+repository into itself, request a pull-request author as reviewer, or let that
+author submit a review on the same pull request. Phase 2 therefore fails those
+two roles before minting a fixture when the identities match. `triage` needs
+neither a fork nor a review counterparty and remains valid with matching
+identities.
+
 `--agent <name>` (default `claude`) selects the runtime; the available agents
 are the profiles under `shared/conf/agents/`. Pass it consistently —
 `drill/rehearsal.sh --agent grok` derives the `grok-box` template, installer

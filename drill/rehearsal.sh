@@ -134,6 +134,10 @@ SKIP=0
 # proved acquisition and install and NOTHING about duty, so it must never
 # be reportable as a pass — see the summary at the bottom.
 PHASE2_RAN=0
+# A role can reach phase 2 but be refused before its first fixture. Keep that
+# distinct from an unauthenticated skip so the summary says FAIL while the
+# later role-independent phase-2 fixtures stay untouched.
+PHASE2_ROLE_READY=0
 # The orchestrator needs to know whether a non-zero role still left an
 # installed box that independent sections can safely exercise. Exit status
 # alone cannot distinguish that from a failure before the box existed (#491).
@@ -613,6 +617,12 @@ else
   rehearsal_section_status phase2
   ME2="$(bx "gh api user --jq .login" | tr -d '\r\n')"
   HOST_ME="$(gh api user --jq .login)"
+  if ! phase2_identity_reason="$(
+      rehearsal_phase2_identity_guard "$ROLE" "$ME2" "$HOST_ME"
+    )"; then
+    fail "$phase2_identity_reason"
+  else
+  PHASE2_ROLE_READY=1
   # One sandbox PER ROLE. The three drill boxes may share one identity, but
   # never a registry: repos.txt is the scope for every module now, so
   # disjoint sandboxes are what keeps three concurrent drills from racing.
@@ -1081,11 +1091,12 @@ else
   check "gate: verdict count unchanged" verdicts_unchanged
   check "gate: short SHA refused" bx "! ~/duty/bin/submit-verdict.sh '$SANDBOX' '$pr' abc123 approve /tmp/drill-body"
   fi
+  fi
 fi
 
 # Role-independent: exercise the worktree hygiene that runs on every role box
 # only after that role's own phase-2 fixtures have finished.
-if [ "$PHASE2_RAN" -eq 1 ]; then
+if [ "$PHASE2_ROLE_READY" -eq 1 ]; then
   hygiene_failures_before="${#FAILS[@]}"
   if rehearsal_hygiene_drill "$SANDBOX" "$ROLE"; then
     hygiene_drill_rc=0
@@ -1102,7 +1113,7 @@ fi
 
 # Deliberately last among phase-2 legs: it stops a real session lane before
 # restoring it, so no unrelated fixture may depend on dispatch while it runs.
-if [ "$PHASE2_RAN" -eq 1 ]; then
+if [ "$PHASE2_ROLE_READY" -eq 1 ]; then
   breaker_failures_before="${#FAILS[@]}"
   breaker_drill_rc=0
   rehearsal_breaker_drill "$SANDBOX" "$inum" "$ROLE" \
