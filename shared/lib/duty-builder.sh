@@ -2728,11 +2728,11 @@ _builder_repo() {
   # may correctly decline (out of scope, unbuildable, needs a ruling). Declined
   # once, a bare count re-fires a build session every tick forever — and build
   # carries TIMEOUT_BUILD=3600, four times triage's ceiling, over every repo in
-  # repos.txt (the sentence read "a repo set WIDER than repos.txt" until #728;
-  # both halves of that union have been registry-derived since the org-wide
-  # author sweep went, and the claim contradicted the containment it sits in).
-  # This was the most
-  # expensive instance of the defect and the last one anybody looked at.
+  # repos.txt. This was the most expensive instance of the defect and the last
+  # one anybody looked at. (That sentence read "a repo set WIDER than repos.txt
+  # (_discover_my_pr_repos above)" until #728. Both halves of that union have
+  # been registry-derived since the org-wide author sweep went, so the claim
+  # contradicted the containment it sits inside.)
   # ONE issue listing, two derived facts. Two calls could disagree about the
   # board between them, and the assigned-count is only meaningful relative to
   # the same snapshot the pickable set came from.

@@ -713,8 +713,8 @@ t p728-acts-only-on-registry-repos 'REPO heavy-duty/crew' \
 t p728-module-has-no-search-call 0 "$(grep -c 'gh search' "$BUILDER_MOD" || true)"
 
 # MUST FAIL: the pre-#728 spelling, restored here and nowhere else, driven by
-# the same shims and matched by the same needle. Without this the four rows
-# above are satisfiable by a fixture that never had anything to find.
+# the same shims and matched by the same needle. Without this row the ones
+# above are all satisfiable by a fixture that never had anything to find.
 p728_mutation() {
   local REPOS_FILE=unused
   local ME=danmt
