@@ -107,7 +107,7 @@ gh_identity() {
   err="$(mktemp)"
   login="$(gh api user --jq .login 2>"$err")" || rc=$?
   if [ "$rc" -ne 0 ] || [ -z "$login" ]; then
-    reason="$(grep -iE 'message|401|403|error' "$err" | head -1 || true)"
+    reason="$(grep -iE -m1 'message|401|403|error' "$err" || true)"
     reason="${reason:-gh api user exited $rc}"
     note_auth_failure gh "$reason" >&2
     rm -f "$err"
