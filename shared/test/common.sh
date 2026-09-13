@@ -5567,12 +5567,32 @@ t tick-skip-orphan-keeps-the-evidence-shape 1 \
 # liveness-shaped one does not consult it: the owner is gone either way.
 t tick-skip-orphan-with-a-stale-stamp-is-still-an-orphan 1 \
   "$(grep -c 'lock held with no live holder' <<<"$TK_ORPHAN_STAMPED" || true)"
+# Matched on `running` rather than on the staged 42s: the second the tick reads
+# the clock in is not this row's business, and a needle carrying the figure
+# would stop killing its own mutation the moment that second moved.
 t tick-skip-orphan-with-a-stale-stamp-reports-no-duration 0 \
-  "$(grep -c 'running 42s' <<<"$TK_ORPHAN_STAMPED" || true)"
+  "$(grep -c '(running ' <<<"$TK_ORPHAN_STAMPED" || true)"
 
 # The live holder, readable stamp: unchanged, duration and all.
+#
+# The duration is asserted as a BOUND and not as the staged 42s, because the
+# staged figure is only what the line says if the tick reads the clock in the
+# same second the row wrote the stamp — and tick.sh does its log rotation and
+# its whole vitals probe before it ever reaches the lock. That row read
+# `running 43s` once under load here, which is the test flaking and not the
+# engine changing. The bound still falsifies everything worth falsifying: a
+# duration that ignores the stamp reads `unknown`, one that ignores the stamp's
+# UNITS reads an epoch, and one that reads the wrong file reads 0s.
 t tick-skip-live-holder-is-unchanged 1 \
-  "$(grep -cF 'previous run still holds the lock (running 42s)' <<<"$TK_LIVE" || true)"
+  "$(grep -cE 'previous run still holds the lock \(running [0-9]+s\)$' \
+    <<<"$TK_LIVE" || true)"
+TK_LIVE_SECS="$(sed -n 's/.*(running \([0-9]*\)s)$/\1/p' <<<"$TK_LIVE")"
+if [ -n "$TK_LIVE_SECS" ] && [ "$TK_LIVE_SECS" -ge 42 ] && [ "$TK_LIVE_SECS" -le 60 ]; then
+  r1=from-the-staged-stamp
+else
+  r1="$TK_LIVE"
+fi
+t tick-skip-live-holder-reports-the-staged-duration from-the-staged-stamp "$r1"
 
 # A live holder that has taken the lock and NOT yet written its stamp. Every
 # run passes through this state — the lock is taken in flock's process, before
