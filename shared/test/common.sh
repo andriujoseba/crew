@@ -5438,6 +5438,214 @@ t notify-lock-sentinel-rc 199 "$nlock_rc"
 case "$nlock_out" in *"already holds"*) r1=message ;; *) r1=silent ;; esac
 t notify-lock-sentinel-message message "$r1"
 
+# --- tick.sh's refused tick: which holder refused it (#726) ---------------
+#
+# The 199 branch had one sentence for two states, and wrote `previous run
+# still holds the lock (running unknown)` exactly when the sidecar was already
+# gone — which is exactly when the run that owns the lock has run its EXIT
+# trap and left. What still holds the lock there is a descriptor a child
+# inherited, so the one state where the line could say something useful was
+# the state where it sent an operator hunting for a process that is not there.
+#
+# Driven against the REAL tick.sh in the installed tree above, with the lock
+# genuinely held, so nothing here is a fixture standing in for the wording.
+# What the line has to tell apart is whether the run that took the lock is
+# still alive, so the lock is staged held in both of the shapes that question
+# has an answer for:
+#
+#   LIVE   — a holder that is still running. Includes the state the sidecar
+#            cannot see: a holder that has taken the lock and not yet written
+#            its stamp, which is every run's first few milliseconds.
+#   ORPHAN — the defect's own shape. A run takes the lock, spawns something
+#            that outlives it, and exits; the lock stands on the descriptor
+#            that child inherited and the pid the kernel recorded is gone.
+#
+# Both take the lock in flock's COMMAND form, the way tick.sh takes it — not
+# the fd form `( flock -n 9 ) 9>lock` that the first draft of these rows used.
+# That is not a style point. In the fd form the pid the kernel records belongs
+# to the flock(1) helper, which exits the instant it has taken the lock, so a
+# LIVE holder staged that way reads as GONE and these rows would have asserted
+# the opposite of what production does. tick.sh's reading is sound for the
+# shape tick.sh uses; `tick-skip-liveness-rests-on-flock-s-command-form` below
+# pins the two to each other, so moving the acquisition reds here.
+TK_HOLD="$TMP/tick-lock-held"
+TK_READY="$TMP/tick-lock-ready"
+TK_ERR="$TMP/tick-lock-stderr"
+TK_LOCK="$LHOME/duty/.duty.lock"
+
+# Released by removing a sentinel file rather than by a sleep, because a tick
+# fired one instant early would RUN duty.sh instead of skipping and the row
+# would read as a wording failure.
+#
+# The holder announces itself with a file rather than the test probing the
+# lock: a probe is a second contender, and one that wins the race refuses the
+# holder instead of observing it — the lock then never gets taken, every tick
+# below RUNS, and the rows red for a reason that has nothing to do with the
+# wording they assert. The producer signals; the reader follows.
+tk_take_live() {
+  local i=0
+  : >"$TK_HOLD"
+  rm -f "$TK_READY"
+  # shellcheck disable=SC2016  # the holder's body is the holder's, not ours
+  flock -n -E 199 "$TK_LOCK" /bin/bash -c \
+    ': >"$2"; while [ -e "$1" ]; do sleep 0.05; done' _ "$TK_HOLD" "$TK_READY" &
+  TK_PID=$!
+  while [ "$i" -lt 200 ]; do
+    [ ! -e "$TK_READY" ] || return 0
+    sleep 0.05
+    i=$((i + 1))
+  done
+  return 1
+}
+tk_drop_live() { rm -f "$TK_HOLD"; wait "$TK_PID" 2>/dev/null || true; }
+
+# The orphan needs no readiness signal and has no race to lose: `flock`
+# returns only once its target has exited, so the acquiring process is already
+# GONE when this returns, and what holds the lock is the stray. Probing the
+# lock IS safe here for the same reason — acquisition has finished, so a probe
+# can no longer refuse the holder, and it can only fail by finding the lock
+# free, which is the thing the row wants to know.
+tk_take_orphan() {
+  : >"$TK_HOLD"
+  # shellcheck disable=SC2016  # the holder's body is the holder's, not ours
+  flock -n -E 199 "$TK_LOCK" /bin/bash -c \
+    'setsid /bin/bash -c "while [ -e \"$1\" ]; do sleep 0.05; done" _ "$1" \
+       </dev/null >/dev/null 2>&1 &
+     exit 0' _ "$TK_HOLD"
+}
+tk_drop_orphan() { rm -f "$TK_HOLD"; }
+
+tk_skip_line() { # STAMP|absent -> the one line that boundary produced
+  case "$1" in
+    absent) rm -f "$TK_LOCK.since" ;;
+    *) printf '%s\n' "$1" >"$TK_LOCK.since" ;;
+  esac
+  env HOME="$LHOME" DUTY_DIR="$LHOME/duty" /bin/bash "$LHOME/duty/bin/tick.sh" duty \
+    >/dev/null 2>>"$TK_ERR"
+  grep 'tick skipped:' "$LHOME/duty/duty.log" | tail -1
+}
+: >"$TK_ERR"
+
+# A live holder, staged three ways: with a stamp, with a stamp it cannot read,
+# and — the state that made the old reading unsound — with no stamp at all.
+if tk_take_live; then r1=held; else r1=FREE; fi
+t tick-skip-fixture-really-holds-the-lock held "$r1"
+TK_LIVE="$(tk_skip_line "$(( $(date +%s) - 42 ))")"
+TK_CORRUPT="$(tk_skip_line not-a-number)"
+TK_STARTING="$(tk_skip_line absent)"
+tk_drop_live
+
+# An orphan, staged two ways: with no stamp, and with the valid stamp a run
+# killed before its EXIT trap leaves behind.
+tk_take_orphan
+flock -n -E 199 "$TK_LOCK" true >/dev/null 2>&1
+t tick-skip-orphan-fixture-really-holds-the-lock 199 "$?"
+TK_ORPHAN="$(tk_skip_line absent)"
+TK_ORPHAN_STAMPED="$(tk_skip_line "$(( $(date +%s) - 42 ))")"
+tk_drop_orphan
+
+# The orphan: the second claim, and the whole of the issue.
+t tick-skip-orphan-names-no-live-holder 1 \
+  "$(grep -c 'lock held with no live holder' <<<"$TK_ORPHAN" || true)"
+t tick-skip-orphan-names-the-descriptor-as-inherited 1 \
+  "$(grep -c 'descriptor was inherited' <<<"$TK_ORPHAN" || true)"
+# ...and it says nothing about a run that is still going. This row is the
+# defect, stated as its own assertion: the old branch reached this state and
+# printed the sentence below it.
+t tick-skip-orphan-never-claims-a-running-previous-run 0 \
+  "$(grep -c 'previous run still holds the lock' <<<"$TK_ORPHAN" || true)"
+# The evidence contract is untouched: still one line, still the skip shape
+# tick.sh's header promises, so every reader that partitions a boundary on
+# `<job> tick skipped:` sees this one exactly as it saw the other.
+t tick-skip-orphan-keeps-the-evidence-shape 1 \
+  "$(grep -cE '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z duty tick skipped: ' \
+    <<<"$TK_ORPHAN" || true)"
+# An orphan that left a VALID stamp behind still reads as an orphan. This is
+# the case a run killed before its EXIT trap produces — `SIGKILL`, the OOM
+# killer — and it is the residual the first draft of this PR disclosed and left
+# open, because a sidecar-shaped discriminator cannot see past the stamp. A
+# liveness-shaped one does not consult it: the owner is gone either way.
+t tick-skip-orphan-with-a-stale-stamp-is-still-an-orphan 1 \
+  "$(grep -c 'lock held with no live holder' <<<"$TK_ORPHAN_STAMPED" || true)"
+# Matched on `running` rather than on the staged 42s: the second the tick reads
+# the clock in is not this row's business, and a needle carrying the figure
+# would stop killing its own mutation the moment that second moved.
+t tick-skip-orphan-with-a-stale-stamp-reports-no-duration 0 \
+  "$(grep -c '(running ' <<<"$TK_ORPHAN_STAMPED" || true)"
+
+# The live holder, readable stamp: unchanged, duration and all.
+#
+# The duration is asserted as a BOUND and not as the staged 42s, because the
+# staged figure is only what the line says if the tick reads the clock in the
+# same second the row wrote the stamp — and tick.sh does its log rotation and
+# its whole vitals probe before it ever reaches the lock. That row read
+# `running 43s` once under load here, which is the test flaking and not the
+# engine changing. The bound still falsifies everything worth falsifying: a
+# duration that ignores the stamp reads `unknown`, one that ignores the stamp's
+# UNITS reads an epoch, and one that reads the wrong file reads 0s.
+t tick-skip-live-holder-is-unchanged 1 \
+  "$(grep -cE 'previous run still holds the lock \(running [0-9]+s\)$' \
+    <<<"$TK_LIVE" || true)"
+TK_LIVE_SECS="$(sed -n 's/.*(running \([0-9]*\)s)$/\1/p' <<<"$TK_LIVE")"
+if [ -n "$TK_LIVE_SECS" ] && [ "$TK_LIVE_SECS" -ge 42 ] && [ "$TK_LIVE_SECS" -le 60 ]; then
+  r1=from-the-staged-stamp
+else
+  r1="$TK_LIVE"
+fi
+t tick-skip-live-holder-reports-the-staged-duration from-the-staged-stamp "$r1"
+
+# A live holder that has taken the lock and NOT yet written its stamp. Every
+# run passes through this state — the lock is taken in flock's process, before
+# the target's interpreter starts — and a sidecar-shaped discriminator calls it
+# an orphan, blaming an inherited descriptor while a genuinely concurrent run
+# holds the lock (codex-bot, #740). These two rows are that regression: the
+# holder is running, the line says so, and the word "orphan" never appears.
+t tick-skip-live-holder-with-no-stamp-yet-names-a-running-holder 1 \
+  "$(grep -cF 'previous run still holds the lock' <<<"$TK_STARTING" || true)"
+t tick-skip-live-holder-with-no-stamp-yet-is-not-an-orphan 0 \
+  "$(grep -c 'no live holder' <<<"$TK_STARTING" || true)"
+
+# A stamp that is present but unreadable loses the duration and nothing else:
+# the holder is a holder still. It keeps the old wording, which is accurate
+# there — and `running unknown` now issues only from a live holder, so that
+# phrase stops meaning "no holder" for good.
+t tick-skip-corrupt-stamp-still-names-a-live-run 1 \
+  "$(grep -cF 'previous run still holds the lock (running unknown)' <<<"$TK_CORRUPT" || true)"
+# ...and it produces a line at all. Before this, a non-numeric stamp reached
+# `$(( now - <word> ))` under `set -u`, which aborted tick.sh at that line and
+# wrote NOTHING — silence at a boundary, the one reading the evidence contract
+# reserves for a dead cron. Covers every boundary staged above, not just this
+# one: the whole block shares one stderr file.
+t tick-skip-corrupt-stamp-is-not-an-error 0 "$(wc -c <"$TK_ERR" | tr -d ' ')"
+
+# The reading above is sound for the acquisition shape tick.sh uses, and for
+# that shape only: flock's command form records a holder that lives as long as
+# the run, while the fd form `flock -n 9` records a helper that exits at once
+# and would make every holder read as gone. #726's last acceptance criterion
+# holds that line still; this row is what notices if it ever moves.
+# shellcheck disable=SC2016  # the needle is tick.sh's literal text, unexpanded
+t tick-skip-liveness-rests-on-flock-s-command-form 1 \
+  "$(grep -cF 'flock -n -E 199 "$LOCK" "$TARGET"' "$LHOME/duty/bin/tick.sh" || true)"
+
+# --- and both wordings reach both readers of the line --------------------
+#
+# The coupling is the risk this fix creates: two files partition boundaries by
+# matching the sentence, and a wording that reaches only one of them drops a
+# refused tick from `ticks` as well as `busy` — which ages `last_tick` toward
+# the one reading duty.log exists to rule out. Both rows below are fed the
+# strings tick.sh ACTUALLY emitted above, so a future rewording that misses a
+# reader reds here instead of going quiet on a box.
+t tick-skip-orphan-line-reads-as-locked-to-the-breaker locked \
+  "$(rehearsal_breaker_tick_outcome_from_log "$TK_ORPHAN")"
+t tick-skip-live-line-reads-as-locked-to-the-breaker locked \
+  "$(rehearsal_breaker_tick_outcome_from_log "$TK_LIVE")"
+TK_HEALTH_LOG="$TMP/tick-health-726.log"
+printf '%s\n%s\n%s\n%s\n' "$TK_ORPHAN" "$TK_LIVE" "$TK_CORRUPT" "$TK_STARTING" \
+  >"$TK_HEALTH_LOG"
+t tick-skip-both-wordings-are-busy-ticks 'ticks=4 busy=4' \
+  "$(sed -n 's/^TICK_HEALTH .* \(ticks=[0-9]* busy=[0-9]*\)$/\1/p' \
+    <<<"$(tick_health_report "$TK_HEALTH_LOG" "$(date -u +%s)" 86400 "$TK_HEALTH_LOG")")"
+
 # --- notify repo set: work repos union additive handoff targets (#316) ----
 # Run the real notifier with an empty-board gh shim. This observes every
 # repository it queries without network access or duplicating its set logic in

@@ -374,11 +374,15 @@ rehearsal_breaker_tick_log() {
 # and when the bound is spent it says INCOMPLETE with the reason — never FAIL
 # against a lane it never reached.
 #
-# The diagnostic the message reads is #726's, and is deliberately NOT repaired
-# here: this leg's job is to stop grading a tick that did not run, whatever the
-# holder turns out to have been.
+# The diagnostic the message reads was #726's, and #726 split it in two: a
+# refused boundary now says either that the previous run still holds the lock
+# or that the lock outlived it on an inherited descriptor. Both are the same
+# reading HERE, which is what the sentence above already said — this leg
+# declines to grade a tick that did not run, whatever the holder turns out to
+# have been — so both wordings are matched and neither is ranked.
 rehearsal_breaker_tick_was_skipped_from_log() {
-  grep -Fq 'tick skipped: previous run still holds the lock' <<<"$1"
+  grep -Fq -e 'tick skipped: previous run still holds the lock' \
+           -e 'tick skipped: lock held with no live holder' <<<"$1"
 }
 
 # Which of tick.sh's evidence shapes this slice carries. The contract at the
