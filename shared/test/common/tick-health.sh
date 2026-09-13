@@ -53,6 +53,31 @@ t tick-health-busy-has-no-kind 0 "$(grep 'TICK_HEALTH_KIND' <<<"$REPORT" | grep 
 t tick-health-reason-partition 'skips=1 holds=budget:1' \
   "$(sed -n 's/.*kind=review \(skips=[^ ]* holds=[^ ]*\).*/\1/p' <<<"$REPORT")"
 
+# The other wording tick.sh writes for a refused boundary (#726). A lock held
+# with no live holder is as busy a tick as a previous run still holding one: the
+# boundary produced no tick either way, and which holder the line names changes
+# who the operator goes looking for, never the count. Matching one wording only
+# would drop the other from `ticks` as well as `busy` — and a dropped tick ages
+# `last_tick` toward the single reading this log exists to rule out, which is
+# that cron is dead. Staged here, it would read `ticks=1 busy=0` and an age of
+# 1200 instead of 900.
+#
+# Its own fixture rather than a line in the one above, so the counts those rows
+# assert stay where they are. The coupling to the string tick.sh ACTUALLY emits
+# belongs to shared/test/common.sh, which installs the real tick.sh and can run
+# it; what this row owns is the module's own reading of that string.
+ORPHAN_LOG="$TMP/duty-orphan.log"
+cat >"$ORPHAN_LOG" <<'EOF'
+2026-08-29T01:40:00Z duty run start
+2026-08-29T01:45:00Z duty tick skipped: lock held with no live holder — the previous run exited; its descriptor was inherited by a process it left behind
+EOF
+# Named as both logs so the notify fixture above stays out of these counts:
+# the report's own `[ "$notify_log" != "$log_file" ]` guard reads one path
+# twice as one log, so what the row counts is this fixture and nothing else.
+t tick-health-orphan-wording-is-a-busy-tick 'last_tick_age_s=900 ticks=2 busy=1' \
+  "$(sed -n 's/^TICK_HEALTH window_s=86400 //p' \
+    <<<"$(tick_health_report "$ORPHAN_LOG" "$NOW" 86400 "$ORPHAN_LOG")")"
+
 : >"$LOG"
 : >"$NOTIFY_LOG"
 t tick-health-empty-history-is-empty '' "$(tick_health_report "$LOG" "$NOW" 86400)"
