@@ -47,24 +47,38 @@ t session-claude-print-log-is-unknown unknown "$(claude_acted)"
 # The transcript classifier is profile-owned: its id/cwd inputs name one
 # artifact without discovery, and its three answers keep missing or malformed
 # vendor state distinct from a valid transcript with no tool use (#723).
+claude_cli_transcript_dir() { # DIR
+  local cwd
+  cwd="$(cd "$1" 2>/dev/null && pwd -P)" || return 1
+  # shellcheck disable=SC2001  # independent oracle for the profile expansion
+  printf '%s/.claude/projects/%s' "$HOME" \
+    "$(sed 's/[^A-Za-z0-9-]/-/g' <<<"$cwd")"
+}
+
 claude_productive_fixture() ( # MODE
-  local mode="$1" dir="$TMP/claude productive/work" sid
+  local mode="$1" dir="$TMP/claude_productive.dot dir/work" sid transcript_dir
   sid=01a06ef6-ca2a-7fd0-a487-25913257471d
   HOME="$TMP/claude-productive-home"; export HOME
-  mkdir -p "$dir" "$HOME/.claude/projects/${dir//\//-}"
-  rm -f "$HOME/.claude/projects/${dir//\//-}/$sid.jsonl"
+  mkdir -p "$dir"
+  transcript_dir="$(claude_cli_transcript_dir "$dir")" || return 2
+  mkdir -p "$transcript_dir"
+  rm -f "$transcript_dir/$sid.jsonl"
   case "$mode" in
     tool)
       printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash"}]}}' \
-        >"$HOME/.claude/projects/${dir//\//-}/$sid.jsonl" ;;
+        >"$transcript_dir/$sid.jsonl" ;;
     idle)
       printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"waiting"}]}}' \
-        >"$HOME/.claude/projects/${dir//\//-}/$sid.jsonl" ;;
+        >"$transcript_dir/$sid.jsonl" ;;
     malformed)
       printf '%s\n' '{not-json' \
-        >"$HOME/.claude/projects/${dir//\//-}/$sid.jsonl" ;;
+        >"$transcript_dir/$sid.jsonl" ;;
     absent) : ;;
     invalid) sid='../another-session' ;;
+    uppercase)
+      sid=01A06EF6-CA2A-7FD0-A487-25913257471D
+      printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash"}]}}' \
+        >"$transcript_dir/$sid.jsonl" ;;
   esac
   # shellcheck disable=SC1091  # production profile under test
   source "$SHARED/conf/agents/claude.conf"
@@ -81,6 +95,8 @@ t session-claude-malformed-transcript-is-unknown unknown \
   "$(claude_productive_fixture malformed)"
 t session-claude-invalid-transcript-id-is-unknown unknown \
   "$(claude_productive_fixture invalid)"
+t session-claude-uppercase-transcript-id-is-valid yes \
+  "$(claude_productive_fixture uppercase)"
 
 # Exercise run_session itself so a helper-only implementation cannot pass.
 SA_WORK="$TMP/session-work"; mkdir -p "$SA_WORK"
@@ -362,10 +378,10 @@ chmod +x "$SID_CLI"
 # so `_session_head` has a head to read and D6.2 has something to compare.
 sid_box() {
   local sdir="$TMP/sid-$1"
-  [ -d "$sdir/work/.git" ] && { printf '%s' "$sdir"; return 0; }
-  mkdir -p "$sdir/logs" "$sdir/work"
-  git -C "$sdir/work" init -q 2>/dev/null
-  git -C "$sdir/work" -c user.email=t@example.invalid -c user.name=t \
+  [ -d "$sdir/work_dir.dot space/.git" ] && { printf '%s' "$sdir"; return 0; }
+  mkdir -p "$sdir/logs" "$sdir/work_dir.dot space"
+  git -C "$sdir/work_dir.dot space" init -q 2>/dev/null
+  git -C "$sdir/work_dir.dot space" -c user.email=t@example.invalid -c user.name=t \
     commit -q --allow-empty -m one 2>/dev/null
   printf '%s' "$sdir"
 }
@@ -405,9 +421,10 @@ sid_run() (
     source "$SHARED/conf/agents/claude.conf"
   fi
   BOT_CLI_CMD=(bash "$SID_CLI" -p)
-  work="${work:-$sdir/work}"
+  work="${work:-$sdir/work_dir.dot space}"
   export SID_ARGV="$sdir/argv" SID_SHAPE="$shape" SID_ESCAPEE="$sdir/escapee"
-  export SID_TRANSCRIPT_DIR="$HOME/.claude/projects/${work//\//-}"
+  SID_TRANSCRIPT_DIR="$(claude_cli_transcript_dir "$work")" || return 2
+  export SID_TRANSCRIPT_DIR
   [ -e "$sdir/memory.events" ] || printf 'oom_kill 0\n' >"$sdir/memory.events"
   export SID_OOM_EVENTS="$sdir/memory.events"
   _SESSION_OOM_EVENTS_FILE="$sdir/memory.events"
@@ -589,7 +606,7 @@ t sid-timeout-writes-a-stub present \
   "$([ -s "$SID_TMO_STUB" ] && printf present || printf MISSING)"
 t sid-stub-carries-the-killed-session-id same \
   "$(sid_same "$(sid_stub_field "$SID_TMO_STUB" sid)" "$(sid_of timeout START)")"
-t sid-stub-carries-the-head-it-worked-at "$(git -C "$TMP/sid-timeout/work" rev-parse HEAD)" \
+t sid-stub-carries-the-head-it-worked-at "$(git -C "$TMP/sid-timeout/work_dir.dot space" rev-parse HEAD)" \
   "$(sid_stub_field "$SID_TMO_STUB" head)"
 t sid-stub-carries-the-wall-that-was-hit 1 "$(sid_stub_field "$SID_TMO_STUB" wall)"
 t sid-stub-carries-a-try-count 0 "$(sid_stub_field "$SID_TMO_STUB" try)"
@@ -773,7 +790,7 @@ sid_refusal() { # sid_refusal OUTPUT BOX KILLED — ordinary | RESUMED | NOT-FRE
 # 1 — the head moved: the carried context is about a tree that is gone.
 sid_run moved fixture/moved 1 talk-hang both >/dev/null
 sid_moved_killed="$(sid_of moved START)"
-sid_commit "$TMP/sid-moved/work"
+sid_commit "$TMP/sid-moved/work_dir.dot space"
 t sid-refuses-when-the-head-moved ordinary \
   "$(sid_refusal "$(sid_run moved fixture/moved 5 reply both)" moved "$sid_moved_killed")"
 
@@ -861,11 +878,11 @@ SID_PLAN_BOX="$(sid_box planonly)"
 sid_plan_verdict() ( # sid_plan_verdict none|both
   local stub="$SID_PLAN_BOX/.session-resume.build.fixture_plan"
   printf 'kind=build\nkey=fixture/plan\nsid=%s\nhead=%s\nwall=1\ntry=0\nlog=14\noutcome=TIMEOUT\nproductive=yes\nleft=0\n' \
-    "$(_session_mint_sid)" "$(git -C "$SID_PLAN_BOX/work" rev-parse HEAD)" >"$stub"
+    "$(_session_mint_sid)" "$(git -C "$SID_PLAN_BOX/work_dir.dot space" rev-parse HEAD)" >"$stub"
   DUTY_DIR="$SID_PLAN_BOX"
   unset -f bot_cli_resume_args
   [ "$1" = none ] || eval 'bot_cli_resume_args() { BOT_CLI_RESUME_ARGS=(--resume "$1"); }'
-  _session_resume_plan build fixture/plan "$SID_PLAN_BOX/work"
+  _session_resume_plan build fixture/plan "$SID_PLAN_BOX/work_dir.dot space"
   printf '%s' "$_SESSION_RESUMED"
 )
 t sid-the-gate-itself-refuses-without-the-resume-hook no "$(sid_plan_verdict none)"
@@ -994,7 +1011,7 @@ sid_coll_killed="$(sid_of collide START)"
 SID_COLL_STUB="$(sid_coll_path "$SID_COLL_A")"
 t sid-the-collision-is-at-the-same-head same \
   "$(sid_same "$(sid_stub_field "$SID_COLL_STUB" head)" \
-    "$(git -C "$TMP/sid-collide/work" rev-parse HEAD)")"
+    "$(git -C "$TMP/sid-collide/work_dir.dot space" rev-parse HEAD)")"
 t sid-the-stub-names-the-lane-that-wrote-it "$SID_COLL_A" \
   "$(sid_stub_field "$SID_COLL_STUB" key)"
 t sid-a-colliding-key-does-not-resume-the-other-lane ordinary \
