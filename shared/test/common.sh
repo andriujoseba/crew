@@ -7755,18 +7755,13 @@ t ready-commit-empty "" "$(_ready_lines_to_commit '' 'heavy-duty/crew#2')"
 t ready-commit-whole-id "" \
   "$(_ready_lines_to_commit 'heavy-duty/crew#2 T2' 'heavy-duty/crew#25')"
 
-# Drive the converted registry call site with a producer that pauses after the
-# matching line. The awareness pass must wait for the complete repo list and
-# therefore emit no false out-of-scope warning.
-p447_registry_out="$(
-  # shellcheck disable=SC2317  # invoked indirectly by _warn_unscoped_authored
-  read_repo_list() { printf '%s\n' heavy-duty/crew; sleep 0.05; printf '%s\n' other/repo; }
-  # shellcheck disable=SC2317  # invoked indirectly by _warn_unscoped_authored
-  gh() { printf '%s\n' 'heavy-duty/crew#447'; }
-  ME=andriujoseba REPOS_FILE=unused
-  _warn_unscoped_authored
-)"
-t p447-registry-forced-race-stays-in-scope "" "$p447_registry_out"
+# #447's third row drove `_warn_unscoped_authored` with a producer that paused
+# mid-registry and asserted no false out-of-scope warning. #728 deleted that
+# function — the out-of-scope warning it asserted about no longer exists in any
+# state, true or false — so the row went with its subject rather than being
+# repointed at a call site whose consumer reads to EOF and cannot exhibit the
+# hazard. The spelling class stays guarded by the two rows below, which drive a
+# real early-exiting predicate over a fixture larger than PIPE_BUF.
 
 # The orphan scan consumes head listings larger than PIPE_BUF. A merged branch
 # and an open branch must never become orphans; only the absent branch is due.
