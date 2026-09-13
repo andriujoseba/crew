@@ -507,7 +507,25 @@ if [ ! -e "$KIMI_RESUME_COUNT" ]; then
     '{"message":{"type":"StatusUpdate","payload":{"token_usage":null}}}' \
     '{"message":{"type":"StatusUpdate","payload":{"token_usage":{"input_other":200,"output":20,"input_cache_read":40,"input_cache_creation":60}}}}' \
     >"$wire"
-  printf 'Used Shell (first)\nfirst turn reached tools\n'
+  case "${KIMI_RESUME_MODE:-normal}" in
+    normal|wire-empty|wire-readfile|larger)
+      printf '%s\n' \
+        '{"message":{"type":"ToolCall","payload":{"type":"function","id":"call-1","function":{"name":"Shell","arguments":{}}}}}' \
+        >>"$wire"
+      ;;
+    unparseable|unparseable-silent)
+      printf '%s\n' '{not-json' >"$wire"
+      ;;
+  esac
+  case "${KIMI_RESUME_MODE:-normal}" in
+    wire-empty|missing-silent|unparseable-silent) ;;
+    wire-readfile) printf '• Used ReadFile (first)\n' ;;
+    *) printf 'Used Shell (first)\nfirst turn reached tools\n' ;;
+  esac
+  case "${KIMI_RESUME_MODE:-normal}" in
+    missing|missing-silent) rm -f "$wire" ;;
+    unreadable) chmod 000 "$wire" ;;
+  esac
   sleep 5
   exit 0
 fi
@@ -529,9 +547,9 @@ printf 'Used Shell (second)\nsecond turn answer\n'
 STUB
 chmod +x "$KIMI_RESUME_CLI"
 
-kimi_resume_run() ( # kimi_resume_run normal|missing|unreadable|larger
+kimi_resume_run() ( # normal|wire-empty|wire-readfile|no-tool|missing*|unparseable*
   local mode="${1:-normal}" udir="$TMP/kimi-resume-${1:-normal}-$RANDOM"
-  local first_return second_return wire
+  local first_return second_return wire state first_productive
   mkdir -p "$udir/logs" "$udir/share"
   DUTY_DIR="$udir"; LOG_DIR="$udir/logs"; DUTY_TICK_ID="kimi-resume-$mode"
   # shellcheck disable=SC1091
@@ -548,10 +566,12 @@ kimi_resume_run() ( # kimi_resume_run normal|missing|unreadable|larger
   else
     first_return=$?
   fi
+  state="$(_session_resume_state build "fixture/kimi-$mode")"
+  first_productive="$(sed -n 's/^productive=//p' "$state" 2>/dev/null)"
   wire="$(find "$KIMI_SHARE_DIR/sessions" -type f -name wire.jsonl -print -quit)"
   case "$mode" in
-    missing) rm -f "$wire" ;;
-    unreadable) chmod 000 "$wire" ;;
+    missing|missing-silent) [ -z "$wire" ] || rm -f "$wire" ;;
+    unreadable) [ -z "$wire" ] || chmod 000 "$wire" ;;
   esac
   if run_session build "fixture/kimi-$mode" "$SHARED/.." 5 'second prompt'; then
     second_return=0
@@ -559,6 +579,7 @@ kimi_resume_run() ( # kimi_resume_run normal|missing|unreadable|larger
     second_return=$?
   fi
   printf '%s\n%s|%s\n' '--returns--' "$first_return" "$second_return"
+  printf '%s\n%s\n' '--first-productive--' "$first_productive"
   printf '%s\n' '--argv--'
   cat "$KIMI_RESUME_ARGV"
   printf '%s\n' '--prose--'
@@ -589,6 +610,49 @@ t kimi-resume-keeps-the-session-outcome-and-prose '0|ok|second turn answer' \
       "$(sed -n '/^--prose--$/,$p' <<<"$kimi_resumed" | tail -1)")"
 t kimi-run-session-returns-zero-on-both-paths '0|0' \
   "$(sed -n '/^--returns--$/{n;p;}' <<<"$kimi_resumed")"
+
+for mode in wire-empty wire-readfile; do
+  kimi_wire_resumed="$(kimi_resume_run "$mode" 2>&1 | sed -e 's/^[0-9-]*T[0-9:]*Z //')"
+  kimi_wire_starts="$(grep 'SESSION START' <<<"$kimi_wire_resumed")"
+  kimi_wire_ends="$(grep 'SESSION END' <<<"$kimi_wire_resumed")"
+  kimi_wire_sid="$(sed -n '1s/.* sid=\([^ ]*\).*/\1/p' <<<"$kimi_wire_starts")"
+  t "kimi-$mode-tool-call-records-productive" yes \
+    "$(sed -n '/^--first-productive--$/{n;p;}' <<<"$kimi_wire_resumed")"
+  t "kimi-$mode-tool-call-resumes-the-same-session" "$kimi_wire_sid" \
+    "$(sed -n '2s/.* sid=\([^ ]*\).*/\1/p' <<<"$kimi_wire_starts")"
+  t "kimi-$mode-tool-call-resumes-exactly-once" 2 \
+    "$(sed -n '/^--argv--$/,$p' <<<"$kimi_wire_resumed" | grep -cFx -- --session || true)"
+done
+
+kimi_no_tool="$(kimi_resume_run no-tool 2>&1 | sed -e 's/^[0-9-]*T[0-9:]*Z //')"
+t kimi-status-only-wire-outranks-shell-stdout no \
+  "$(sed -n '/^--first-productive--$/{n;p;}' <<<"$kimi_no_tool")"
+kimi_no_tool_starts="$(grep 'SESSION START' <<<"$kimi_no_tool")"
+kimi_no_tool_first_sid="$(sed -n '1s/.* sid=\([^ ]*\).*/\1/p' <<<"$kimi_no_tool_starts")"
+kimi_no_tool_second_sid="$(sed -n '2s/.* sid=\([^ ]*\).*/\1/p' <<<"$kimi_no_tool_starts")"
+t kimi-status-only-wire-dispatches-fresh different \
+  "$([ "$kimi_no_tool_first_sid" != "$kimi_no_tool_second_sid" ] \
+      && printf different || printf SAME)"
+
+for mode in missing unparseable; do
+  kimi_fallback_yes="$(kimi_resume_run "$mode" 2>&1 | sed -e 's/^[0-9-]*T[0-9:]*Z //')"
+  t "kimi-$mode-wire-falls-back-to-shell-stdout" yes \
+    "$(sed -n '/^--first-productive--$/{n;p;}' <<<"$kimi_fallback_yes")"
+  kimi_fallback_yes_starts="$(grep 'SESSION START' <<<"$kimi_fallback_yes")"
+  kimi_fallback_yes_sid="$(sed -n '1s/.* sid=\([^ ]*\).*/\1/p' <<<"$kimi_fallback_yes_starts")"
+  t "kimi-$mode-wire-shell-fallback-resumes" "$kimi_fallback_yes_sid" \
+    "$(sed -n '2s/.* sid=\([^ ]*\).*/\1/p' <<<"$kimi_fallback_yes_starts")"
+
+  kimi_fallback_no="$(kimi_resume_run "$mode-silent" 2>&1 | sed -e 's/^[0-9-]*T[0-9:]*Z //')"
+  t "kimi-$mode-wire-with-empty-stdout-is-not-productive" no \
+    "$(sed -n '/^--first-productive--$/{n;p;}' <<<"$kimi_fallback_no")"
+  kimi_fallback_no_starts="$(grep 'SESSION START' <<<"$kimi_fallback_no")"
+  kimi_fallback_no_first_sid="$(sed -n '1s/.* sid=\([^ ]*\).*/\1/p' <<<"$kimi_fallback_no_starts")"
+  kimi_fallback_no_second_sid="$(sed -n '2s/.* sid=\([^ ]*\).*/\1/p' <<<"$kimi_fallback_no_starts")"
+  t "kimi-$mode-wire-with-empty-stdout-dispatches-fresh" different \
+    "$([ "$kimi_fallback_no_first_sid" != "$kimi_fallback_no_second_sid" ] \
+        && printf different || printf SAME)"
+done
 
 for mode in missing unreadable larger; do
   kimi_withheld="$(kimi_resume_run "$mode" 2>&1 | sed -e 's/^[0-9-]*T[0-9:]*Z //')"
@@ -642,6 +706,15 @@ kimi_direct() ( # kimi_direct SID
   export KIMI_SHARE_DIR="$KIMI_SHARE_FIXTURE"
   bot_cli_usage '' '' '' "$1"
 )
+kimi_productive_rc() ( # kimi_productive_rc SID
+  local rc=0
+  # shellcheck disable=SC1091
+  source "$SHARED/conf/agents/kimi.conf"
+  # shellcheck disable=SC2030,SC2031  # each helper owns its artifact root
+  export KIMI_SHARE_DIR="$KIMI_SHARE_FIXTURE"
+  bot_session_productive "$1" ignored >/dev/null 2>&1 || rc=$?
+  printf '%s' "$rc"
+)
 kimi_resumed_direct() ( # kimi_resumed_direct SID
   # shellcheck disable=SC1091
   source "$SHARED/conf/agents/kimi.conf"
@@ -677,6 +750,44 @@ t kimi-profile-reads-the-artifact-by-id '11|22|33|44' \
     | jq -r '[.input_tokens, .output_tokens, .cache_read_input_tokens, .cache_creation_input_tokens] | join("|")')"
 t kimi-profile-never-invents-cost false \
   "$(kimi_direct aaaaaaaa-0000-4000-8000-000000000001 | jq -r 'has("cost_usd")')"
+
+KIMI_PRODUCTIVE_SID='ffffffff-0000-4000-8000-000000000006'
+KIMI_NESTED_TOOL_SID='ffffffff-0000-4000-8000-000000000007'
+KIMI_MALFORMED_SID='ffffffff-0000-4000-8000-000000000008'
+KIMI_UNREADABLE_SID='ffffffff-0000-4000-8000-000000000009'
+mkdir -p \
+  "$KIMI_SHARE_FIXTURE/sessions/hash-one/$KIMI_PRODUCTIVE_SID" \
+  "$KIMI_SHARE_FIXTURE/sessions/hash-one/$KIMI_NESTED_TOOL_SID" \
+  "$KIMI_SHARE_FIXTURE/sessions/hash-one/$KIMI_MALFORMED_SID" \
+  "$KIMI_SHARE_FIXTURE/sessions/hash-one/$KIMI_UNREADABLE_SID"
+printf '%s\n' \
+  '{"type":"metadata","protocol_version":"1.10"}' \
+  '{"message":{"type":"ToolCall","payload":{"type":"function","id":"fixture","function":{"name":"ReadFile","arguments":{}}}}}' \
+  >"$KIMI_SHARE_FIXTURE/sessions/hash-one/$KIMI_PRODUCTIVE_SID/wire.jsonl"
+printf '%s\n' \
+  '{"type":"metadata","protocol_version":"1.10"}' \
+  '{"message":{"type":"SubagentEvent","payload":{"message":{"type":"ToolCall","payload":{"type":"function","id":"nested","function":{"name":"Shell","arguments":{}}}}}}}' \
+  >"$KIMI_SHARE_FIXTURE/sessions/hash-one/$KIMI_NESTED_TOOL_SID/wire.jsonl"
+printf '%s\n' '{not-json' \
+  >"$KIMI_SHARE_FIXTURE/sessions/hash-one/$KIMI_MALFORMED_SID/wire.jsonl"
+printf '%s\n' '{"type":"metadata","protocol_version":"1.10"}' \
+  >"$KIMI_SHARE_FIXTURE/sessions/hash-one/$KIMI_UNREADABLE_SID/wire.jsonl"
+chmod 000 "$KIMI_SHARE_FIXTURE/sessions/hash-one/$KIMI_UNREADABLE_SID/wire.jsonl"
+t kimi-productivity-top-level-tool-call-is-yes 0 \
+  "$(kimi_productive_rc "$KIMI_PRODUCTIVE_SID")"
+t kimi-productivity-status-only-is-no 1 \
+  "$(kimi_productive_rc aaaaaaaa-0000-4000-8000-000000000001)"
+t kimi-productivity-nested-tool-call-is-no 1 \
+  "$(kimi_productive_rc "$KIMI_NESTED_TOOL_SID")"
+t kimi-productivity-malformed-wire-cannot-tell 2 \
+  "$(kimi_productive_rc "$KIMI_MALFORMED_SID")"
+t kimi-productivity-unreadable-wire-cannot-tell 2 \
+  "$(kimi_productive_rc "$KIMI_UNREADABLE_SID")"
+t kimi-productivity-missing-wire-cannot-tell 2 \
+  "$(kimi_productive_rc ffffffff-0000-4000-8000-000000000010)"
+t kimi-productivity-prints-nothing '' \
+  "$(KIMI_SHARE_DIR="$KIMI_SHARE_FIXTURE" bash -c '. "$1"; bot_session_productive "$2" ignored' \
+    _ "$SHARED/conf/agents/kimi.conf" "$KIMI_PRODUCTIVE_SID")"
 # `unknown` is a value, not a directory. A profile that treated it as a path
 # component would go looking for a session literally named `unknown`, and one
 # planted here proves the refusal is by name rather than by absence.
@@ -740,6 +851,13 @@ kimi_resumed_two_match_direct() (
 )
 t kimi-profile-refuses-one-id-under-two-work-dirs 0 \
   "$(kimi_direct aaaaaaaa-0000-4000-8000-000000000001 | wc -l)"
+t kimi-productivity-refuses-unknown 2 "$(kimi_productive_rc unknown)"
+t kimi-productivity-refuses-dot 2 "$(kimi_productive_rc .)"
+t kimi-productivity-refuses-dotdot 2 "$(kimi_productive_rc ..)"
+t kimi-productivity-refuses-an-unsafe-character 2 \
+  "$(kimi_productive_rc 'bad/id')"
+t kimi-productivity-refuses-one-id-under-two-work-dirs 2 \
+  "$(kimi_productive_rc aaaaaaaa-0000-4000-8000-000000000001)"
 t kimi-resumed-profile-refuses-unknown-as-a-path-component 0 \
   "$(kimi_resumed_direct unknown | wc -l)"
 t kimi-resumed-profile-refuses-dot-as-an-id 0 \
