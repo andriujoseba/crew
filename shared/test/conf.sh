@@ -614,7 +614,6 @@ t kimi-run-session-returns-zero-on-both-paths '0|0' \
 for mode in wire-empty wire-readfile; do
   kimi_wire_resumed="$(kimi_resume_run "$mode" 2>&1 | sed -e 's/^[0-9-]*T[0-9:]*Z //')"
   kimi_wire_starts="$(grep 'SESSION START' <<<"$kimi_wire_resumed")"
-  kimi_wire_ends="$(grep 'SESSION END' <<<"$kimi_wire_resumed")"
   kimi_wire_sid="$(sed -n '1s/.* sid=\([^ ]*\).*/\1/p' <<<"$kimi_wire_starts")"
   t "kimi-$mode-tool-call-records-productive" yes \
     "$(sed -n '/^--first-productive--$/{n;p;}' <<<"$kimi_wire_resumed")"
