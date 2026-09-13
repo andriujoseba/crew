@@ -656,13 +656,16 @@ p728_operator_prs() {
   printf '%s\n' heavy-duty/lafamilia-landing#2 danmt/my-angular-bank#3 \
     danmt/wtf-is-a-wallet#3 danmt/tarea-4-lenguajes#3 danmt/easy-eddie#6
 }
-: >"$P728_CALLS"
-P728_TICK="$(
-  DUTY_DIR="$P728_DIR/duty"
-  REPOS_FILE="$P728_DIR/repos.txt"
-  ME=danmt
-  REVIEW_MY_PR_REPOS=""
-  OPERATING_LIMIT_GITHUB_REST_PAGE=100
+# The tick's environment is `local` inside a function called in a subshell, not
+# bare assignment in one: DUTY_DIR and ME are live for the rest of this suite,
+# and a subshell assignment to either is a modification shellcheck reports and
+# a later reader could be misled by.
+p728_tick() {
+  local DUTY_DIR="$P728_DIR/duty"
+  local REPOS_FILE="$P728_DIR/repos.txt"
+  local ME=danmt
+  local REVIEW_MY_PR_REPOS=""
+  local OPERATING_LIMIT_GITHUB_REST_PAGE=100
   # shellcheck disable=SC2317  # invoked indirectly by duty_builder
   read_repo_list() { printf 'heavy-duty/crew\n'; }
   # shellcheck disable=SC2317  # invoked indirectly by _discover_my_pr_repos
@@ -688,7 +691,9 @@ P728_TICK="$(
   # shellcheck disable=SC2317  # invoked indirectly by duty_builder
   warn() { printf 'WARN %s\n' "$*"; }
   duty_builder
-)"
+}
+: >"$P728_CALLS"
+P728_TICK="$(p728_tick)"
 t p728-tick-issues-no-cross-account-search 0 \
   "$(grep -c '^GH search' "$P728_CALLS" || true)"
 # Read AND said: the calls file is what the tick fetched, the tick output is
@@ -710,9 +715,9 @@ t p728-module-has-no-search-call 0 "$(grep -c 'gh search' "$BUILDER_MOD" || true
 # MUST FAIL: the pre-#728 spelling, restored here and nowhere else, driven by
 # the same shims and matched by the same needle. Without this the four rows
 # above are satisfiable by a fixture that never had anything to find.
-P728_MUTATION="$(
-  REPOS_FILE=unused
-  ME=danmt
+p728_mutation() {
+  local REPOS_FILE=unused
+  local ME=danmt
   # shellcheck disable=SC2317  # invoked indirectly by _p728_pre728_pass
   read_repo_list() { printf 'heavy-duty/crew\n'; }
   # shellcheck disable=SC2317  # invoked indirectly by _p728_pre728_pass
@@ -735,7 +740,8 @@ P728_MUTATION="$(
     fi
   }
   _p728_pre728_pass
-)"
+}
+P728_MUTATION="$(p728_mutation)"
 t p728-mutation-old-pass-names-all-five 5 \
   "$(printf '%s\n' "$P728_MUTATION" | grep -Eo "$P728_OUT_OF_SCOPE" | n)"
 
