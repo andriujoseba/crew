@@ -1095,6 +1095,40 @@ t drill-mint-sequence-emits-no-template 0 \
 t drill-mint-sequence-bootstrap-names-no-user 0 \
   "$(grep -c -- '--user' "$MINT_STATE/script-crew-drill-reviewer" || true)"
 
+# --- #729: phase 2 needs a counterparty for builder and reviewer ------------
+#
+# The comparison is a pure pre-fixture guard so CI drives both sides without
+# a box host or GitHub identity. Matching identities refuse only the two roles
+# whose fixtures require GitHub to act across accounts; differing identities,
+# and triage under either identity shape, pass.
+phase2_identity_guard() {
+  (
+    # shellcheck source=drill/rehearsal-safety.sh
+    . "$ROOT/drill/rehearsal-safety.sh"
+    rehearsal_phase2_identity_guard "$@"
+  )
+}
+for phase2_role in builder reviewer; do
+  phase2_same_out="$(phase2_identity_guard "$phase2_role" danmt danmt 2>&1)"
+  phase2_same_rc=$?
+  t "drill-phase2-$phase2_role-equal-identities-refused" 1 "$phase2_same_rc"
+  t "drill-phase2-$phase2_role-refusal-names-role" 1 \
+    "$(grep -cF "phase 2 $phase2_role refused" <<<"$phase2_same_out")"
+  t "drill-phase2-$phase2_role-refusal-names-both-identities" 2 \
+    "$(grep -oF "'danmt'" <<<"$phase2_same_out" | wc -l | tr -d ' ')"
+  t "drill-phase2-$phase2_role-refusal-names-fork-prohibition" 1 \
+    "$(grep -cF 'forking a repository into its own owner' <<<"$phase2_same_out")"
+  t "drill-phase2-$phase2_role-refusal-names-review-prohibitions" 1 \
+    "$(grep -cF "requesting or submitting a review on one's own pull request" <<<"$phase2_same_out")"
+  phase2_identity_guard "$phase2_role" dan-claude-bot danmt >/dev/null
+  t "drill-phase2-$phase2_role-different-identities-pass" 0 "$?"
+done
+phase2_identity_guard triage danmt danmt >/dev/null
+t drill-phase2-triage-equal-identities-pass 0 "$?"
+phase2_identity_guard triage dan-claude-bot danmt >/dev/null
+t drill-phase2-triage-different-identities-pass 0 "$?"
+unset -f phase2_identity_guard
+
 # --- the attention census: recorded, then asserted, never refused (#714) -----
 #
 # Phase 2 used to exit 1 the moment the box identity carried an `attention`
