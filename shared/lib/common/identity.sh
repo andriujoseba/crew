@@ -103,11 +103,13 @@ clear_auth_failure() {
 # the tick a credential comes back, and it lands where a mismatched $ME makes
 # converge_git_identity refuse the tick that should have recovered.
 gh_identity() {
-  local login rc=0 err
+  local login rc=0 err reason
   err="$(mktemp)"
   login="$(gh api user --jq .login 2>"$err")" || rc=$?
   if [ "$rc" -ne 0 ] || [ -z "$login" ]; then
-    note_auth_failure gh "$(grep -iE 'message|401|403|error' "$err" | head -1 || printf 'gh api user exited %s' "$rc")" >&2
+    reason="$(grep -iE 'message|401|403|error' "$err" | head -1 || true)"
+    reason="${reason:-gh api user exited $rc}"
+    note_auth_failure gh "$reason" >&2
     rm -f "$err"
     return 0
   fi
