@@ -44,6 +44,60 @@ claude_acted() {
 printf 'Claude Code\nfinal answer: I need more information.\n' >"$SA_LOG"
 t session-claude-print-log-is-unknown unknown "$(claude_acted)"
 
+# The transcript classifier is profile-owned: its id/cwd inputs name one
+# artifact without discovery, and its three answers keep missing or malformed
+# vendor state distinct from a valid transcript with no tool use (#723).
+claude_cli_transcript_dir() { # DIR
+  local cwd
+  cwd="$(cd "$1" 2>/dev/null && pwd -P)" || return 1
+  # shellcheck disable=SC2001  # independent oracle for the profile expansion
+  printf '%s/.claude/projects/%s' "$HOME" \
+    "$(sed 's/[^A-Za-z0-9-]/-/g' <<<"$cwd")"
+}
+
+claude_productive_fixture() ( # MODE
+  local mode="$1" dir="$TMP/claude_productive.dot dir/work" sid transcript_dir
+  sid=01a06ef6-ca2a-7fd0-a487-25913257471d
+  HOME="$TMP/claude-productive-home"; export HOME
+  mkdir -p "$dir"
+  transcript_dir="$(claude_cli_transcript_dir "$dir")" || return 2
+  mkdir -p "$transcript_dir"
+  rm -f "$transcript_dir/$sid.jsonl"
+  case "$mode" in
+    tool)
+      printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash"}]}}' \
+        >"$transcript_dir/$sid.jsonl" ;;
+    idle)
+      printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"waiting"}]}}' \
+        >"$transcript_dir/$sid.jsonl" ;;
+    malformed)
+      printf '%s\n' '{not-json' \
+        >"$transcript_dir/$sid.jsonl" ;;
+    absent) : ;;
+    invalid) sid='../another-session' ;;
+    uppercase)
+      sid=01A06EF6-CA2A-7FD0-A487-25913257471D
+      printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash"}]}}' \
+        >"$transcript_dir/$sid.jsonl" ;;
+  esac
+  # shellcheck disable=SC1091  # production profile under test
+  source "$SHARED/conf/agents/claude.conf"
+  bot_session_productive "$sid" "$dir" && rc=0 || rc=$?
+  case "$rc" in 0) printf yes ;; 1) printf no ;; *) printf unknown ;; esac
+)
+t session-claude-transcript-tool-use-is-productive yes \
+  "$(claude_productive_fixture tool)"
+t session-claude-transcript-without-tool-use-is-idle no \
+  "$(claude_productive_fixture idle)"
+t session-claude-missing-transcript-is-unknown unknown \
+  "$(claude_productive_fixture absent)"
+t session-claude-malformed-transcript-is-unknown unknown \
+  "$(claude_productive_fixture malformed)"
+t session-claude-invalid-transcript-id-is-unknown unknown \
+  "$(claude_productive_fixture invalid)"
+t session-claude-uppercase-transcript-id-is-valid yes \
+  "$(claude_productive_fixture uppercase)"
+
 # Exercise run_session itself so a helper-only implementation cannot pass.
 SA_WORK="$TMP/session-work"; mkdir -p "$SA_WORK"
 BOT_CLI_CMD=(bash -c 'printf "exec\ncommand output\nfinal reply\n"')
@@ -264,6 +318,23 @@ SID_CLI="$TMP/sid-cli.sh"
 cat >"$SID_CLI" <<'STUB'
 #!/usr/bin/env bash
 printf '%s\n' "$@" >"$SID_ARGV"
+sid=""; previous=""
+for argument in "$@"; do
+  case "$previous" in --session-id|--resume) sid="$argument" ;; esac
+  previous="$argument"
+done
+sid_tool_transcript() {
+  [ -n "${SID_TRANSCRIPT_DIR:-}" ] && [ -n "$sid" ] || return 0
+  mkdir -p "$SID_TRANSCRIPT_DIR"
+  printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash"}]}}' \
+    >"$SID_TRANSCRIPT_DIR/$sid.jsonl"
+}
+sid_idle_transcript() {
+  [ -n "${SID_TRANSCRIPT_DIR:-}" ] && [ -n "$sid" ] || return 0
+  mkdir -p "$SID_TRANSCRIPT_DIR"
+  printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"waiting"}]}}' \
+    >"$SID_TRANSCRIPT_DIR/$sid.jsonl"
+}
 case "${SID_SHAPE:-reply}" in
   reply) printf 'final reply\n' ;;
   fail) printf 'final reply\n'; exit 3 ;;
@@ -287,6 +358,13 @@ case "${SID_SHAPE:-reply}" in
     ;;
   mute-hang) exec sleep 30 ;;
   talk-hang) printf 'partial work\n'; exec sleep 30 ;;
+  mute-tool-hang) sid_tool_transcript; exec sleep 30 ;;
+  error-tool-hang) sid_tool_transcript; printf 'Execution error'; exec sleep 30 ;;
+  mute-idle-hang) sid_idle_transcript; exec sleep 30 ;;
+  terminal)
+    printf "%s\n" "You've hit your weekly limit · resets 9am (UTC)"
+    exit 1
+    ;;
   escape-hang)
     printf 'partial work\n'
     setsid bash -c 'printf "%s\n" "$$" >"$SID_ESCAPEE"; exec sleep 30' &
@@ -300,10 +378,10 @@ chmod +x "$SID_CLI"
 # so `_session_head` has a head to read and D6.2 has something to compare.
 sid_box() {
   local sdir="$TMP/sid-$1"
-  [ -d "$sdir/work/.git" ] && { printf '%s' "$sdir"; return 0; }
-  mkdir -p "$sdir/logs" "$sdir/work"
-  git -C "$sdir/work" init -q 2>/dev/null
-  git -C "$sdir/work" -c user.email=t@example.invalid -c user.name=t \
+  [ -d "$sdir/work_dir.dot space/.git" ] && { printf '%s' "$sdir"; return 0; }
+  mkdir -p "$sdir/logs" "$sdir/work_dir.dot space"
+  git -C "$sdir/work_dir.dot space" init -q 2>/dev/null
+  git -C "$sdir/work_dir.dot space" -c user.email=t@example.invalid -c user.name=t \
     commit -q --allow-empty -m one 2>/dev/null
   printf '%s' "$sdir"
 }
@@ -314,8 +392,8 @@ sid_commit() {
     commit -q --allow-empty -m next 2>/dev/null
 }
 
-# sid_run BOX KEY TMO SHAPE [HOOKS] [WORK] — one dispatch into BOX, with the
-# profile hooks D2 lets a CLI carry independently.
+# sid_run BOX KEY TMO SHAPE [HOOKS] [WORK] [KIND] — one dispatch into BOX,
+# with the profile hooks D2 lets a CLI carry independently.
 #
 #   both      a profile that can pin and resume — `claude`'s shape
 #   claude    the shipped claude profile, including both classifiers
@@ -333,15 +411,20 @@ sid_commit() {
 # call be resumed by the next.
 sid_run() (
   local box="$1" key="$2" tmo="$3" shape="$4" hooks="${5:-both}" work="${6:-}"
+  local kind="${7:-build}"
   local sdir; sdir="$(sid_box "$box")"
   DUTY_DIR="$sdir"; LOG_DIR="$sdir/logs"; DUTY_TICK_ID="tick-sid"
-  unset -f bot_session_acted bot_session_terminal
+  unset -f bot_session_acted bot_session_terminal bot_session_productive
   if [ "$hooks" = claude ]; then
+    HOME="$sdir/home"; export HOME
     # shellcheck disable=SC1091  # production profile under test
     source "$SHARED/conf/agents/claude.conf"
   fi
   BOT_CLI_CMD=(bash "$SID_CLI" -p)
+  work="${work:-$sdir/work_dir.dot space}"
   export SID_ARGV="$sdir/argv" SID_SHAPE="$shape" SID_ESCAPEE="$sdir/escapee"
+  SID_TRANSCRIPT_DIR="$(claude_cli_transcript_dir "$work")" || return 2
+  export SID_TRANSCRIPT_DIR
   [ -e "$sdir/memory.events" ] || printf 'oom_kill 0\n' >"$sdir/memory.events"
   export SID_OOM_EVENTS="$sdir/memory.events"
   _SESSION_OOM_EVENTS_FILE="$sdir/memory.events"
@@ -383,7 +466,7 @@ sid_run() (
   # `log` writes to stdout, so the box's own record file is where the two lines
   # accumulate across dispatches — appended, because a resume is only readable
   # beside the timeout it continues.
-  run_session build "$key" "${work:-$sdir/work}" "$tmo" prompt >>"$sdir/records" 2>&1
+  run_session "$kind" "$key" "$work" "$tmo" prompt >>"$sdir/records" 2>&1
   printf 'returned=%s rc=%s\n' "$?" "$RUN_SESSION_RC"
   printf -- '--argv--\n'
   cat "$sdir/argv" 2>/dev/null
@@ -441,6 +524,7 @@ sid_same() {
   return 0
 }
 sid_stub() { printf '%s/.session-resume.build.%s' "$TMP/sid-$1" "$2"; }
+sid_stub_kind() { printf '%s/.session-resume.%s.%s' "$TMP/sid-$1" "$2" "$3"; }
 sid_stub_field() { # sid_stub_field FILE KEY
   sed -n "s/^$2=//p" "$1" 2>/dev/null
 }
@@ -522,7 +606,7 @@ t sid-timeout-writes-a-stub present \
   "$([ -s "$SID_TMO_STUB" ] && printf present || printf MISSING)"
 t sid-stub-carries-the-killed-session-id same \
   "$(sid_same "$(sid_stub_field "$SID_TMO_STUB" sid)" "$(sid_of timeout START)")"
-t sid-stub-carries-the-head-it-worked-at "$(git -C "$TMP/sid-timeout/work" rev-parse HEAD)" \
+t sid-stub-carries-the-head-it-worked-at "$(git -C "$TMP/sid-timeout/work_dir.dot space" rev-parse HEAD)" \
   "$(sid_stub_field "$SID_TMO_STUB" head)"
 t sid-stub-carries-the-wall-that-was-hit 1 "$(sid_stub_field "$SID_TMO_STUB" wall)"
 t sid-stub-carries-a-try-count 0 "$(sid_stub_field "$SID_TMO_STUB" try)"
@@ -557,6 +641,78 @@ t sid-resume-consumes-its-stub gone \
   "$([ -e "$(sid_stub resume fixture_res)" ] && printf PRESENT || printf gone)"
 t sid-timeout-resume-names-the-wall-clock-cause 1 \
   "$(grep -c 'previous attempt reached its wall-clock limit' <<<"$sid_resumed" || true)"
+
+# A killed Claude session's final reply is precisely the artifact that cannot
+# be trusted to exist. The profile's addressable JSONL transcript therefore
+# outranks both an empty log and the observed 15-byte error banner when it
+# carries tool use (#723). These are full dispatch/resume paths, not hook-only
+# classifications, and the inverse assertion pins acted=unknown alongside
+# productive=yes on the same end.
+sid_run transcript-empty fixture/transcript-empty 1 mute-tool-hang claude '' review >/dev/null
+SID_TRANSCRIPT_EMPTY="$(sid_of transcript-empty START)"
+SID_TRANSCRIPT_EMPTY_STUB="$(sid_stub_kind transcript-empty review fixture_transcript-empty)"
+t sid-empty-log-tool-transcript-records-productive yes \
+  "$(sid_stub_field "$SID_TRANSCRIPT_EMPTY_STUB" productive)"
+t sid-empty-log-fixture-is-zero-bytes 0 \
+  "$(sid_stub_field "$SID_TRANSCRIPT_EMPTY_STUB" log)"
+t sid-empty-log-stays-action-unknown 1 \
+  "$(grep -c 'acted=unknown' <<<"$(sid_line transcript-empty END)" || true)"
+sid_transcript_empty_resumed="$(sid_run transcript-empty fixture/transcript-empty 5 reply claude '' review)"
+t sid-empty-log-tool-transcript-resumes-the-same-session same \
+  "$(sid_same "$(sid_argv_flag "$sid_transcript_empty_resumed" --resume)" \
+    "$SID_TRANSCRIPT_EMPTY")"
+
+sid_run transcript-error fixture/transcript-error 1 error-tool-hang claude >/dev/null
+SID_TRANSCRIPT_ERROR="$(sid_of transcript-error START)"
+SID_TRANSCRIPT_ERROR_STUB="$(sid_stub transcript-error fixture_transcript-error)"
+t sid-error-banner-tool-transcript-records-productive yes \
+  "$(sid_stub_field "$SID_TRANSCRIPT_ERROR_STUB" productive)"
+t sid-error-banner-fixture-is-fifteen-bytes 15 \
+  "$(sid_stub_field "$SID_TRANSCRIPT_ERROR_STUB" log)"
+t sid-error-banner-stays-action-unknown 1 \
+  "$(grep -c 'acted=unknown' <<<"$(sid_line transcript-error END)" || true)"
+sid_transcript_error_resumed="$(sid_run transcript-error fixture/transcript-error 5 reply claude)"
+t sid-error-banner-tool-transcript-resumes-the-same-session same \
+  "$(sid_same "$(sid_argv_flag "$sid_transcript_error_resumed" --resume)" \
+    "$SID_TRANSCRIPT_ERROR")"
+
+# The third archived-log shape is the second observed 15-byte banner. Keeping
+# it as an independent dispatch guards against accidentally keying productivity
+# to a previous lane's artifact rather than this session id.
+sid_run transcript-error-two fixture/transcript-error-two 1 error-tool-hang claude >/dev/null
+t sid-third-archived-log-shape-records-productive yes \
+  "$(sid_stub_field "$(sid_stub transcript-error-two fixture_transcript-error-two)" productive)"
+t sid-third-archived-log-fixture-is-fifteen-bytes 15 \
+  "$(sid_stub_field "$(sid_stub transcript-error-two fixture_transcript-error-two)" log)"
+
+sid_run transcript-idle fixture/transcript-idle 1 mute-idle-hang claude >/dev/null
+sid_transcript_idle_killed="$(sid_of transcript-idle START)"
+t sid-no-tool-transcript-records-unproductive no \
+  "$(sid_stub_field "$(sid_stub transcript-idle fixture_transcript-idle)" productive)"
+sid_transcript_idle_next="$(sid_run transcript-idle fixture/transcript-idle 5 reply claude)"
+t sid-no-tool-transcript-does-not-resume 0 \
+  "$(sed -n '/^--argv--$/,$p' <<<"$sid_transcript_idle_next" \
+    | grep -c -- '--resume' || true)"
+t sid-no-tool-transcript-starts-a-fresh-session DIFFERENT \
+  "$(sid_same "$(sid_of transcript-idle START)" "$sid_transcript_idle_killed")"
+
+sid_run transcript-absent fixture/transcript-absent 1 mute-hang claude >/dev/null
+sid_transcript_absent_killed="$(sid_of transcript-absent START)"
+t sid-missing-transcript-falls-back-to-unproductive no \
+  "$(sid_stub_field "$(sid_stub transcript-absent fixture_transcript-absent)" productive)"
+sid_transcript_absent_next="$(sid_run transcript-absent fixture/transcript-absent 5 reply claude)"
+t sid-missing-transcript-does-not-resume 0 \
+  "$(sed -n '/^--argv--$/,$p' <<<"$sid_transcript_absent_next" \
+    | grep -c -- '--resume' || true)"
+t sid-missing-transcript-starts-a-fresh-session DIFFERENT \
+  "$(sid_same "$(sid_of transcript-absent START)" "$sid_transcript_absent_killed")"
+
+sid_run transcript-terminal fixture/transcript-terminal 5 terminal claude >/dev/null
+t sid-non-timeout-terminal-stays-terminal TERMINAL \
+  "$(sed -n 's/.* outcome=\([^ ]*\).*/\1/p' <<<"$(sid_line transcript-terminal END)")"
+t sid-non-timeout-terminal-writes-no-resume-stub gone \
+  "$([ -e "$(sid_stub transcript-terminal fixture_transcript-terminal)" ] \
+    && printf PRESENT || printf gone)"
 
 # A kernel memory kill buys the same one resume, but the prompt makes the
 # continuation informed: it names the cause and forbids replaying the suspect
@@ -634,7 +790,7 @@ sid_refusal() { # sid_refusal OUTPUT BOX KILLED — ordinary | RESUMED | NOT-FRE
 # 1 — the head moved: the carried context is about a tree that is gone.
 sid_run moved fixture/moved 1 talk-hang both >/dev/null
 sid_moved_killed="$(sid_of moved START)"
-sid_commit "$TMP/sid-moved/work"
+sid_commit "$TMP/sid-moved/work_dir.dot space"
 t sid-refuses-when-the-head-moved ordinary \
   "$(sid_refusal "$(sid_run moved fixture/moved 5 reply both)" moved "$sid_moved_killed")"
 
@@ -722,11 +878,11 @@ SID_PLAN_BOX="$(sid_box planonly)"
 sid_plan_verdict() ( # sid_plan_verdict none|both
   local stub="$SID_PLAN_BOX/.session-resume.build.fixture_plan"
   printf 'kind=build\nkey=fixture/plan\nsid=%s\nhead=%s\nwall=1\ntry=0\nlog=14\noutcome=TIMEOUT\nproductive=yes\nleft=0\n' \
-    "$(_session_mint_sid)" "$(git -C "$SID_PLAN_BOX/work" rev-parse HEAD)" >"$stub"
+    "$(_session_mint_sid)" "$(git -C "$SID_PLAN_BOX/work_dir.dot space" rev-parse HEAD)" >"$stub"
   DUTY_DIR="$SID_PLAN_BOX"
   unset -f bot_cli_resume_args
   [ "$1" = none ] || eval 'bot_cli_resume_args() { BOT_CLI_RESUME_ARGS=(--resume "$1"); }'
-  _session_resume_plan build fixture/plan "$SID_PLAN_BOX/work"
+  _session_resume_plan build fixture/plan "$SID_PLAN_BOX/work_dir.dot space"
   printf '%s' "$_SESSION_RESUMED"
 )
 t sid-the-gate-itself-refuses-without-the-resume-hook no "$(sid_plan_verdict none)"
@@ -855,7 +1011,7 @@ sid_coll_killed="$(sid_of collide START)"
 SID_COLL_STUB="$(sid_coll_path "$SID_COLL_A")"
 t sid-the-collision-is-at-the-same-head same \
   "$(sid_same "$(sid_stub_field "$SID_COLL_STUB" head)" \
-    "$(git -C "$TMP/sid-collide/work" rev-parse HEAD)")"
+    "$(git -C "$TMP/sid-collide/work_dir.dot space" rev-parse HEAD)")"
 t sid-the-stub-names-the-lane-that-wrote-it "$SID_COLL_A" \
   "$(sid_stub_field "$SID_COLL_STUB" key)"
 t sid-a-colliding-key-does-not-resume-the-other-lane ordinary \
