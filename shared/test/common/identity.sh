@@ -141,6 +141,52 @@ t ghid-failure-writes-the-marker present \
 t ghid-failure-marker-is-one-line 1 "$(wc -l <"$GHID/.auth-fail.gh")"
 t ghid-failure-alerts-once 1 "$(grep -c '^🔑 ' "$GHID_ALERTS")"
 
+# A long stream of matching stderr lines makes head close the pipe before
+# grep has finished writing. Under pipefail the old one-expression fallback
+# appended the exit-code reason to the real API reason. The reason must be
+# selected from the captured output instead: the first matched line wins in
+# every surface note_auth_failure writes, and the fallback never joins it.
+GHID_LONG="$TMP/ghid-long"; mkdir -p "$GHID_LONG"
+DUTY_DIR="$GHID_LONG"
+GHID_LONG_ALERTS="$GHID_LONG/alerts"; : >"$GHID_LONG_ALERTS"
+alert() { printf '%s\n' "$*" >>"$GHID_LONG_ALERTS"; }
+# shellcheck disable=SC2317  # invoked indirectly, by gh_identity
+gh() {
+  awk 'BEGIN {
+    print "401 Bad credentials"
+    for (i = 0; i < 200000; i++)
+      printf "error filler %06d xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n", i
+  }' >&2
+  return 4
+}
+GHID_LONG_LOG="$GHID_LONG/tick.log"
+r1="$(gh_identity 2>"$GHID_LONG_LOG")"
+t ghid-long-stderr-marker-keeps-only-matched-reason '401 Bad credentials' \
+  "$(cut -d' ' -f2- "$GHID_LONG/.auth-fail.gh")"
+t ghid-long-stderr-marker-omits-exit-fallback 0 \
+  "$(grep -c 'exited' "$GHID_LONG/.auth-fail.gh" || true)"
+t ghid-long-stderr-warn-keeps-only-matched-reason '401 Bad credentials' \
+  "$(sed 's/^.*WARN: auth: gh rejected us — //' "$GHID_LONG_LOG")"
+t ghid-long-stderr-warn-omits-exit-fallback 0 \
+  "$(grep -c 'exited' "$GHID_LONG_LOG" || true)"
+t ghid-long-stderr-alert-keeps-only-matched-reason '401 Bad credentials' \
+  "$(sed 's/^🔑 [^:]*: gh auth failed — //' "$GHID_LONG_ALERTS")"
+t ghid-long-stderr-alert-omits-exit-fallback 0 \
+  "$(grep -c 'exited' "$GHID_LONG_ALERTS" || true)"
+
+# An unmatched short stderr still takes the unchanged exit-code fallback.
+rm -f "$GHID_LONG/.auth-fail.gh"
+# shellcheck disable=SC2317
+gh() { printf '%s\n' 'transport unavailable' >&2; return 7; }
+gh_identity 2>"$GHID_LONG/unmatched.log" >/dev/null
+t ghid-unmatched-stderr-uses-exit-code 'gh api user exited 7' \
+  "$(cut -d' ' -f2- "$GHID_LONG/.auth-fail.gh")"
+
+DUTY_DIR="$GHID"
+alert() { printf '%s\n' "$*" >>"$GHID_ALERTS"; }
+# shellcheck disable=SC2317
+gh() { printf '%s\n' 'gh: HTTP 401: Bad credentials' >&2; return 4; }
+
 # The SECOND failing tick, with the marker already present. note_auth_failure
 # returns early there, so this is the branch that behaved correctly all along
 # — and the one that must not start returning a login now that the recorder
