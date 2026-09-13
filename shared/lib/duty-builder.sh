@@ -318,8 +318,34 @@ _orphan_claim_nums() {
 # cast#143's converged round sat unowed 40 minutes while every tick looked
 # only at ceremony — but an org-wide author sweep also lets a builder box
 # act on repos nobody put in its registry, which is the same unbounded write
-# surface the reviewer sweep had. The miss cast#143 describes is now a
-# logged line (below) rather than silence, and the repair is to add the repo.
+# surface the reviewer sweep had.
+#
+# THE READ IS THE REGISTRY TOO, NOT ONLY THE WRITE (#728, danmt 2026-09-12).
+# Closing that write surface left an awareness pass behind it,
+# `_warn_unscoped_authored`, which searched `--author=$ME` across the whole of
+# GitHub and logged every open PR that fell outside repos.txt. It was sized for
+# an identity whose entire life is the fleet. Since #714 the operator's own
+# account is a supported box identity, and then the set it enumerates is the
+# operator's whole open-pull-request list, personal repos included, re-fetched
+# every five minutes on every builder box that account is on. The `0.1.3-rc2`
+# round read five such rows per tick and named them in duty.log.
+#
+# The pass is REMOVED rather than narrowed, because narrowed it is empty. This
+# function is the registry-derived authored-PR read — one pulls page per carried
+# repo, object endpoints, no search index — and what it finds is already spoken
+# by _gate_ready_for_open_pr's `slot held by <repo>#<n>` line. A second pass
+# over the same set would report the same PRs twice and nothing else.
+#
+# WHERE CAST#143'S SIGNAL WENT. Its shape is a converged round nobody hears
+# about, and the fleet's answer to that shape is notify.sh, which sweeps
+# repos.txt UNION notify-repos.txt — a list that exists for precisely this,
+# "cross-repo handoff targets" the fleet can flag "without working them", and
+# which no repos.txt narrowing touches. The condition that produces the signal
+# is an open non-draft PR carrying `$LABEL_NEEDS_HUMAN` in a listed repo; its
+# phase-3 desync invariant then alerts when such a PR is seen and not tracked,
+# which is the silence cast#143 and rig#112 actually were. The standing channel
+# for handing this box work outside its beat stays duty-attention.sh, which
+# reports and alerts on out-of-registry demands and acts on none (crew#66).
 _discover_my_pr_repos() {
   if [ -n "$REVIEW_MY_PR_REPOS" ] || has_role reviewer; then
     # shellcheck disable=SC2086  # splitting the space-joined list is the point
@@ -334,25 +360,6 @@ _discover_my_pr_repos() {
       printf '%s\n' "$SR"
     fi
   done < <(read_repo_list "$REPOS_FILE")
-}
-
-# Awareness pass — reports, never acts. Mirrors the reviewer sweep: an open
-# PR I authored in a repo outside the registry is an operator signal, not
-# licence to work it.
-_warn_unscoped_authored() {
-  local mine cand repo_list unscoped=""
-  mine="$(gh search prs --author="$ME" --state open --limit 50 \
-    --json repository,number --jq '.[] | "\(.repository.nameWithOwner)#\(.number)"' 2>/dev/null || true)"
-  while IFS= read -r cand; do
-    [ -n "$cand" ] || continue
-    repo_list="$(read_repo_list "$REPOS_FILE")"
-    if ! grep -qxF "${cand%%#*}" <<<"$repo_list"; then
-      unscoped="$unscoped $cand"
-    fi
-  done <<<"$mine"
-  if [ -n "$unscoped" ]; then
-    warn "builder: authored PR(s) outside repos.txt, NOT acted on:$unscoped — add the repo to repos.txt if this box should carry it"
-  fi
 }
 
 # _redraft_authored_pr REPO NUM PANEL_JSON — convert my ready PR back to draft after a
@@ -2374,8 +2381,11 @@ _ci_red_rollup_settled() {
 duty_builder() {
   local duty_repos R
   _repair_seen_build_264
+  # Both halves are registry-derived, so this union IS repos.txt and the tick
+  # reads nothing outside it (#728). The union is kept rather than collapsed:
+  # _discover_my_pr_repos is the seam single-role.md decouples, and its second
+  # half is what the reviewer sweep hands over when both roles are enabled.
   duty_repos="$({ read_repo_list "$REPOS_FILE"; _discover_my_pr_repos; } | awk 'NF && !seen[$0]++')"
-  _warn_unscoped_authored
   _builder_suppression_prune "$duty_repos"
 
   while IFS= read -r R; do
@@ -2717,9 +2727,12 @@ _builder_repo() {
   # this signal only when the session CLAIMS it, which is an action the session
   # may correctly decline (out of scope, unbuildable, needs a ruling). Declined
   # once, a bare count re-fires a build session every tick forever — and build
-  # carries TIMEOUT_BUILD=3600, four times triage's ceiling, over a repo set
-  # WIDER than repos.txt (_discover_my_pr_repos above). This was the most
-  # expensive instance of the defect and the last one anybody looked at.
+  # carries TIMEOUT_BUILD=3600, four times triage's ceiling, over every repo in
+  # repos.txt. This was the most expensive instance of the defect and the last
+  # one anybody looked at. (That sentence read "a repo set WIDER than repos.txt
+  # (_discover_my_pr_repos above)" until #728. Both halves of that union have
+  # been registry-derived since the org-wide author sweep went, so the claim
+  # contradicted the containment it sits inside.)
   # ONE issue listing, two derived facts. Two calls could disagree about the
   # board between them, and the assigned-count is only meaningful relative to
   # the same snapshot the pickable set came from.

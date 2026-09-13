@@ -636,6 +636,115 @@ t builder-ledger-repair-second-log "" "$(DUTY_DIR="$REPAIR_DIR" _repair_seen_bui
 t builder-ledger-repair-second-seen later "$(cat "$REPAIR_DIR/.seen-build")"
 t builder-ledger-repair-second-suppressed later "$(cat "$REPAIR_DIR/.suppressed-build.two")"
 
+# --- #728: the authored-PR awareness pass is bounded by the registry --------
+# Since #714 the operator's own account is a supported box identity, so the
+# `gh search prs --author=$ME` awareness pass enumerated that account's entire
+# open pull-request list and named it in duty.log — five personal and
+# organization repositories per tick, every five minutes, in the 0.1.3-rc2
+# round. Drive a whole tick under exactly that identity, with a shim that would
+# ANSWER a cross-account search if one were made: nothing outside the registry
+# may be read, named or acted on.
+#
+# The out-of-scope needle is one variable, shared by this control and by the
+# mutation below, so the two cannot drift into asserting different things.
+P728_DIR="$TMP/p728"
+mkdir -p "$P728_DIR/duty"
+P728_CALLS="$P728_DIR/calls"
+P728_OUT_OF_SCOPE='lafamilia-landing|my-angular-bank|wtf-is-a-wallet|tarea-4-lenguajes|easy-eddie'
+# The rc2 round's own rows, verbatim from the WARN line #728 quotes.
+p728_operator_prs() {
+  printf '%s\n' heavy-duty/lafamilia-landing#2 danmt/my-angular-bank#3 \
+    danmt/wtf-is-a-wallet#3 danmt/tarea-4-lenguajes#3 danmt/easy-eddie#6
+}
+# The tick's environment is `local` inside a function called in a subshell, not
+# bare assignment in one: DUTY_DIR and ME are live for the rest of this suite,
+# and a subshell assignment to either is a modification shellcheck reports and
+# a later reader could be misled by.
+p728_tick() {
+  local DUTY_DIR="$P728_DIR/duty"
+  local REPOS_FILE="$P728_DIR/repos.txt"
+  local ME=danmt
+  local REVIEW_MY_PR_REPOS=""
+  local OPERATING_LIMIT_GITHUB_REST_PAGE=100
+  # shellcheck disable=SC2317  # invoked indirectly by duty_builder
+  read_repo_list() { printf 'heavy-duty/crew\n'; }
+  # shellcheck disable=SC2317  # invoked indirectly by _discover_my_pr_repos
+  has_role() { [ "$1" = builder ]; }
+  # Trace to a file, never to stdout: the registry pulls page is consumed as
+  # JSON, so a trace line on the same stream would break the read under test.
+  # shellcheck disable=SC2317  # invoked indirectly by duty_builder
+  gh() {
+    printf 'GH %s\n' "$*" >>"$P728_CALLS"
+    case "$*" in
+      'search prs'*) p728_operator_prs ;;
+      'api repos/heavy-duty/crew/pulls'*) printf '[{"user":{"login":"danmt"}}]\n' ;;
+    esac
+  }
+  # shellcheck disable=SC2317  # invoked indirectly by duty_builder
+  _repair_seen_build_264() { :; }
+  # shellcheck disable=SC2317  # invoked indirectly by duty_builder
+  _builder_suppression_prune() { :; }
+  # shellcheck disable=SC2317  # invoked indirectly by duty_builder
+  _builder_repo() { printf 'REPO %s\n' "$1"; }
+  # shellcheck disable=SC2317  # invoked indirectly by duty_builder
+  log() { printf 'LOG %s\n' "$*"; }
+  # shellcheck disable=SC2317  # invoked indirectly by duty_builder
+  warn() { printf 'WARN %s\n' "$*"; }
+  duty_builder
+}
+: >"$P728_CALLS"
+P728_TICK="$(p728_tick)"
+t p728-tick-issues-no-cross-account-search 0 \
+  "$(grep -c '^GH search' "$P728_CALLS" || true)"
+# Read AND said: the calls file is what the tick fetched, the tick output is
+# what it wrote to duty.log. Neither may carry an out-of-registry repository.
+t p728-out-of-registry-repos-never-fetched 0 \
+  "$(grep -Ec "$P728_OUT_OF_SCOPE" "$P728_CALLS" || true)"
+t p728-out-of-registry-repos-never-named 0 \
+  "$(printf '%s\n' "$P728_TICK" | grep -Ec "$P728_OUT_OF_SCOPE" || true)"
+# The registry half stays live rather than being switched off: the tick really
+# did read the carried repo's pulls page, and acted on that repo and no other.
+t p728-registry-pulls-page-still-read 1 \
+  "$(grep -c '^GH api repos/heavy-duty/crew/pulls' "$P728_CALLS" || true)"
+t p728-acts-only-on-registry-repos 'REPO heavy-duty/crew' \
+  "$(printf '%s\n' "$P728_TICK" | grep '^REPO ' || true)"
+# Source invariant, because a future re-introduction would pass every row above
+# by being spelled differently: the module makes no search-index call at all.
+t p728-module-has-no-search-call 0 "$(grep -c 'gh search' "$BUILDER_MOD" || true)"
+
+# MUST FAIL: the pre-#728 spelling, restored here and nowhere else, driven by
+# the same shims and matched by the same needle. Without this row the ones
+# above are all satisfiable by a fixture that never had anything to find.
+p728_mutation() {
+  local REPOS_FILE=unused
+  local ME=danmt
+  # shellcheck disable=SC2317  # invoked indirectly by _p728_pre728_pass
+  read_repo_list() { printf 'heavy-duty/crew\n'; }
+  # shellcheck disable=SC2317  # invoked indirectly by _p728_pre728_pass
+  gh() { p728_operator_prs; }
+  # shellcheck disable=SC2317  # invoked indirectly by _p728_pre728_pass
+  warn() { printf 'WARN %s\n' "$*"; }
+  _p728_pre728_pass() {
+    local mine cand repo_list unscoped=""
+    mine="$(gh search prs --author="$ME" --state open --limit 50 \
+      --json repository,number --jq '.[] | "\(.repository.nameWithOwner)#\(.number)"' 2>/dev/null || true)"
+    while IFS= read -r cand; do
+      [ -n "$cand" ] || continue
+      repo_list="$(read_repo_list "$REPOS_FILE")"
+      if ! grep -qxF "${cand%%#*}" <<<"$repo_list"; then
+        unscoped="$unscoped $cand"
+      fi
+    done <<<"$mine"
+    if [ -n "$unscoped" ]; then
+      warn "builder: authored PR(s) outside repos.txt, NOT acted on:$unscoped — add the repo to repos.txt if this box should carry it"
+    fi
+  }
+  _p728_pre728_pass
+}
+P728_MUTATION="$(p728_mutation)"
+t p728-mutation-old-pass-names-all-five 5 \
+  "$(printf '%s\n' "$P728_MUTATION" | grep -Eo "$P728_OUT_OF_SCOPE" | n)"
+
 # The reviewer must carry updated_at from the existing pulls page, partition
 # before assembling per-repo prompts, and commit that repo's exact fresh set.
 REVIEW_MOD="$SHARED/lib/duty-review.sh"
